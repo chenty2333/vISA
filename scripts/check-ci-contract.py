@@ -14,18 +14,11 @@ from typing import Any
 
 import yaml
 
+from claims_registry import RegistryError, load_registry, validate_registry
+
 
 ROOT = Path(__file__).resolve().parent.parent
 CURRENT_STATUS_PATH = "status/current-capabilities.toml"
-
-EXPECTED_CLAIMS = {
-    "stage1": ("system", "stage1-system-evidence"),
-    "jco-node": ("system-jco-node", "stage2b-jco-node-system-evidence"),
-    "legacy-stage2": ("system-stage2", "stage2-cross-execution-path-evidence"),
-    "strict-stage2": ("system-stage2-strict", "strict-stage2-docker-evidence"),
-    "stage3a": ("system-stage3a", "stage3a-regular-file-system-evidence"),
-    "stage3b": ("system-stage3b", "stage3b-logical-request-system-evidence"),
-}
 
 STAGE_QUALIFICATION_JOBS = (
     "docker-quality-gate",
@@ -34,8 +27,9 @@ STAGE_QUALIFICATION_JOBS = (
 )
 JOINT_REFERENCE_JOB = "docker-joint-handoff-reference-gate"
 JOINT_NEXUS_JOB = "docker-joint-handoff-nexus-qualification"
+CLAIM_CLOSURE_JOB = "claim-closure-verification"
 VISA_DOCKER_GATE_JOBS = (*STAGE_QUALIFICATION_JOBS, JOINT_REFERENCE_JOB)
-CLOSURE_JOBS = (*VISA_DOCKER_GATE_JOBS, JOINT_NEXUS_JOB)
+CLOSURE_JOBS = (CLAIM_CLOSURE_JOB, *VISA_DOCKER_GATE_JOBS, JOINT_NEXUS_JOB)
 
 NEXUS_LOCK_PATH = (
     "third_party/joint-handoff-qualification/nexus-qualification-lock.json"
@@ -48,22 +42,6 @@ NEXUS_PROCESS_ARTIFACT_ROOT = ".ci-artifacts/nexus-process-joint-cell"
 NEXUS_LOGICAL_ARTIFACT_ROOT = ".ci-artifacts/logical-request-lost-ack-cell"
 NEXUS_ADMISSION_ARTIFACT_ROOT = ".ci-artifacts/logical-request-admission-cell"
 NEXUS_GATE_LOG = ".ci-artifacts/nexus-visa-same-boot-qualification-ci.log"
-NEXUS_QUALIFICATION_ARTIFACT = "nexus-visa-same-boot-qualification-evidence"
-NEXUS_CLAIM_BOUNDARY = (
-    "Claim boundary: clean exact-SHA same-boot Nexus-local refinement, "
-    "process-backed joint handoff, and one bounded admission-ordered Wasmtime "
-    "logical-request/lost-ACK handoff. The admission artifact checks production "
-    "Registry admission before external send, one source execution, ownership "
-    "recovery, source closure and fence, destination activation, and Reconcile "
-    "inside this host cell; the older logical-request dual-lost-ACK artifact remains "
-    "supplemental. This is a host-build qualification, not a vISA Docker-image lane, "
-    "and does not claim Registry replacement, retained tombstone, "
-    "cross-host/reboot/permanent-source-loss recovery, "
-    "Byzantine/rollback/freshness or TEE/KMS, raw TCP capture, real service "
-    "death/OSTD/IRQ/SMP, a production live-wire adapter, general exactly-once "
-    "semantics, or performance."
-)
-
 EXACT_SHA_IMAGE = "visa-dev:${{ github.sha }}"
 RETENTION_POLICY = "${{ github.event_name == 'pull_request' && 3 || 14 }}"
 CARGO_CACHE_KEY = (
@@ -95,6 +73,105 @@ class ContractError(RuntimeError):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ContractError(message)
+
+
+def claim_binding_text(binding: dict[str, Any]) -> str:
+    return ",".join(
+        f"{claim['id']}:{claim['role']}" for claim in binding["claims"]
+    )
+
+
+def load_claim_bindings() -> tuple[
+    dict[str, tuple[str, str, str, str]], str, str, dict[str, Any]
+]:
+    path = ROOT / "claims/registry.json"
+    try:
+        registry = load_registry(path)
+        validate_registry(registry, ROOT)
+    except RegistryError as error:
+        raise ContractError(f"claim registry is invalid: {error}") from error
+    raw_bindings = registry.get("workflow_bindings")
+    raw_claims = registry.get("claims")
+    require(isinstance(raw_bindings, list), "claim registry workflow bindings are absent")
+    require(isinstance(raw_claims, list), "claim registry claims are absent")
+    matrix: dict[str, tuple[str, str, str, str]] = {}
+    for binding in raw_bindings:
+        if not isinstance(binding, dict) or binding.get("job") != "docker-claim-gates":
+            continue
+        lane = binding.get("matrix_lane")
+        tier = binding.get("tier")
+        artifact = binding.get("artifact")
+        require(
+            isinstance(lane, str)
+            and isinstance(tier, str)
+            and isinstance(artifact, str),
+            "claim registry Docker matrix binding is incomplete",
+        )
+        require(lane not in matrix, f"duplicate Docker matrix binding for {lane}")
+        matrix[lane] = (
+            str(binding["id"]),
+            claim_binding_text(binding),
+            tier,
+            artifact,
+        )
+
+    nexus_bindings = [
+        binding
+        for binding in raw_bindings
+        if isinstance(binding, dict)
+        and binding.get("job") == JOINT_NEXUS_JOB
+        and binding.get("matrix_lane") is None
+    ]
+    require(
+        len(nexus_bindings) == 1,
+        "claim registry must bind the Nexus qualification job exactly once",
+    )
+    nexus = nexus_bindings[0]
+    nexus_artifact = nexus.get("artifact")
+    require(isinstance(nexus_artifact, str), "joint-nexus artifact identity is absent")
+
+    joint_claims = [
+        claim
+        for claim in raw_claims
+        if isinstance(claim, dict)
+        and claim.get("track") == "joint-handoff"
+    ]
+    inherited_ids = {
+        predecessor
+        for claim in joint_claims
+        for predecessor in claim.get("predecessor_ids", [])
+    }
+    successors = [
+        claim
+        for claim in joint_claims
+        if claim.get("predecessor_ids")
+        and claim.get("id") not in inherited_ids
+        and claim.get("status") != "retired"
+    ]
+    require(
+        len(successors) == 1,
+        "claim registry must name one active terminal joint successor",
+    )
+    successor = successors[0]
+    successor_id = successor.get("id")
+    require(isinstance(successor_id, str), "joint successor identity is absent")
+    scope = successor.get("scope_ref")
+    validation = successor.get("validation_ref")
+    require(
+        isinstance(scope, dict) and isinstance(validation, dict),
+        "joint successor refs are absent",
+    )
+    boundary = (
+        f"Claim registry: {successor_id}; "
+        f"scope: {scope.get('path')} :: {scope.get('heading')}; "
+        f"validation: {validation.get('path')} :: {validation.get('heading')}."
+    )
+    return matrix, nexus_artifact, boundary, registry
+
+
+EXPECTED_CLAIMS, NEXUS_QUALIFICATION_ARTIFACT, NEXUS_CLAIM_BOUNDARY, CLAIM_REGISTRY = (
+    load_claim_bindings()
+)
 
 
 def load_yaml(relative: str) -> dict[str, Any]:
@@ -594,27 +671,183 @@ def check_claim_matrix(job: dict[str, Any]) -> None:
     require(strategy.get("max-parallel") == "6", "all six claim lanes must be parallel")
     include = job.get("strategy", {}).get("matrix", {}).get("include", [])
     require(isinstance(include, list), "claim matrix include must be a sequence")
-    actual: dict[str, tuple[str, str]] = {}
+    actual: dict[str, tuple[str, str, str, str]] = {}
     for entry in include:
         require(isinstance(entry, dict), "claim matrix entries must be mappings")
         lane = str(entry.get("lane", ""))
         require(lane and lane not in actual, f"duplicate or empty claim lane: {lane!r}")
-        actual[lane] = (str(entry.get("tier", "")), str(entry.get("artifact", "")))
-    require(actual == EXPECTED_CLAIMS, "claim matrix lane/tier/artifact catalog drifted")
+        actual[lane] = (
+            str(entry.get("binding", "")),
+            str(entry.get("claims", "")),
+            str(entry.get("tier", "")),
+            str(entry.get("artifact", "")),
+        )
+    require(
+        actual == EXPECTED_CLAIMS,
+        "claim matrix binding/claims/tier/artifact catalog drifted",
+    )
 
     gate = step_with_id(job, "claim_gate")
     require(
         gate.get("env")
-        == {"LANE": "${{ matrix.lane }}", "TIER": "${{ matrix.tier }}"},
-        "claim gate must bind the selected matrix lane and tier",
+        == {
+            "CLAIM_BINDING_ID": "${{ matrix.binding }}",
+            "CLAIM_BINDINGS": "${{ matrix.claims }}",
+            "LANE": "${{ matrix.lane }}",
+            "TIER": "${{ matrix.tier }}",
+        },
+        "claim gate must bind the selected claim identity, lane, and tier",
     )
     command = str(gate.get("run", ""))
     require(
         'scripts/run-docker-ci-gate.sh --ci-cache --skip-build "$TIER"' in command,
         "claim matrix must invoke its selected Docker system tier",
     )
+    require(
+        "Claim binding: %s; claims: %s" in command
+        and '"$CLAIM_BINDING_ID" "$CLAIM_BINDINGS"' in command,
+        "claim matrix must retain its registry binding in the lane log",
+    )
     require(".ci-artifacts/${LANE}-ci.log" in command, "claim lane must retain its gate log")
     require("set -o pipefail" in command, "claim matrix gate must protect tee")
+
+
+def check_claim_workflow_bindings(jobs: dict[str, Any]) -> None:
+    raw_bindings = CLAIM_REGISTRY["workflow_bindings"]
+    require(isinstance(raw_bindings, list), "claim registry workflow bindings are absent")
+
+    gate_pattern = re.compile(
+        r"scripts/run-docker-ci-gate\.sh --ci-cache --skip-build\s+([^\s\\]+)"
+    )
+    matrix_bindings: dict[str, dict[str, tuple[str, str, str, str]]] = {}
+    nonmatrix_jobs: set[str] = set()
+    consumed: set[str] = set()
+
+    for binding in raw_bindings:
+        require(isinstance(binding, dict), "claim registry workflow binding is invalid")
+        binding_id = str(binding["id"])
+        job_name = str(binding["job"])
+        require(job_name in jobs, f"{binding_id}: workflow job {job_name!r} is absent")
+        job = jobs[job_name]
+        require(isinstance(job, dict), f"{binding_id}: workflow job must be a mapping")
+
+        lane = binding["matrix_lane"]
+        tier = binding["tier"]
+        artifact = binding["artifact"]
+        expected_claims = claim_binding_text(binding)
+        uploads = steps_using(job, "actions/upload-artifact@")
+        upload_names = [str(step.get("with", {}).get("name", "")) for step in uploads]
+
+        if lane is not None:
+            require(
+                isinstance(lane, str)
+                and isinstance(tier, str)
+                and isinstance(artifact, str),
+                f"{binding_id}: matrix binding must declare lane, tier, and artifact",
+            )
+            require(
+                job_name not in nonmatrix_jobs,
+                f"{binding_id}: job mixes matrix and non-matrix claim bindings",
+            )
+            bound_lanes = matrix_bindings.setdefault(job_name, {})
+            require(
+                lane not in bound_lanes,
+                f"{binding_id}: matrix lane {lane!r} is bound more than once",
+            )
+            bound_lanes[lane] = (binding_id, expected_claims, tier, artifact)
+            require(
+                upload_names == ["${{ matrix.artifact }}"],
+                f"{binding_id}: matrix evidence upload must consume matrix.artifact exactly once",
+            )
+        else:
+            require(
+                job_name not in matrix_bindings and job_name not in nonmatrix_jobs,
+                f"{binding_id}: non-matrix workflow job is bound more than once",
+            )
+            nonmatrix_jobs.add(job_name)
+            strategy = job.get("strategy", {})
+            require(
+                not isinstance(strategy, dict) or "matrix" not in strategy,
+                f"{binding_id}: non-matrix binding points at a matrix job",
+            )
+
+            claim_steps = [
+                step
+                for step in job.get("steps", [])
+                if isinstance(step, dict)
+                and isinstance(step.get("env"), dict)
+                and "CLAIM_BINDING_ID" in step["env"]
+            ]
+            require(
+                len(claim_steps) == 1,
+                f"{binding_id}: workflow job must expose one claim-bound step",
+            )
+            claim_step = claim_steps[0]
+            claim_environment = claim_step["env"]
+            require(
+                claim_environment.get("CLAIM_BINDING_ID") == binding_id
+                and claim_environment.get("CLAIM_BINDINGS") == expected_claims,
+                f"{binding_id}: workflow claim identities or roles differ from registry",
+            )
+            commands = str(claim_step.get("run", ""))
+            require(
+                "CLAIM_BINDING_ID" in commands and "CLAIM_BINDINGS" in commands,
+                f"{binding_id}: claim-bound step does not report its binding",
+            )
+            observed_tiers = gate_pattern.findall(commands)
+            if tier is None:
+                require(
+                    not observed_tiers,
+                    f"{binding_id}: null tier binding invokes a Docker CI tier",
+                )
+            else:
+                require(
+                    isinstance(tier, str) and observed_tiers == [tier],
+                    f"{binding_id}: workflow Docker CI tier differs from registry",
+                )
+
+            if artifact is None:
+                require(
+                    not uploads,
+                    f"{binding_id}: null artifact binding must not upload evidence",
+                )
+            else:
+                require(
+                    isinstance(artifact, str) and upload_names == [artifact],
+                    f"{binding_id}: workflow artifact upload differs from registry",
+                )
+
+        require(binding_id not in consumed, f"duplicate consumed binding {binding_id}")
+        consumed.add(binding_id)
+
+    for job_name, expected in matrix_bindings.items():
+        job = jobs[job_name]
+        include = job.get("strategy", {}).get("matrix", {}).get("include", [])
+        require(
+            isinstance(include, list),
+            f"{job_name}: registry-bound matrix include must be a sequence",
+        )
+        actual: dict[str, tuple[str, str, str, str]] = {}
+        for entry in include:
+            require(isinstance(entry, dict), f"{job_name}: matrix entry must be a mapping")
+            lane = str(entry.get("lane", ""))
+            require(
+                lane and lane not in actual,
+                f"{job_name}: duplicate or empty claim matrix lane {lane!r}",
+            )
+            actual[lane] = (
+                str(entry.get("binding", "")),
+                str(entry.get("claims", "")),
+                str(entry.get("tier", "")),
+                str(entry.get("artifact", "")),
+            )
+        require(
+            actual == expected,
+            f"{job_name}: matrix binding/claims/tier/artifact catalog differs from registry",
+        )
+
+    expected_ids = {str(binding["id"]) for binding in raw_bindings}
+    require(consumed == expected_ids, "claim registry workflow bindings were not fully consumed")
 
 
 def check_quality_stage4_and_joint_reference(jobs: dict[str, Any]) -> None:
@@ -874,8 +1107,8 @@ def check_closure(job: dict[str, Any]) -> None:
         isinstance(needs, list)
         and len(needs) == len(CLOSURE_JOBS)
         and set(needs) == set(CLOSURE_JOBS),
-        "exact-SHA closure must depend on quality, Stage 1-4, joint reference, "
-        "and Nexus qualification jobs",
+        "exact-SHA closure must depend on claim closure verification, quality, "
+        "Stage 1-4, joint reference, and Nexus qualification jobs",
     )
     require(job.get("if") == "${{ always() }}", "exact-SHA closure must always evaluate")
 
@@ -884,6 +1117,9 @@ def check_closure(job: dict[str, Any]) -> None:
     step = steps[0]
     environment = step.get("env", {})
     expected_results = {
+        "CLAIM_CLOSURE_RESULT": (
+            "${{ needs.claim-closure-verification.result }}"
+        ),
         "QUALITY_RESULT": "${{ needs.docker-quality-gate.result }}",
         "CLAIMS_RESULT": "${{ needs.docker-claim-gates.result }}",
         "STAGE4_RESULT": "${{ needs.docker-stage4-gate.result }}",
@@ -894,7 +1130,12 @@ def check_closure(job: dict[str, Any]) -> None:
             "${{ needs.docker-joint-handoff-nexus-qualification.result }}"
         ),
     }
-    require(environment == expected_results, "closure result bindings drifted")
+    require(
+        {key: environment.get(key) for key in expected_results} == expected_results
+        and set(environment)
+        == {*expected_results, "CLAIM_BINDING_ID", "CLAIM_BINDINGS"},
+        "closure result or claim bindings drifted",
+    )
 
     command = str(step.get("run", ""))
     for variable in expected_results:
@@ -907,6 +1148,80 @@ def check_closure(job: dict[str, Any]) -> None:
         "Nexus + vISA exact-SHA same-boot lane" in command
         and "${JOINT_NEXUS_RESULT}" in command,
         "closure summary must report the independent Nexus qualification result",
+    )
+    require(
+        "Claim binding:" in command
+        and "${CLAIM_BINDING_ID}" in command
+        and "${CLAIM_BINDINGS}" in command,
+        "closure summary must report its registry claim binding",
+    )
+
+
+def check_claim_closure_verification(job: dict[str, Any]) -> None:
+    require(
+        job.get("name") == "Project claim closure verification",
+        "claim closure verification job name drifted",
+    )
+    require(
+        job.get("runs-on") == "ubuntu-latest"
+        and job.get("timeout-minutes") == "20",
+        "claim closure verification must retain its bounded runner and timeout",
+    )
+    require(
+        job.get("permissions")
+        == {"actions": "read", "attestations": "read", "contents": "read"},
+        "claim closure verification must have only read-only archive permissions",
+    )
+    require("env" not in job and "container" not in job, "claim closure job must be host-only")
+    steps = job.get("steps", [])
+    require(
+        isinstance(steps, list)
+        and [step.get("name") for step in steps if isinstance(step, dict)]
+        == [
+            "Checkout exact vISA SHA with history",
+            "Verify project claim closure receipts",
+        ],
+        "claim closure verification step inventory or order drifted",
+    )
+    checkouts = steps_using(job, "actions/checkout@")
+    require(len(checkouts) == 1, "claim closure verification must checkout once")
+    require(
+        checkouts[0].get("with")
+        == {
+            "ref": "${{ github.sha }}",
+            "fetch-depth": "0",
+            "persist-credentials": "false",
+        },
+        "claim closure verification must checkout exact SHA with full history",
+    )
+    verify = step_with_name(job, "Verify project claim closure receipts")
+    require(
+        verify.get("env")
+        == {
+            "GH_TOKEN": "${{ github.token }}",
+            "CLAIM_CLOSURE_REPOSITORY": "${{ github.repository }}",
+            "CLAIM_CLOSURE_BASELINE": (
+                "${{ github.event_name == 'pull_request' && "
+                "github.event.pull_request.base.sha || github.event.before }}"
+            ),
+        },
+        "claim closure online verifier token, repository, or baseline binding drifted",
+    )
+    command = str(verify.get("run", ""))
+    require(
+        command
+        == (
+            "python3 scripts/check-claim-closures.py --online "
+            '--repository "$CLAIM_CLOSURE_REPOSITORY" '
+            '--baseline "$CLAIM_CLOSURE_BASELINE"'
+        ),
+        "claim closure online verifier command drifted",
+    )
+    require(
+        not steps_using(job, "actions/upload-artifact@")
+        and not steps_using(job, "actions/cache@")
+        and not steps_using(job, "actions/cache/restore@"),
+        "claim closure verification must not upload or cache archive material",
     )
 
 
@@ -931,6 +1246,8 @@ def check_workflow() -> None:
     check_exact_sha_images(jobs)
     check_cache_paths(jobs)
     check_dependency_caches(jobs)
+    check_claim_closure_verification(jobs[CLAIM_CLOSURE_JOB])
+    check_claim_workflow_bindings(jobs)
     check_claim_matrix(jobs["docker-claim-gates"])
     check_quality_stage4_and_joint_reference(jobs)
     check_nexus_qualification(jobs[JOINT_NEXUS_JOB])

@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-19.
+Last reviewed: 2026-07-23.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -73,12 +73,18 @@ volumes by default.
 
 The repository exposes two cumulative repository tiers, the Stage 1/2/3
 standalone system gates, one Stage 3 aggregate, and one complete bounded Stage
-4 aggregate with two edit-loop aliases, plus one bounded joint-handoff gate.
+4 aggregate with two edit-loop aliases, plus one bounded joint-handoff reference
+gate and source-bound Nexus/process/logical publishers.
 Run the ordinary edit-loop gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh fast
 ```
+
+`fast` includes the project claim-registry checker and its mutation tests. That
+checker verifies index structure, lifecycle guards, canonical references, and
+CI bindings; it cannot establish runtime semantics or promote a candidate from
+documents alone.
 
 Run the pull-request gate with:
 
@@ -196,12 +202,13 @@ scripts/run-nexus-process-joint-cell.sh \
   --artifact-root <new-final-artifact-root>
 ```
 
-Exact-binary process tests cover raw-chain replay, Registered-effect abort preservation, the bounded
-process qualification scenarios, and the real logical-request dual-lost-ack
-cell. The latter is supplemental: it performs a post-durable ownership Commit acknowledgement loss
-and a terminal Nexus response loss before adapter acceptance; both recover via
-exact query/retry without duplicate execution or publication, but does not run
-vISA freeze/fence/activation or put Nexus admission before the external effect.
+Exact-binary process tests cover raw-chain replay, Registered-effect abort
+preservation, the bounded process qualification scenarios, and the real
+logical-request dual-lost-ack cell. The latter is supplemental: it performs a
+post-durable ownership Commit acknowledgement loss and a terminal Nexus response
+loss before adapter acceptance; both recover via exact query/retry without
+duplicate execution or publication, but it does not run vISA
+freeze/fence/activation or put Nexus admission before the external effect.
 
 The standalone runner validates both locks and the Nexus receipt, publishes an
 exact three-file process artifact containing the executed binary, verifies it in
@@ -214,6 +221,25 @@ bind exact vISA implementation
 `d3b07f1114cb49e26dd62fb252a895022ac2a743`; their local, Docker, exact-SHA CI,
 relocation, and post-download closure is recorded in the
 [joint-handoff closure receipt](VALIDATION.md#joint-handoff-closure-receipt).
+
+Run the candidate admission-ordered logical-request publisher with:
+
+```sh
+scripts/run-logical-request-admission-cell.sh \
+  --nexus-checkout <clean-nexus-checkout> \
+  --nexus-bin <exact-nexus-effect-peer> \
+  --artifact-root <new-final-artifact-root>
+```
+
+It publishes exactly seven files: manifest, report, source and destination
+substrate stores, ownership log, joint-projection log, and the executed Nexus
+binary. The cell stages a previewed Wasmtime operation through
+production-Registry-backed Nexus admission before external send, observes one
+execution, recovers the Nexus Commit acknowledgement by replay in the same live
+child, recovers the durable ownership Commit after SQLite reopen, then checks
+Nexus cohort closure, the vISA source fence, guarded destination activation, and
+Reconcile. Source and destination remain in one runner process and filesystem;
+the cell does not prove Nexus child death/restart or a production adapter.
 
 The Host refinement requires `exclusive_trusted_coordinator_api=true`: bypass
 through a second raw `Coordinator`/provider handle or hostile public-projection
@@ -816,6 +842,42 @@ Choose validation based on the claim affected by the change:
 - conformance claims: execute the named workload on the stated runtime, ISA,
   substrate, resource profile, authority boundary, and fault boundary.
 
+A claim identity, status, or lineage change must update the registry, README
+index, referenced Roadmap and Validation sections, CI binding, and closure
+receipt together. Candidate-to-earned promotion additionally requires the named
+exact-SHA and permanent-archive evidence; renaming documentation is insufficient.
+The eight pre-registry earned claims are an explicit closed grandfathered set.
+No new root claim can inherit that exemption. A non-historical earned successor
+must instead carry a content-addressed receipt and committed archive manifest;
+candidate entries must carry neither file and keep their receipt digest null.
+For an archive-governed successor, the marked normative blocks inside the
+referenced Roadmap and Validation sections are the semantic contract. The
+registry stores their SHA-256 identities as a mechanical cross-check; changing
+ordinary status or receipt prose cannot change those marked bytes. The unique
+commit that first adds both the receipt and archive manifest is the promotion
+anchor. Only the accepted governance SHA to that anchor is constrained to the
+receipt/document lifecycle allowlist and checked for unchanged implementation
+refs, source locks, and non-lifecycle workflow/registry content. Later durable
+verification reuses that historical anchor, so normal repository development
+does not rewrite the accepted implementation identity or freeze the whole tree.
+Once a permanent closure appears in the comparison baseline, the claim may be
+retired but cannot be deleted, returned to candidate, stripped of its receipt,
+or assigned a replacement receipt digest; a revision requires a successor claim.
+The promotion run must be attempt 1 because the run-level Actions artifact API
+does not expose artifact attempt identity. A failed or rerun qualification is
+retained as history; use a fresh exact governance SHA rather than relabeling a
+later attempt. Initial promotion verifies the still-live Actions objects. Normal
+post-promotion CI verifies the committed carriers, accepted Git lineage,
+immutable GitHub release attestation, and byte-identical Zenodo record without
+depending on expiring Actions storage.
+
+As observed on 2026-07-18, this repository has no GitHub Release, Immutable
+Releases are disabled, and `master` has no branch protection. The first two
+facts block successor promotion outright. Before promotion, enable Immutable
+Releases and publish the fixed archive; separately choose and record a branch
+ruleset that requires the exact-SHA closure before `master` can advance. The
+in-repository ledger cannot enforce an external GitHub branch setting by itself.
+
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
 
@@ -830,14 +892,17 @@ Current CI separates repository quality from claim qualification. One job runs
 `full`; six matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
 Strict Stage 2, Stage 3A, and Stage 3B; a separate lane runs the complete Stage 4
 aggregate, one separate Docker lane runs the bounded reference/HostSubstrate
-joint-handoff cell, and one host-built lane runs the clean exact-SHA Nexus-local
-and process qualification. A final `Exact-SHA qualification closure` job fails
-unless all ten prerequisite job executions succeed for the same source SHA,
-making eleven jobs including closure. The reference-only lane does not qualify
-Nexus, and neither joint lane substitutes for the other. Every Docker image is
-built from that checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs
-upload from `.ci-artifacts/` on gate success or failure. Pull-request artifacts
-are retained for 3 days and push artifacts for 14 days.
+joint-handoff cell, and one host-built lane runs the clean exact-SHA Nexus-local,
+process, older logical-request, and admission-ordered qualification publishers.
+A host-only claim-closure lane uses only `contents: read`, `actions: read`, and
+`attestations: read` to verify committed receipts and permanent release assets.
+A final `Exact-SHA qualification closure` job fails unless all eleven
+prerequisite job executions succeed for the same source SHA, making twelve jobs
+including closure. The reference-only lane does not qualify Nexus, and neither
+joint lane substitutes for the other. Every Docker image is built from that
+checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
+`.ci-artifacts/` on gate success or failure. Pull-request artifacts are retained
+for 3 days and push artifacts for 14 days.
 
 Accepted implementation `d3b07f1114cb49e26dd62fb252a895022ac2a743`
 completed the clean local and Docker gates, the same-revision eleven-job CI
@@ -845,6 +910,10 @@ closure, and independent post-download verification of both joint artifacts.
 Exact run, job, artifact, digest, expiry, and verifier receipts are kept in the
 [joint-handoff closure receipt](VALIDATION.md#joint-handoff-closure-receipt),
 not duplicated in this command guide.
+
+Revision `4314a181ded0862d7b1c7054f57f1bafd0595f07` is preliminary supporting
+implementation evidence for candidate `bounded-joint-handoff-refinement-v2`,
+not its final governance or earned identity.
 
 ## Next validation expansion
 
@@ -858,14 +927,16 @@ supplies that independence and only the x86-64 Linux timer/KV
 `strict-cross-runtime-continuity` claim. Stage 3A and Stage 3B add only the two
 bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. Completed
 Stage 4 adds only the named native/QEMU-user target-substrate and emulated
-x86-64/AArch64 timer/KV claims described above. The joint-handoff gates support
-only the accepted `bounded-joint-handoff-refinement-v1`: the vISA/reference,
-Nexus-local, exact-binary process, and supplemental logical-request axes remain
-separate, but their clean-artifact, local/Docker, exact-SHA CI, relocation, and
-post-download obligations are closed for the accepted implementation recorded
-in [validation](VALIDATION.md#joint-handoff-closure-receipt). This is a
-bounded same-boot qualification, not evidence for the excluded Stage 5 or
-production behaviors listed above.
+x86-64/AArch64 timer/KV claims described above. The joint-handoff gates regress
+earned historical `bounded-joint-handoff-refinement-v1` and support candidate
+`bounded-joint-handoff-refinement-v2`. The v1 reference, Nexus-local,
+exact-binary process, and older supplemental logical-request axes remain
+separate and closed at the identity recorded in
+[validation](VALIDATION.md#joint-handoff-closure-receipt). The candidate adds
+the admission-ordered witness but remains unearned until final exact-SHA CI,
+downloaded-artifact reverification, permanent source/evidence archival, and its
+new receipt close. This is a bounded same-boot qualification, not evidence for
+the excluded Stage 5 or production behaviors listed above.
 A second Stage 3 runtime, broader file/network families,
 cross-process Stage 3 workers, real hardware/reference-kernel/device cells,
 cross-host execution, confidential, release, performance, and production

@@ -2,7 +2,7 @@
 
 Status: current related-work and hypothesis summary.
 
-Last reviewed: 2026-07-17.
+Last reviewed: 2026-07-23.
 
 This document records why vISA exists alongside WebAssembly, WASI, checkpoint
 systems, capability systems, and durable execution platforms. It is not a claim
@@ -136,15 +136,18 @@ prove that a replayed ownership history is fresh. Conversely, a semantic
 handoff receipt graph does not provide encryption, attestation, rollback
 resistance, or protected storage.
 
-The accepted bounded systems/research claim
+The earned historical systems/research claim
 `bounded-joint-handoff-refinement-v1` is narrower: an executable refinement
 among vISA portable continuity, one externally owned non-equivocating decision,
-and an independently owned native effect-cohort closure service. The boundary
-is useful only if neither adapter copies the other's state machine or ledger,
-unknown outcomes remain fail closed, and destination activation is derived
-from the exact commit, closure, and source
-fence chain. No monolithic, cross-host, or production execution cell runs all
-three evidence axes end to end; acceptance is a bounded composition result.
+and an independently owned native effect-cohort closure service. Candidate
+`bounded-joint-handoff-refinement-v2` is cumulative engineering evidence, not a
+new novelty claim: it retains every v1 abstract/refinement axis and adds one
+admission-ordered real-Wasmtime commit witness. The boundary is useful only if
+no adapter copies another authority's state machine or ledger, unknown outcomes
+remain fail closed, and destination activation is derived from the exact
+commit, closure, and source-fence chain. No monolithic, cross-host, or production
+execution cell runs all evidence axes end to end; acceptance remains a bounded
+composition result.
 
 The accepted `bounded-joint-handoff-refinement-v1` source lock pins
 remote-accepted neutral implementation
@@ -166,7 +169,7 @@ concrete WAL-before-effect ordering. The latter is a separate refinement result
 from the Rust durable session, SQLite append/reopen evidence, exact pre-call
 peer-invocation bytes, and independent transcript replay.
 
-The vISA system runner now executes a same-boot HostSubstrate commit/abort
+The vISA system runner executes a same-boot HostSubstrate commit/abort
 vertical through `Coordinator<SqliteProvider>`. Its strict verifier reconstructs
 14 commit records, 9 abort records, seven ownership/effect peer-invocation
 classes, local journals and leases, crash/reopen checkpoints, and the exact
@@ -182,10 +185,10 @@ The accepted vISA implementation identity is
 `d3b07f1114cb49e26dd62fb252a895022ac2a743`. Its exact-SHA CI artifacts were
 downloaded under independent roots, and the reference, Nexus-lock, exact-binary
 process, and supplemental logical-request verifier paths all passed against the
-committed locks. This receipt-only documentation lineage records acceptance
+committed locks. This receipt-only documentation lineage records v1 acceptance
 without replacing that implementation identity. Acceptance is limited to this
-bounded evidence composition; it is neither a universal proof of RQ4 nor a
-claim of paper novelty.
+bounded evidence composition; neither it nor the candidate v2 witness is a
+universal proof of RQ4 or a claim of paper novelty.
 
 ### Independent Component Model runtime availability
 
@@ -317,9 +320,10 @@ acknowledgements without serializing native device state?
 
 The hypothesis fails if any accepted trace permits dual source/destination
 authority, accepts a post-freeze untracked effect, activates the destination
-before terminal source closure, thaws on timeout or lookup absence, accepts
-conflicting abort and commit decisions, loses a retained cleanup obligation, or
-accepts a stale/mismatched receipt without a state-preserving rejection.
+before Nexus frozen-cohort terminal closure or before the vISA source fence,
+thaws on timeout or lookup absence, accepts conflicting abort and commit
+decisions, loses a retained cleanup obligation, or accepts a stale/mismatched
+receipt without a state-preserving rejection.
 
 The first evaluation boundary is same-boot process crash. The 16 abstract
 schedules and 16 concrete cases exercise both freeze/publication orders,
@@ -327,7 +331,7 @@ abort/thaw, lost commit acknowledgement, rebind, stale receipts, decision
 races, crash recovery, and substituted destination preparation; the concrete
 runner adds one supplemental retained-tombstone recovery case. The HostSubstrate
 and Nexus-local axes are implemented, and exact-revision local plus downloaded-
-artifact verification closes the named same-boot bounded claim. The real
+artifact verification closes the named same-boot v1 claim. The older real
 logical-request experiment loses the ownership Commit acknowledgement only
 after durability, then separately discards the terminal Nexus child response
 before adapter acceptance. Exact query/retry and same-request-ID byte-identical
@@ -338,6 +342,17 @@ does not execute vISA source freeze/fence or destination activation. It therefor
 does not test whether Nexus admission serialized the external effect or prove a
 vISA runtime handoff vertical.
 
+The v2 candidate adds a distinct admission-ordered testing cell. It stages the
+previewed Wasmtime operation through production-Registry-backed Nexus
+Register/Prepare/Commit before external send, recovers the suppressed Nexus
+Commit acknowledgement by exact replay in the same live child, and observes one
+external execution. It then recovers a separately lost durable ownership Commit
+acknowledgement after SQLite reopen, closes the Nexus cohort, fences the source,
+and guards destination activation and Reconcile. This closes the specific
+admission-before-send and integrated commit-path evidence gaps. It remains one
+commit trace, not the full fault matrix, abort or retained-tombstone execution,
+service-death recovery, or a production adapter.
+
 Mutation evidence is also deliberately split. The neutral verifier executes 10
 corrupted semantic-trace mutations. The Nexus lock structurally binds 11 named
 falsifier classes, while its actual model/oracle/Registry suites execute their
@@ -345,13 +360,17 @@ declared sequence, property, and Loom tests. The 11-name catalog is not eleven
 independently source-mutated Nexus builds.
 
 The standalone publication/relocation path, exact-revision remote CI, and
-post-download verification passed. This closes only
-`bounded-joint-handoff-refinement-v1` under the named same-boot TCB and fault
-matrix. The accumulated evidence cannot establish real OSTD execution, IRQ/SMP
-behavior, Registry replacement, the production retained-tombstone path,
-host-reboot recovery, permanent source loss, cross-host progress, Byzantine safety,
-cryptographic authenticity, anti-rollback, freshness, TEE/KMS behavior, or
-confidentiality. Roadmap Stage 5 remains not started.
+post-download verification close only `bounded-joint-handoff-refinement-v1`
+under the named same-boot TCB and fault matrix. Preliminary exact-SHA evidence
+supports v2, but v2 remains candidate pending the governance-SHA run, permanent
+archive, and closure receipt. The accumulated evidence cannot establish dual
+Stage 3 workers/processes, real OSTD/IRQ/SMP/DMA, Registry replacement, the
+production retained-tombstone path, host-reboot recovery, permanent source
+loss, cross-host progress, provider-enforced raw-bypass prevention, Byzantine
+safety, cryptographic authenticity, anti-rollback, freshness, raw TCP
+continuation, general exactly-once behavior, TEE/KMS, confidentiality,
+source-to-binary reproducibility, performance, or production readiness. Roadmap
+Stage 5 remains not started.
 
 ## Demand validation
 
@@ -368,6 +387,9 @@ platform category.
 ## Maintenance rule
 
 Add related work only when it changes the problem boundary, provides a concrete
-mechanism to reuse, or affects an experiment. Keep detailed reading notes
+mechanism to reuse, or affects an experiment. Before implementing a new
+protocol, archive format, runtime facility, or supply-chain mechanism, record a
+brief build-versus-reuse decision against maintained standards and libraries.
+Keep detailed reading notes
 outside the repository; this file is the current comparison and hypothesis
 summary, not a bibliography archive.

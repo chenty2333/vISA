@@ -185,6 +185,19 @@ gate_file_size() {
 gate_ci_contract() {
     run_gate "CI: build, cache, evidence, and closure contract" \
         python3 scripts/check-ci-contract.py
+    run_gate "CI: claim-to-workflow binding mutation tests" \
+        python3 scripts/test-check-ci-contract.py
+}
+
+gate_claims_registry() {
+    run_gate "claims: canonical project claim index" \
+        python3 scripts/check-claims-registry.py
+    run_gate "claims: registry checker mutation tests" \
+        python3 scripts/test-check-claims-registry.py
+    run_gate "claims: committed closure records" \
+        python3 scripts/check-claim-closures.py
+    run_gate "claims: permanent archive verifier tests" \
+        python3 scripts/test-claim-archive.py
 }
 
 gate_release_contract() {
@@ -287,6 +300,7 @@ gate_fast() {
     gate_dependency_direction
     gate_stage1_deletions
     gate_file_size
+    gate_claims_registry
     gate_ci_contract
     gate_release_contract
     gate_local_rpc_artifacts
