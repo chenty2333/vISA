@@ -304,7 +304,10 @@ pub trait EffectClosureProvider: Send + Sync {
     /// Record the bounded runtime outcome of one already-consumed dispatch.
     ///
     /// This closes only the local provider admission fence around the guest
-    /// call. It does not replace the canonical outcome transition below.
+    /// call. It does not replace the canonical outcome transition below. If
+    /// the transition was applied but its acknowledgement was lost, repeating
+    /// the same fence and outcome must return success; a conflicting outcome
+    /// or fence must remain rejected.
     fn finish_effect_dispatch(
         &self,
         effect: &EffectRequest,
@@ -437,7 +440,8 @@ where
 ///
 /// Retrying this value can only repeat the provider-side `finish` transition;
 /// it never re-exposes the profile authorization or the `consume` operation,
-/// so an acknowledgement loss cannot cause a second external dispatch.
+/// so an acknowledgement loss cannot cause a second external dispatch. This
+/// is process-local typestate, not restart-persistent recovery evidence.
 pub struct EffectDispatchFinishFailure<'a, P>
 where
     P: EffectClosureProvider,
