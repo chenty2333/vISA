@@ -43,8 +43,8 @@ resource bindings, resume, and produce executable evidence about what happened.
 > semantic target/substrate and emulated cross-ISA evidence, not AOT-binary
 > portability, real ARM hardware, Stage 3 resource portability across targets,
 > or a second Stage 4 runtime.
-> The accepted bounded systems/research claim
-> `bounded-joint-handoff-refinement-v1` is fixed to vISA implementation revision
+> The earned historical bounded systems/research claim
+> `bounded-joint-handoff-refinement-v1` remains fixed to vISA implementation revision
 > `d3b07f1114cb49e26dd62fb252a895022ac2a743`. Its source lock pins
 > remote-accepted neutral implementation `f4a8211f0e5fde13e0f6101be3c3322854458c79`
 > (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). The neutral implementation's
@@ -74,6 +74,23 @@ resource bindings, resume, and produce executable evidence about what happened.
 > [closure receipt](docs/VALIDATION.md#joint-handoff-closure-receipt) records
 > that documentation lineage without replacing
 > `d3b07f1114cb49e26dd62fb252a895022ac2a743` as the implementation identity.
+> The cumulative successor `bounded-joint-handoff-refinement-v2` is now a
+> candidate. It inherits every v1 evidence axis and adds one admission-ordered
+> real-Wasmtime logical-request witness: production-Registry-backed Nexus
+> Register/Prepare/Commit is accepted before the application request, a lost
+> admission Commit acknowledgement recovers by exact request-ID replay in the
+> same live child, the external effect executes once, and Nexus frozen-cohort
+> closure, vISA source fence, destination activation, and Reconcile complete in
+> that order.
+> Preliminary exact-SHA CI passed at
+> `4314a181ded0862d7b1c7054f57f1bafd0595f07`; v2 remains `candidate` until the
+> final governance SHA passes the complete workflow and its original artifacts,
+> exact source bundles, checksums, and re-verification instructions enter one
+> fixed-inventory tar on an immutable release; the same tar has an independent
+> version-specific Zenodo DOI copy; and a committed manifest plus content-
+> addressed closure receipt binds the release attestation and exact first
+> workflow attempt. Zenodo is an independent long-term retention domain, not
+> the immutable integrity anchor; downloaded SHA-256-identical bytes are.
 > The HostSubstrate result assumes `exclusive_trusted_coordinator_api=true`:
 > its owning guards constrain a non-Byzantine orchestrator, not a second raw
 > `Coordinator`/provider handle or a hostile caller of public projection APIs.
@@ -88,6 +105,25 @@ lost Commit acknowledgement by byte-identical replay, and then executes vISA
 freeze, Nexus closure, source fencing, destination activation, and reconcile.
 It does not replace the accepted implementation identity above and is not yet a
 long-term archived checkpoint or a qualified production adapter.
+
+The following table is a mechanical identity and lifecycle index of project
+claims. Scope and evidence semantics remain authoritative in the linked Roadmap
+and Validation sections; [`claims/registry.json`](claims/registry.json) cannot
+define or widen them.
+
+<!-- claims-registry:start -->
+| Claim ID | Status |
+| --- | --- |
+| `bounded-joint-handoff-refinement-v1` | `earned` |
+| `bounded-joint-handoff-refinement-v2` | `candidate` |
+| `bounded-logical-request-continuity` | `earned` |
+| `bounded-regular-file-continuity` | `earned` |
+| `cooperative-stateful-component-handoff` | `earned` |
+| `cross-execution-path-portability` | `earned` |
+| `emulated-cross-isa-continuity-v1` | `earned` |
+| `named-target-substrate-continuity-v1` | `earned` |
+| `strict-cross-runtime-continuity` | `earned` |
+<!-- claims-registry:end -->
 
 ## The problem
 
@@ -167,9 +203,13 @@ qualification paths, and the bounded Stage 4 target/substrate and emulated
 cross-ISA matrix. It also contains the isolated joint-handoff protocol core,
 runtime projection adapter, durable recovery log, conformance oracle,
 reference protocol lane, HostSubstrate vertical, exact-binary Nexus process
-cell, real logical-request dual-lost-ack experiment, and standalone
-publisher/relocation runner for the accepted bounded
-`bounded-joint-handoff-refinement-v1` systems/research claim. Strict
+cell, supplemental logical-request dual-lost-ack experiment, admission-ordered
+real-Wasmtime logical-request handoff cell, and standalone publisher/relocation
+runners for the earned `bounded-joint-handoff-refinement-v1` and candidate
+`bounded-joint-handoff-refinement-v2` systems/research claims. The claim
+registry mechanically connects those public identities and lifecycle states to
+their canonical scope, validation sections, and CI lanes without owning the
+scope or evidence semantics. Strict
 dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
 protect it. Broader pre-reset models and target experiments remain isolated as
 oracle, reference, or compile-only paths; they do not define portable semantic
@@ -403,6 +443,29 @@ do not re-execute it during verification or claim reproducible derivation. The
 accepted exact-revision artifacts were generated from clean checkouts, then
 downloaded under independent roots and reverified against the committed locks.
 
+The admission-ordered successor witness is published with:
+
+```sh
+scripts/run-logical-request-admission-cell.sh \
+  --nexus-checkout <clean-nexus-checkout> \
+  --nexus-bin <exact-nexus-effect-peer> \
+  --artifact-root <new-final-artifact-root>
+```
+
+It retains a strict seven-file artifact: manifest, report, source and
+destination substrate stores, ownership log, joint-projection log, and the
+executed Nexus binary. The verifier checks that no external
+request or execution occurs before Nexus Commit, exactly one execution occurs
+after admission, the ownership decision survives lost acknowledgement and
+SQLite reopen, and Nexus frozen-cohort closure, vISA source fence, destination
+activation, and Reconcile occur in that order without duplicating the effect.
+Nexus Commit
+acknowledgement recovery uses the same live child and does not prove Nexus
+process death or restart durability. This commit-path witness is not a live
+implementation of all 16 neutral cases and does not replace the older
+dual-lost-ACK artifact, which uniquely exercises loss of the terminal Nexus
+close response.
+
 The HostSubstrate refinement assumes an exclusive trusted coordinator API. A
 second raw `Coordinator` or provider handle that bypasses the durable joint
 guard is a TCB violation; provider-level prevention of Byzantine in-process
@@ -423,6 +486,9 @@ or freshness protection, TEE/KMS behavior, confidentiality, or Stage 5.
   explicit.
 - Derive views, snapshots, and evidence from execution truth rather than
   maintaining parallel ledgers.
+- Keep the project claim registry as a mechanical identity/lifecycle index;
+  narrative scope and executable evidence remain authoritative in their owning
+  documents and code.
 - Tie every public claim to an executable scenario and an identified runtime,
   ISA, substrate, resource profile, and fault boundary.
 - Keep durable documentation short; use code and tests as the final proof of

@@ -32,8 +32,8 @@ coverage across targets, or a second Stage 4 runtime. Confidential continuity
 and production readiness also remain unimplemented. The exact closure receipt
 is in [validation](VALIDATION.md#stage-4-closure-receipt).
 
-The separate `bounded-joint-handoff-refinement-v1` research track is accepted
-at implementation revision `d3b07f1114cb49e26dd62fb252a895022ac2a743`.
+The separate `bounded-joint-handoff-refinement-v1` research track is earned at
+implementation revision `d3b07f1114cb49e26dd62fb252a895022ac2a743`.
 It combines the accepted 16-case neutral model/contract and source-locked
 native-v1 mapping extension with a pure composition reducer, typed receipt
 admission, durable SQLite recovery, an independent verifier, a reference
@@ -43,8 +43,11 @@ dual-lost-ack experiment, and standalone publication/relocation lanes are also
 closed at their exact locked identities. Clean local and Docker gates,
 exact-SHA remote CI, downloaded-artifact reverification, and the combined
 receipt close only this bounded research claim. The documentation-only receipt
-commit is lineage, not a replacement implementation identity. This is not
-Roadmap Stage 5.
+commit is lineage, not a replacement implementation identity. The cumulative
+`bounded-joint-handoff-refinement-v2` successor is a candidate: it inherits all
+v1 axes and adds one admission-ordered real-Wasmtime logical-request commit
+witness. It is not earned until exact-governance-SHA CI, permanent evidence
+archival, and its closing receipt complete. This is not Roadmap Stage 5.
 
 Last reviewed: 2026-07-17.
 
@@ -495,7 +498,7 @@ acceptance.
 Exact-binary process tests pass against that revision. A generated receipt SHA
 and locally built binary SHA identify one run, not the revision; final artifacts
 retain the executed binary bytes and bind them by content without claiming a
-reproducible source-to-binary derivation. The supplemental logical-request cell
+reproducible source-to-binary derivation. The older supplemental logical-request cell
 binds the completed logical operation through the Nexus effect cohort,
 ownership Prepared/Commit, and Closure. The ownership fault commits with SQLite
 WAL and `synchronous=FULL` before suppressing the Commit acknowledgement;
@@ -505,6 +508,29 @@ only a byte-identical replay under the same request ID. The external logical
 request, native Register, Prepare, and Commit each execute once, but in that
 order: the cell is post-hoc observational binding, not Nexus admission of the
 external effect or a vISA freeze/fence/activation vertical.
+
+The candidate successor adds a separate logical-request admission cell. The
+testing crate stages the previewed Wasmtime operation through the production
+Registry in an independent Nexus process before it may emit the application
+request. A suppressed Nexus Commit acknowledgement is recovered by
+same-request-ID byte-identical replay in the same live child; this does not prove
+Nexus process-death durability. Counters prove zero external executions before
+the Registry-backed Commit is accepted and one afterward. The outcome joins the
+admitted cohort. A separate durable ownership Commit acknowledgement is then
+suppressed and recovered after SQLite reopen by query and exact retry, after
+which the cell performs Nexus frozen-cohort closure, the vISA source fence,
+destination guarded activation, and Reconcile without duplicate execution.
+
+That admission cell is one same-boot commit-path witness. It does not execute
+the neutral abort or retained-tombstone paths, all 16 schedules, real service
+death, or dual Stage 3 worker processes. It also does not subsume the older
+logical artifact's terminal Nexus close-response-loss boundary. Its manifest
+and report retain schemas `visa.logical-request-admission-artifact.v1` and
+`visa.logical-request-admission-ordered-cell.v1`; those schema versions are not
+the project claim v1 identity. The outer project claim registry and eventual
+immutable closure receipt bind those bytes to the candidate v2 identity without
+rewriting them. This testing composition is not yet a formal production
+`visa-nexus` adapter.
 
 The standalone process-cell publisher requires clean exact vISA and Nexus
 checkouts, validates both source locks and the Nexus receipt, publishes a strict
@@ -520,15 +546,17 @@ without rewriting retained evidence. That revision, rather than the later
 documentation-only receipt commit, is the implementation identity for this
 claim.
 
-Therefore `bounded-joint-handoff-refinement-v1` is accepted only for its named
-same-boot research boundary. Clean local and Docker gates, exact-SHA remote CI,
-final artifact publication, independent post-download verification, and the
-combined closing receipt completed for the same implementation identity. The
-current architecture does not establish host reboot or permanent source-loss
-recovery, real OSTD execution, IRQ/SMP behavior, Registry replacement, the
-production retained-tombstone path, cross-host transport, Byzantine
-ownership-service behavior, cryptographic receipt authenticity, hostile-storage
-anti-rollback or freshness, TEE/KMS behavior, confidentiality, or production
+Therefore `bounded-joint-handoff-refinement-v1` remains earned only for its
+named same-boot research boundary. Candidate
+`bounded-joint-handoff-refinement-v2` is its cumulative current identity only
+after adding the admission witness; it does not invalidate or rename v1. The
+current architecture does not establish dual Stage 3 workers/processes, host
+reboot or permanent-source-loss recovery, real OSTD/IRQ/SMP/DMA execution,
+Registry replacement, the production retained-tombstone path, cross-host
+transport, provider-enforced raw-bypass prevention, Byzantine ownership-service
+behavior, cryptographic receipt authenticity, hostile-storage anti-rollback or
+freshness, raw TCP continuation, general exactly-once behavior, TEE/KMS,
+confidentiality, source-to-binary reproducibility, performance, or production
 readiness.
 
 ## Canonical state versus native binding

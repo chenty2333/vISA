@@ -112,13 +112,16 @@ and commit/abort.
 
 Opaque snapshots can preserve machine state, but they do not establish whether
 an external effect completed, whether old authority is irreversibly closed, or
-whether an observed ownership decision is fresh. The accepted bounded
-systems/research claim `bounded-joint-handoff-refinement-v1` evaluates whether a
+whether an observed ownership decision is fresh. The earned historical bounded
+systems/research claim `bounded-joint-handoff-refinement-v1`, and its cumulative
+candidate successor `bounded-joint-handoff-refinement-v2`, evaluate whether a
 minimal semantic handoff layer can compose three separate authorities without
 copying any of their native state: vISA portable continuity, one durable
-ownership decision, and native closure of the frozen source effect cohort.
+ownership decision, and native closure of the frozen source effect cohort. The
+v2 identity inherits the complete v1 evidence composition; it does not rename
+the v1 neutral wire, source locks, registries, or receipts.
 
-The accepted claim is deliberately same-boot. Its vISA implementation identity
+The earned v1 claim is deliberately same-boot. Its vISA implementation identity
 is `d3b07f1114cb49e26dd62fb252a895022ac2a743`; this receipt-only documentation
 lineage records acceptance without replacing that identity. Its source lock
 pins remote-accepted neutral implementation
@@ -153,9 +156,22 @@ two distinct acknowledgement-loss boundaries: ownership Commit after its
 durable SQLite transaction, and the terminal Nexus close response after the
 child produced it but before the adapter accepted it. Exact query and same-
 request replay recover one decision and one accepted native receipt-chain
-entry. The logical-request cell is supplemental post-hoc binding: it neither
+entry. The older logical-request cell is supplemental post-hoc binding: it neither
 places Nexus admission before the external effect nor executes the vISA runtime
 handoff lifecycle.
+
+The v2 candidate adds a different real-Wasmtime logical-request witness. The
+testing cell stages the previewed operation through production-Registry-backed
+Nexus Register/Prepare/Commit, recovers a suppressed Commit acknowledgement by
+exact same-request replay in the same live child, and only then sends the
+application request. That recovery does not prove Nexus process-death
+durability. The external effect executes once. Its outcome joins the admitted
+cohort; ownership Commit survives a separate lost acknowledgement and SQLite
+reopen; Nexus frozen-cohort closure and the vISA source fence then precede
+destination activation and Reconcile. This is a single
+same-boot commit-path witness, not a live implementation of all 16 neutral
+schedules or a production live-wire adapter. It does not absorb the older cell,
+which uniquely tests terminal Nexus close-response loss.
 
 The threat model is same-boot crash-stop with named retry/reorder/lost-ACK
 faults. A non-equivocating, no-rollback ownership log, both local SQLite stores,
@@ -164,15 +180,17 @@ remain in the TCB. Authentication is test identity/integrity binding rather than
 cryptographic freshness, and progress depends on recovery services eventually
 becoming available.
 
-This work is not Stage 5. Exact-SHA CI for the accepted vISA implementation and
-all four post-download verifier paths passed against the committed locks,
-closing only the named same-boot bounded systems/research claim. No result
-establishes Registry replacement, the production retained-tombstone path,
-real OSTD IRQ/SMP, host-reboot or permanent source-loss recovery, cross-host
-continuity, Byzantine
-ownership-service safety, cryptographic authenticity, anti-rollback or
-freshness, TEE or KMS behavior, confidentiality, or production readiness. Stage
-5 remains not started.
+This work is not Stage 5. Exact-SHA CI and post-download verification closed v1.
+Preliminary exact-SHA CI also exercised the v2 admission witness, but v2 remains
+`candidate` until the final governance SHA and permanent archive are bound by a
+closure receipt. Neither identity establishes dual Stage 3 workers/processes,
+Registry replacement, the production retained-tombstone path, real OSTD,
+IRQ/SMP/DMA, host-reboot or permanent-source-loss recovery, cross-host
+continuity, provider-enforced raw-bypass prevention, Byzantine ownership safety,
+cryptographic authenticity, anti-rollback or freshness, raw TCP continuation,
+general exactly-once behavior, TEE/KMS behavior, confidentiality,
+source-to-binary reproducibility, performance, or production readiness. Stage 5
+remains not started.
 
 ## Desired outcomes
 

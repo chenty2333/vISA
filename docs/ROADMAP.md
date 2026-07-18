@@ -40,6 +40,9 @@ platform matrix without replacing the architecture.
 Status: complete. Durable project truth is concentrated in the README and six
 canonical documents; active feature specifications remain temporary execution
 plans and are removed after their accepted decisions are extracted.
+`claims/registry.json` is a mechanical identity/lifecycle index over those
+sources, not an eighth narrative source and not an authority that can define or
+expand claim scope or evidence semantics.
 
 Goal: establish one current project boundary and an honest development and
 validation surface before expanding behavior.
@@ -54,6 +57,9 @@ Exit conditions:
   the `pre-architecture-reset-2026-07-11` tag;
 - local and CI commands refer to the same gate implementation;
 - current test coverage and claim limitations are documented; and
+- the claim registry and README index agree exactly with canonical scope and
+  validation sections, while runtime state, evidence reports, source locks, and
+  closure receipts retain their existing ownership; and
 - the next implementation work is the capability below, not another broad
   semantic family expansion.
 
@@ -66,6 +72,9 @@ Status: complete for the named reference cell using isolated vISA Wasmtime
 adapter processes on x86-64 Linux, host-process isolation, and the durable
 SQLite timer/KV provider. All 31 registered cases executed and their evidence
 bundle passed independent validation.
+
+Claim earned: `cooperative-stateful-component-handoff` for this named 31-case
+Wasmtime timer/KV cell.
 
 This is the first architecture-complete capability. Its completed baseline does
 not expand any of the exclusions below.
@@ -466,15 +475,36 @@ timer/KV profile and the exact Hx/Qx/Qa cells above.
 
 ## Accepted research track: bounded joint-handoff refinement
 
-Status: complete for the named same-boot boundary. The accepted claim is
-`bounded-joint-handoff-refinement-v1`; it is an independent bounded research
-track before Stage 5, not evidence that Stage 5 has started. Its evidence
-remains split between the neutral composition, vISA HostSubstrate, Nexus-local
-refinement, and exact-binary process axes; no axis may stand in for another.
-The accepted vISA implementation identity is
+Status: `bounded-joint-handoff-refinement-v1` is earned for the named same-boot
+boundary. The cumulative successor `bounded-joint-handoff-refinement-v2` is a
+candidate pending exact-governance-SHA CI, permanent evidence archival, and a
+closure receipt. This is an independent bounded research track before Stage 5,
+not evidence that Stage 5 has started. Its evidence remains split between the
+neutral composition, vISA HostSubstrate, Nexus-local refinement, exact-binary
+process, and logical-request axes; no axis may stand in for another. The earned
+v1 vISA implementation identity is
 `d3b07f1114cb49e26dd62fb252a895022ac2a743`. The later documentation-only
 receipt commit records lineage and does not replace that implementation
 identity.
+
+<!-- claim-semantic-contract:bounded-joint-handoff-refinement-v2:scope:start -->
+The normative v2 scope is the complete earned v1 evidence composition plus one
+same-boot, admission-ordered logical-request commit witness. In that added
+witness, the Nexus production Registry accepts the frozen request cohort before
+the external Wasmtime operation is emitted; the operation executes once; a
+durable ownership Commit acknowledgement is recovered after SQLite reopen; and
+Nexus closure, the vISA source fence, guarded destination activation, and
+Reconcile complete in order. V2 does not rename or replace any v1 wire, lock,
+schema, artifact, receipt, implementation identity, or evidence axis.
+
+This scope does not claim Nexus child-death recovery, all neutral schedules in
+one live cell, live abort or retained-tombstone execution, dual Stage 3 worker
+processes, a production adapter, provider-enforced raw-bypass prevention,
+cross-host or reboot/permanent-source-loss recovery, Registry replacement, real
+OSTD/IRQ/SMP/DMA execution, general exactly-once semantics, cryptographic
+freshness, TEE/KMS behavior, source-to-binary reproducibility, performance, or
+production readiness.
+<!-- claim-semantic-contract:bounded-joint-handoff-refinement-v2:scope:end -->
 
 The track asks whether vISA semantic freeze, one durable non-equivocating
 ownership decision, and native closure of a frozen effect cohort can compose
@@ -566,6 +596,29 @@ retained-device recovery, real OSTD/IRQ/SMP, reboot recovery, or cross-host
 execution. Native and neutral wire v1 remain frozen; new provider capabilities
 belong to v2 or an explicitly versioned extension.
 
+The v2 candidate inherits the complete v1 neutral 16-case, TLA+, reference,
+abort, retained-tombstone, HostSubstrate, Nexus-local, and process evidence. It
+adds one real-Wasmtime commit-path witness. The testing cell stages the
+previewed source operation through Register/Prepare/Commit on the independent
+Nexus process and its production Registry; the application request is not
+emitted until that Commit is accepted. A suppressed Nexus Commit
+acknowledgement recovers by the same request ID and a byte-identical response in
+the same live child; this does not prove Nexus process-death recovery. The
+application effect then executes once, its outcome joins the admitted cohort, a
+durable ownership Commit
+acknowledgement is suppressed and recovered after SQLite reopen by query and
+exact retry, and the cell completes Nexus frozen-cohort closure, vISA source
+fence, destination guarded activation, and destination Reconcile. Counters stay
+at zero external executions before Nexus Commit and one after Reconcile.
+
+This new lane does not replace the supplemental dual-lost-ACK artifact: only the
+older cell drops the terminal Nexus close response after the child produced it.
+The new cell is one commit-path witness, not a live implementation of all 16
+neutral schedules, abort or retained-tombstone execution, a dual-worker/process
+Stage 3 implementation, or a production adapter. Its preliminary exact-SHA run
+at `4314a181ded0862d7b1c7054f57f1bafd0595f07` is supporting evidence, not
+closure for the later governance revision.
+
 The standalone process publisher now owns a strict three-file
 manifest/report/executed-binary artifact; the supplemental logical publisher owns
 a strict five-file artifact including two SQLite databases and the same binary
@@ -573,7 +626,7 @@ content identity. Download verification does not re-execute the retained binary
 and does not treat normalized file mode as evidence. Both publishers bind clean
 implementation revision `d3b07f1114cb49e26dd62fb252a895022ac2a743`.
 
-Closure completed at the final exact revisions: the clean vISA joint cell
+The v1 closure completed at its final exact revisions: the clean vISA joint cell
 consumed the neutral source lock and separate Nexus v2 qualification lock;
 local and Docker repository gates, the dedicated joint gate, and pushed
 exact-SHA CI passed for the implementation revision; the combined receipt kept
@@ -584,11 +637,14 @@ canonical documents and removes that temporary execution specification in the
 same receipt commit. It does not add implementation behavior or widen the
 accepted claim.
 
-No current result establishes real OSTD or IRQ/SMP execution, Registry
-replacement, the production retained-tombstone path, host reboot or permanent
-source-loss recovery, cross-host transport, Byzantine ownership-service
+Neither v1 nor candidate v2 establishes dual Stage 3 workers/processes,
+cross-host or host-reboot/permanent-source-loss recovery, Registry replacement,
+the production retained-tombstone path, real OSTD/IRQ/SMP/DMA execution,
+provider-enforced protection against raw bypass, Byzantine ownership-service
 behavior, cryptographic receipt authenticity, hostile-storage anti-rollback or
-freshness, TEE/KMS behavior, confidentiality, or production readiness.
+freshness, raw TCP continuation, general exactly-once semantics, cross-runtime
+or cross-ISA logical-request continuity, TEE/KMS behavior, confidentiality,
+source-to-binary reproducibility, performance, or production readiness.
 
 ## Stage 5: Confidential continuity profile
 

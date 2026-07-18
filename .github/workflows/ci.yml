@@ -15,6 +15,32 @@ env:
   DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
+  claim-closure-verification:
+    name: Project claim closure verification
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact vISA SHA with history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify project claim closure receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAIM_CLOSURE_REPOSITORY: ${{ github.repository }}
+          CLAIM_CLOSURE_BASELINE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: >-
+          python3 scripts/check-claim-closures.py --online
+          --repository "$CLAIM_CLOSURE_REPOSITORY"
+          --baseline "$CLAIM_CLOSURE_BASELINE"
+
   docker-quality-gate:
     name: Docker repository quality gate
     runs-on: ubuntu-latest
@@ -105,26 +131,38 @@ jobs:
         include:
           - lane: stage1
             label: Stage 1 reference
+            binding: stage1
+            claims: "cooperative-stateful-component-handoff:regresses"
             tier: system
             artifact: stage1-system-evidence
           - lane: jco-node
             label: Stage 2b JcoNode
+            binding: jco-node
+            claims: "cross-execution-path-portability:supports"
             tier: system-jco-node
             artifact: stage2b-jco-node-system-evidence
           - lane: legacy-stage2
             label: legacy Stage 2
+            binding: legacy-stage2
+            claims: "cross-execution-path-portability:regresses"
             tier: system-stage2
             artifact: stage2-cross-execution-path-evidence
           - lane: strict-stage2
             label: Strict Stage 2
+            binding: strict-stage2
+            claims: "strict-cross-runtime-continuity:regresses"
             tier: system-stage2-strict
             artifact: strict-stage2-docker-evidence
           - lane: stage3a
             label: Stage 3A regular-file
+            binding: stage3a
+            claims: "bounded-regular-file-continuity:regresses"
             tier: system-stage3a
             artifact: stage3a-regular-file-system-evidence
           - lane: stage3b
             label: Stage 3B logical-request
+            binding: stage3b
+            claims: "bounded-logical-request-continuity:regresses"
             tier: system-stage3b
             artifact: stage3b-logical-request-system-evidence
     steps:
@@ -188,14 +226,19 @@ jobs:
       - name: Run ${{ matrix.label }} gate
         id: claim_gate
         env:
+          CLAIM_BINDING_ID: ${{ matrix.binding }}
+          CLAIM_BINDINGS: ${{ matrix.claims }}
           LANE: ${{ matrix.lane }}
           TIER: ${{ matrix.tier }}
         run: |
           rm -rf .ci-artifacts
           mkdir -p .ci-artifacts
+          printf 'Claim binding: %s; claims: %s\n' \
+            "$CLAIM_BINDING_ID" "$CLAIM_BINDINGS" \
+            > ".ci-artifacts/${LANE}-ci.log"
           set -o pipefail
           scripts/run-docker-ci-gate.sh --ci-cache --skip-build "$TIER" 2>&1 \
-            | tee ".ci-artifacts/${LANE}-ci.log"
+            | tee -a ".ci-artifacts/${LANE}-ci.log"
 
       - name: Upload ${{ matrix.label }} evidence
         if: ${{ always() && (steps.claim_gate.outcome == 'success' || steps.claim_gate.outcome == 'failure') }}
@@ -280,12 +323,18 @@ jobs:
 
       - name: Stage 4 target/substrate and cross-ISA aggregate gate
         id: stage4_system_gate
+        env:
+          CLAIM_BINDING_ID: stage4
+          CLAIM_BINDINGS: "emulated-cross-isa-continuity-v1:regresses,named-target-substrate-continuity-v1:regresses"
         run: |
           rm -rf .ci-artifacts
           mkdir -p .ci-artifacts
+          printf 'Claim binding: %s; claims: %s\n' \
+            "$CLAIM_BINDING_ID" "$CLAIM_BINDINGS" \
+            > .ci-artifacts/stage4-ci.log
           set -o pipefail
           scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage4 2>&1 \
-            | tee .ci-artifacts/stage4-ci.log
+            | tee -a .ci-artifacts/stage4-ci.log
 
       - name: Upload Stage 4 system evidence
         if: ${{ always() && (steps.stage4_system_gate.outcome == 'success' || steps.stage4_system_gate.outcome == 'failure') }}
@@ -367,12 +416,18 @@ jobs:
 
       - name: Joint handoff reference-only system gate
         id: joint_reference_gate
+        env:
+          CLAIM_BINDING_ID: joint-reference
+          CLAIM_BINDINGS: "bounded-joint-handoff-refinement-v1:regresses,bounded-joint-handoff-refinement-v2:required"
         run: |
           rm -rf .ci-artifacts
           mkdir -p .ci-artifacts
+          printf 'Claim binding: %s; claims: %s\n' \
+            "$CLAIM_BINDING_ID" "$CLAIM_BINDINGS" \
+            > .ci-artifacts/joint-handoff-reference-ci.log
           set -o pipefail
           scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-joint-handoff 2>&1 \
-            | tee .ci-artifacts/joint-handoff-reference-ci.log
+            | tee -a .ci-artifacts/joint-handoff-reference-ci.log
 
       - name: Upload joint handoff reference-only evidence
         if: ${{ always() && (steps.joint_reference_gate.outcome == 'success' || steps.joint_reference_gate.outcome == 'failure') }}
@@ -433,12 +488,18 @@ jobs:
 
       - name: Run Nexus + vISA same-boot qualification
         id: nexus_qualification
+        env:
+          CLAIM_BINDING_ID: joint-nexus
+          CLAIM_BINDINGS: "bounded-joint-handoff-refinement-v1:regresses,bounded-joint-handoff-refinement-v2:required"
         run: |
           set -Eeuo pipefail
           rm -rf .ci-artifacts
           mkdir -p .ci-artifacts
           gate_log=.ci-artifacts/nexus-visa-same-boot-qualification-ci.log
           : > "$gate_log"
+          printf 'Claim binding: %s; claims: %s\n' \
+            "$CLAIM_BINDING_ID" "$CLAIM_BINDINGS" \
+            | tee -a "$gate_log"
 
           run_logged() {
             "$@" 2>&1 | tee -a "$gate_log"
@@ -484,7 +545,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' \
-            'Claim boundary: clean exact-SHA same-boot Nexus-local refinement, process-backed joint handoff, and one bounded admission-ordered Wasmtime logical-request/lost-ACK handoff. The admission artifact checks production Registry admission before external send, one source execution, ownership recovery, source closure and fence, destination activation, and Reconcile inside this host cell; the older logical-request dual-lost-ACK artifact remains supplemental. This is a host-build qualification, not a vISA Docker-image lane, and does not claim Registry replacement, retained tombstone, cross-host/reboot/permanent-source-loss recovery, Byzantine/rollback/freshness or TEE/KMS, raw TCP capture, real service death/OSTD/IRQ/SMP, a production live-wire adapter, general exactly-once semantics, or performance.' \
+            'Claim registry: bounded-joint-handoff-refinement-v2; scope: docs/ROADMAP.md :: Accepted research track: bounded joint-handoff refinement; validation: docs/VALIDATION.md :: Admission-ordered successor qualification.' \
             | tee -a "$gate_log"
 
       - name: Upload Nexus + vISA same-boot qualification evidence
@@ -505,6 +566,7 @@ jobs:
     name: Exact-SHA qualification closure
     if: ${{ always() }}
     needs:
+      - claim-closure-verification
       - docker-quality-gate
       - docker-claim-gates
       - docker-stage4-gate
@@ -515,6 +577,9 @@ jobs:
     steps:
       - name: Require every independent qualification lane
         env:
+          CLAIM_BINDING_ID: exact-sha-closure
+          CLAIM_BINDINGS: "bounded-joint-handoff-refinement-v2:required"
+          CLAIM_CLOSURE_RESULT: ${{ needs.claim-closure-verification.result }}
           QUALITY_RESULT: ${{ needs.docker-quality-gate.result }}
           CLAIMS_RESULT: ${{ needs.docker-claim-gates.result }}
           STAGE4_RESULT: ${{ needs.docker-stage4-gate.result }}
@@ -526,6 +591,9 @@ jobs:
             echo
             echo "- SHA: \`${GITHUB_SHA}\`"
             echo "- Run: \`${GITHUB_RUN_ID}\`"
+            echo "- Claim binding: \`${CLAIM_BINDING_ID}\`"
+            echo "- Claims: \`${CLAIM_BINDINGS}\`"
+            echo "- Claim closure verification: \`${CLAIM_CLOSURE_RESULT}\`"
             echo "- Repository quality: \`${QUALITY_RESULT}\`"
             echo "- Stage 1-3 claim lanes: \`${CLAIMS_RESULT}\`"
             echo "- Stage 4 claim lane: \`${STAGE4_RESULT}\`"
@@ -534,13 +602,14 @@ jobs:
             echo "- Image tag: \`visa-dev:${GITHUB_SHA}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$QUALITY_RESULT" != success \
+          if [[ "$CLAIM_CLOSURE_RESULT" != success \
+              || "$QUALITY_RESULT" != success \
               || "$CLAIMS_RESULT" != success \
               || "$STAGE4_RESULT" != success \
               || "$JOINT_REFERENCE_RESULT" != success \
               || "$JOINT_NEXUS_RESULT" != success ]]; then
-            printf '::error title=vISA exact-SHA closure failed::quality=%s claims=%s stage4=%s joint-reference=%s joint-nexus=%s\n' \
-              "$QUALITY_RESULT" "$CLAIMS_RESULT" "$STAGE4_RESULT" \
+            printf '::error title=vISA exact-SHA closure failed::claim-closure=%s quality=%s claims=%s stage4=%s joint-reference=%s joint-nexus=%s\n' \
+              "$CLAIM_CLOSURE_RESULT" "$QUALITY_RESULT" "$CLAIMS_RESULT" "$STAGE4_RESULT" \
               "$JOINT_REFERENCE_RESULT" "$JOINT_NEXUS_RESULT"
             exit 1
           fi

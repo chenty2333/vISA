@@ -1,0 +1,386 @@
+{
+  "schema": "visa.project-claim-registry.v1",
+  "claims": [
+    {
+      "id": "bounded-joint-handoff-refinement-v1",
+      "track": "joint-handoff",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Accepted research track: bounded joint-handoff refinement"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Joint-handoff closure receipt"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Joint-handoff closure receipt"
+      },
+      "implementation_refs": [
+        "crates/testing/visa-conformance/src/joint_handoff/verify.rs",
+        "third_party/joint-handoff-qualification/source-lock.json",
+        "third_party/joint-handoff-qualification/wire-v1.toml"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "bounded-joint-handoff-refinement-v2",
+      "track": "joint-handoff",
+      "status": "candidate",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Accepted research track: bounded joint-handoff refinement"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Admission-ordered successor qualification"
+      },
+      "acceptance_ref": {
+        "kind": "pending-permanent-archive-receipt",
+        "path": "claims/receipts/bounded-joint-handoff-refinement-v2.json",
+        "heading": null,
+        "receipt_sha256": null,
+        "semantic_contracts": {
+          "scope_sha256": "360a21ad0884a90709c7ff8b1cdad20a3a39649c308ca8e06e2e8d76473162b0",
+          "validation_sha256": "554899e1ae31118ffd2bed2893fda7f6921ea3c2154df030ad8d0c621cfa6ef7"
+        },
+        "evidence_axes": [
+          "admission-ordered-logical-request",
+          "exact-binary-process",
+          "exact-sha-closure",
+          "neutral-refinement",
+          "nexus-local-refinement",
+          "supplemental-logical-request",
+          "visa-host-substrate"
+        ],
+        "source_repositories": [
+          "chenty2333/Nexus",
+          "chenty2333/vISA",
+          "chenty2333/visa-nexus-handoff"
+        ],
+        "workflow_artifacts": [
+          "joint-handoff-reference-system-evidence",
+          "nexus-visa-same-boot-qualification-evidence"
+        ]
+      },
+      "implementation_refs": [
+        "crates/testing/visa-joint-handoff-system/src/bin/logical-request-admission.rs",
+        "crates/testing/visa-joint-handoff-system/src/logical_request_admission_cell.rs",
+        "crates/testing/visa-joint-handoff-system/src/logical_request_admission_verify.rs",
+        "scripts/run-logical-request-admission-cell.sh"
+      ],
+      "predecessor_ids": [
+        "bounded-joint-handoff-refinement-v1"
+      ]
+    },
+    {
+      "id": "bounded-logical-request-continuity",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 3: Rich external resources"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/testing/visa-conformance/src/stage3/model.rs",
+        "crates/testing/visa-conformance/src/stage3/verify.rs",
+        "wit/logical-request-continuity/world.wit"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "bounded-regular-file-continuity",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 3: Rich external resources"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/testing/visa-conformance/src/stage3/model.rs",
+        "crates/testing/visa-conformance/src/stage3/verify.rs",
+        "wit/regular-file-continuity/world.wit"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "cooperative-stateful-component-handoff",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 1: Cooperative Stateful Component Handoff"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/testing/visa-system/src/runner/stage1.rs",
+        "wit/cooperative-handoff/world.wit"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "cross-execution-path-portability",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 2: Independent runtime portability"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/runtime/visa_jco_node/src/lib.rs",
+        "crates/testing/visa-conformance/src/stage2/verify.rs"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "emulated-cross-isa-continuity-v1",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 4: Target, ISA, and substrate qualification"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/testing/visa-conformance/src/stage4/model.rs",
+        "crates/testing/visa-conformance/src/stage4/verify.rs"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "named-target-substrate-continuity-v1",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 4: Target, ISA, and substrate qualification"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/testing/visa-conformance/src/stage4/model.rs",
+        "crates/testing/visa-conformance/src/stage4/verify.rs"
+      ],
+      "predecessor_ids": []
+    },
+    {
+      "id": "strict-cross-runtime-continuity",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/ROADMAP.md",
+        "heading": "Stage 2: Independent runtime portability"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Claim-evidence matrix"
+      },
+      "implementation_refs": [
+        "crates/runtime/visa_wacogo/src/lib.rs",
+        "crates/testing/visa-conformance/src/stage2/strict_verify.rs"
+      ],
+      "predecessor_ids": []
+    }
+  ],
+  "workflow_bindings": [
+    {
+      "id": "exact-sha-closure",
+      "job": "exact-sha-closure",
+      "matrix_lane": null,
+      "tier": null,
+      "artifact": null,
+      "claims": [
+        {
+          "id": "bounded-joint-handoff-refinement-v2",
+          "role": "required"
+        }
+      ]
+    },
+    {
+      "id": "jco-node",
+      "job": "docker-claim-gates",
+      "matrix_lane": "jco-node",
+      "tier": "system-jco-node",
+      "artifact": "stage2b-jco-node-system-evidence",
+      "claims": [
+        {
+          "id": "cross-execution-path-portability",
+          "role": "supports"
+        }
+      ]
+    },
+    {
+      "id": "joint-nexus",
+      "job": "docker-joint-handoff-nexus-qualification",
+      "matrix_lane": null,
+      "tier": null,
+      "artifact": "nexus-visa-same-boot-qualification-evidence",
+      "claims": [
+        {
+          "id": "bounded-joint-handoff-refinement-v1",
+          "role": "regresses"
+        },
+        {
+          "id": "bounded-joint-handoff-refinement-v2",
+          "role": "required"
+        }
+      ]
+    },
+    {
+      "id": "joint-reference",
+      "job": "docker-joint-handoff-reference-gate",
+      "matrix_lane": null,
+      "tier": "system-joint-handoff",
+      "artifact": "joint-handoff-reference-system-evidence",
+      "claims": [
+        {
+          "id": "bounded-joint-handoff-refinement-v1",
+          "role": "regresses"
+        },
+        {
+          "id": "bounded-joint-handoff-refinement-v2",
+          "role": "required"
+        }
+      ]
+    },
+    {
+      "id": "legacy-stage2",
+      "job": "docker-claim-gates",
+      "matrix_lane": "legacy-stage2",
+      "tier": "system-stage2",
+      "artifact": "stage2-cross-execution-path-evidence",
+      "claims": [
+        {
+          "id": "cross-execution-path-portability",
+          "role": "regresses"
+        }
+      ]
+    },
+    {
+      "id": "stage1",
+      "job": "docker-claim-gates",
+      "matrix_lane": "stage1",
+      "tier": "system",
+      "artifact": "stage1-system-evidence",
+      "claims": [
+        {
+          "id": "cooperative-stateful-component-handoff",
+          "role": "regresses"
+        }
+      ]
+    },
+    {
+      "id": "stage3a",
+      "job": "docker-claim-gates",
+      "matrix_lane": "stage3a",
+      "tier": "system-stage3a",
+      "artifact": "stage3a-regular-file-system-evidence",
+      "claims": [
+        {
+          "id": "bounded-regular-file-continuity",
+          "role": "regresses"
+        }
+      ]
+    },
+    {
+      "id": "stage3b",
+      "job": "docker-claim-gates",
+      "matrix_lane": "stage3b",
+      "tier": "system-stage3b",
+      "artifact": "stage3b-logical-request-system-evidence",
+      "claims": [
+        {
+          "id": "bounded-logical-request-continuity",
+          "role": "regresses"
+        }
+      ]
+    },
+    {
+      "id": "stage4",
+      "job": "docker-stage4-gate",
+      "matrix_lane": null,
+      "tier": "system-stage4",
+      "artifact": "stage4-target-isa-system-evidence",
+      "claims": [
+        {
+          "id": "emulated-cross-isa-continuity-v1",
+          "role": "regresses"
+        },
+        {
+          "id": "named-target-substrate-continuity-v1",
+          "role": "regresses"
+        }
+      ]
+    },
+    {
+      "id": "strict-stage2",
+      "job": "docker-claim-gates",
+      "matrix_lane": "strict-stage2",
+      "tier": "system-stage2-strict",
+      "artifact": "strict-stage2-docker-evidence",
+      "claims": [
+        {
+          "id": "strict-cross-runtime-continuity",
+          "role": "regresses"
+        }
+      ]
+    }
+  ]
+}
