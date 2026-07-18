@@ -279,9 +279,14 @@ python3 scripts/check-release-contract.py --release-ready
 ```
 
 The first command is part of `fast` and validates the frozen contract and its
-current pending/satisfied partition. The second is the fail-closed release
-admission command; it intentionally fails until every listed closure item has
-exact release evidence.
+current pending/satisfied partition. The target fixes a six-process product
+topology: one short-lived controller, two direct-execution Wasmtime agents, one
+independent ownership service, one Nexus adapter service, and its one native-v1
+peer child. It also keeps controller/agent, agent/ownership, and agent/Nexus
+local UDS schemas independent and bounds every frame at 1 MiB; large artifacts
+remain digest-plus-secure-path or descriptor references. The second command is
+the fail-closed release admission command; it intentionally fails until every
+listed closure item has exact, receipt-backed release evidence.
 
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,

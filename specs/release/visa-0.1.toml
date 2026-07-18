@@ -1,6 +1,6 @@
 schema = "visa.release-contract.v1"
 contract_id = "visa-product-0.1"
-contract_revision = 1
+contract_revision = 2
 status = "frozen-target-not-release-ready"
 product_name = "vISA"
 product_version = "0.1.0"
@@ -16,6 +16,7 @@ wit_package = "component-model-package-semver-with-exact-source-bytes"
 neutral_wire = "visa-nexus-handoff-neutral-wire-version"
 nexus_wire = "nexus-effect-peer-native-wire-version"
 provider_spi = "in-tree-rust-source-contract-only"
+local_rpc = "independent-versioned-schema-per-local-process-boundary"
 rust_trait_abi = "not-defined"
 
 [scope]
@@ -25,18 +26,144 @@ operating_system = "linux"
 architecture = "x86_64"
 endianness = "little"
 pointer_width_bits = 64
-source_destination_topology = "two-distinct-visa-agent-processes"
-orchestrator_topology = "separate-visa-cli-or-controller-process"
-effect_provider_topology = "separate-nexus-effect-peer-process"
-stage3_worker_protocol = "visa-agent-local-v1"
-stage3_worker_transport = "bounded-json-lines-lf-over-stdio"
-cli_agent_transport = "filesystem-unix-domain-socket"
-cli_agent_socket_mode = "0600"
-cli_agent_peer_identity = "linux-so-peercred-same-uid"
+maximum_active_processes = 6
+source_destination_topology = "two-long-lived-visa-agent-processes"
+agent_execution_model = "in-process-wasmtime-local-provider-profile-sink-and-durable-projection"
+orchestrator_topology = "one-short-lived-visa-cli-controller-process"
+ownership_service_topology = "one-independent-visa-ownershipd-process"
+nexus_adapter_topology = "one-independent-visa-nexusd-process"
+effect_provider_topology = "one-nexus-effect-peer-child-of-visa-nexusd"
+controller_child_processes = "none"
+agent_child_processes = "none"
+local_control_transport = "bounded-json-lines-lf-over-filesystem-unix-stream"
 effect_provider_transport = "bounded-json-lines-lf"
 network_control_transport = false
 failure_model = "same-boot-crash-stop-retry-reorder-lost-ack"
 host_reboot_supported = false
+
+[process_topology]
+controller_processes = 1
+agent_processes = 2
+ownership_service_processes = 1
+nexus_adapter_processes = 1
+nexus_effect_peer_processes = 1
+maximum_active_processes = 6
+source_agent_role = "source-wasmtime-local-provider-profile-sink-and-durable-projection"
+destination_agent_role = "destination-wasmtime-local-provider-profile-sink-and-durable-projection"
+ownership_service_role = "sole-durable-reservation-seal-abort-commit-and-query-authority"
+nexus_adapter_role = "sole-native-v1-adapter-dispatch-grant-ledger-and-peer-supervisor"
+nexus_effect_peer_role = "sole-in-memory-authoritative-nexus-registry"
+controller_role = "short-lived-orchestrator-client-with-no-durable-decision-authority"
+registry_owner_during_controller_or_agent_crash = "nexus-effect-peer-owned-by-visa-nexusd"
+forbidden_topologies = [
+  "controller-owned-agent-worker",
+  "agent-owned-stdio-worker-child",
+  "controller-or-agent-owned-ownership-database",
+  "controller-or-agent-owned-nexus-effect-peer",
+]
+
+[local_rpc_defaults]
+profile = "visa.local-uds-jsonl.v1"
+transport = "bounded-json-lines-lf-over-filesystem-unix-stream"
+encoding = "utf-8-json-deny-unknown-fields"
+max_frame_bytes_excluding_lf = 1048576
+max_inflight_mutations_per_connection = 1
+large_artifact_policy = "digest-plus-secure-path-or-fd-reference-never-inline"
+frame_limit_basis = "measured-existing-jsonl-max-53663-native-and-profile-chunks-65536-product-jsonl-cap-1048576"
+measured_existing_jsonl_max_bytes = 53663
+durable_native_request_bound_bytes = 65536
+profile_response_chunk_bound_bytes = 65536
+existing_product_jsonl_bound_bytes = 1048576
+headroom_policy = "one-mib-control-envelope-with-large-artifacts-out-of-band"
+runtime_directory = "${XDG_RUNTIME_DIR}/visa/0.1"
+runtime_directory_mode = "0700"
+socket_mode = "0600"
+peer_identity = "linux-so-peercred-same-uid"
+security_boundary = "local-tcb-admission-and-integrity-not-malicious-same-uid-authentication-or-tenant-isolation"
+socket_path_policy = "short-role-name-and-platform-sun-path-preflight"
+symlink_policy = "reject-runtime-dir-and-socket-symlinks"
+network_transport = false
+
+[cli_agent_rpc_v1]
+status = "required-but-unsatisfied"
+schema = "visa.agent.control.v1"
+protocol_major = 1
+protocol_minor = 0
+framing_profile = "visa.local-uds-jsonl.v1"
+client = "visa-controller"
+servers = ["source-visa-agent", "destination-visa-agent"]
+required_operations = ["status", "run", "handoff", "reconcile", "verify-evidence"]
+handshake = "exact-product-protocol-role-and-executable-sha256-before-mutation"
+request_replay = "same-id-same-canonical-bytes-same-response-conflicting-bytes-rejected"
+timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort"
+schema_path = ""
+schema_sha256 = ""
+golden_corpus_path = ""
+golden_corpus_sha256 = ""
+
+[agent_ownership_rpc_v1]
+status = "required-but-unsatisfied"
+schema = "visa.ownership.local.v1"
+protocol_major = 1
+protocol_minor = 0
+framing_profile = "visa.local-uds-jsonl.v1"
+clients = ["source-visa-agent", "destination-visa-agent"]
+server = "visa-ownershipd"
+client_authority = "submit-idempotent-proposals-and-query-only-no-receipt-issuance-or-local-decision"
+required_operations = ["initialize-unit", "reserve", "seal", "abort", "commit", "query"]
+handshake = "exact-product-protocol-role-service-incarnation-and-executable-sha256-before-mutation"
+request_replay = "same-id-same-canonical-bytes-same-receipt-conflicting-bytes-rejected"
+timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort"
+schema_path = ""
+schema_sha256 = ""
+golden_corpus_path = ""
+golden_corpus_sha256 = ""
+
+[agent_nexus_rpc_v1]
+status = "required-but-unsatisfied"
+schema = "visa.nexus-adapter.local.v1"
+protocol_major = 1
+protocol_minor = 0
+framing_profile = "visa.local-uds-jsonl.v1"
+clients = ["source-visa-agent", "destination-visa-agent"]
+server = "visa-nexusd"
+required_operations = [
+  "descriptor",
+  "register",
+  "prepare",
+  "commit-and-authorize-dispatch",
+  "record-outcome",
+  "complete",
+  "freeze",
+  "thaw",
+  "close-step",
+  "query",
+]
+handshake = "exact-product-protocol-role-native-wire-family-service-incarnation-and-executable-sha256-before-mutation"
+request_replay = "same-id-same-canonical-bytes-byte-identical-response-or-grant-conflicting-bytes-rejected"
+timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort-or-dispatch"
+agent_crash_after_grant = "durable-armed-or-started-state-then-unknown-query-reconcile-never-grant-triggered-redispatch"
+schema_path = ""
+schema_sha256 = ""
+golden_corpus_path = ""
+golden_corpus_sha256 = ""
+
+[ownership_service]
+status = "required-but-unsatisfied"
+binary = "visa-ownershipd"
+decision_authority = "sole-reserve-seal-abort-commit-authority"
+storage = "single-sqlite-wal-full"
+single_writer = "exclusive-process-lock-plus-immediate-transactions"
+issuer_identity = "persisted-and-rechecked-across-process-restart"
+decision_request_policy = "client-requests-are-proposals-service-state-machine-alone-issues-immutable-receipts"
+database_path_policy = "xdg-state-home-versioned-private-path"
+database_parent_mode = "0700"
+database_mode = "0600"
+controller_store_access = "none"
+agent_store_access = "none-rpc-only"
+nexus_store_access = "none"
+release_source_revision = ""
+release_executable_sha256 = ""
 
 [portable_contract]
 crate = "contract_core"
@@ -82,60 +209,66 @@ extension_major = 1
 extension_minor = 0
 release_disposition = "required"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "contract_core"
 path = "crates/core/contract_core/Cargo.toml"
 version = "0.3.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "joint_handoff_core"
 path = "crates/core/joint_handoff_core/Cargo.toml"
 version = "0.1.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "visa_profile"
 path = "crates/core/visa_profile/Cargo.toml"
 version = "0.2.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "semantic_core"
 path = "crates/core/semantic_core/Cargo.toml"
 version = "0.2.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "substrate_api"
 path = "crates/backend/substrate_api/Cargo.toml"
 version = "0.2.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "substrate_host"
 path = "crates/backend/substrate_host/Cargo.toml"
 version = "0.1.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "visa_runtime"
 path = "crates/runtime/visa_runtime/Cargo.toml"
 version = "0.2.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "visa_joint_handoff"
 path = "crates/runtime/visa_joint_handoff/Cargo.toml"
 version = "0.1.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "visa_component_adapter"
 path = "crates/runtime/visa_component_adapter/Cargo.toml"
 version = "0.1.0"
 
-[[crate_lock]]
+[[build_crate_lock]]
 name = "visa_wasmtime"
 path = "crates/runtime/visa_wasmtime/Cargo.toml"
 version = "0.2.0"
 
-[implementation_lock]
+[build_provenance]
+classification = "release-build-provenance-not-wire-or-product-compatibility"
 wasmtime = "43.0.2"
 rusqlite = "0.40.1-bundled"
-cargo_lock = "required-at-exact-release-tag"
+postcard = "1.1.3"
+cargo_lock_path = "Cargo.lock"
+cargo_lock_sha256 = "7a85d5797581ee9665ce9cff97b52c6f4604ccc3cae6b7bf94c695cbdd48a304"
+rust_toolchain_path = "rust-toolchain.toml"
+rust_toolchain_sha256 = "265d3cd0dc82929f39070011132b143bf58f28bb287011f61d36b95d5b4471cc"
+exact_release_tag_receipt = "required-but-unsatisfied"
 rust_trait_abi = "not-promised"
 
 [[wit_lock]]
@@ -218,6 +351,28 @@ canonical_encoding = "postcard-1.1.3"
 bytes_hex = "0100010001000000000000000000000000000000000700000000000000000000000000000008090000000000000000000000000000000a020a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0000000000000000000000000000000c0000000000000000000000000000000d010e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0202aa550000000000000000000000000000001001000100000000000000000000000000000011010000000000000000000000000000001204000105000000000000000000000000000000130107010000000000000000000000000000001400000064f953e59559e19d0bd4822984b470d2ad2d6dad6e120f1eefb26f4939b35a7e"
 sha256 = "001ef85c3a98b842f2e817e263985fa533847e254e65d62403919ea5ac235d2f"
 
+[release_semantic_corpus]
+status = "required-but-unsatisfied"
+seed_vectors_status = "representative-seeds-only-not-release-closure"
+inventory_schema = "visa.release-semantic-type-inventory.v1"
+corpus_schema = "visa.release-semantic-golden-corpus.v1"
+required_crates = ["contract_core", "joint_handoff_core", "visa_profile"]
+coverage_rule = "every-durable-or-public-serialized-type-and-every-enum-variant"
+required_checks = [
+  "exact-canonical-encode",
+  "decode-round-trip",
+  "unknown-and-trailing-byte-rejection",
+  "optional-empty-nonempty-and-bounded-extrema",
+  "rust-constructed-corpus-not-source-literal-presence",
+]
+inventory_path = ""
+inventory_sha256 = ""
+corpus_path = ""
+corpus_sha256 = ""
+generator_source_revision = ""
+verifier_receipt_path = ""
+verifier_receipt_sha256 = ""
+
 [neutral_wire_v1]
 status = "frozen"
 schema = "visa-nexus-handoff.wire-contract.v1"
@@ -263,7 +418,12 @@ local_sha256 = ""
 
 [nexus_wire_artifact]
 status = "required-but-unsatisfied"
-kind = "lightweight-versioned-crate-or-release-artifact"
+kind = "nexus-owned-native-v1-wire-crate-or-release-bundle"
+wire_family = "nexus-effect-peer-native-v1"
+freeze_contract_id = "nexus-effect-peer-native-v1"
+license = "MPL-2.0"
+portal_v2_eligible = false
+freeze_origin_revision = "cb773539401107efe7a7ad036b80ff40d8ec305c"
 artifact_id = ""
 source_revision = ""
 sha256 = ""
@@ -290,7 +450,7 @@ protocol_major = 2
 protocol_minor = 0
 stability = "rust-source-preview"
 provider_identity_in_trait = false
-release_adapter_identity = "exact-nexus-revision-plus-executable-sha256-plus-observed-child-executable"
+release_adapter_identity = "exact-visa-nexusd-revision-and-executable-plus-exact-nexus-revision-and-observed-child-executable"
 required_capabilities = [
   "effect-admission",
   "outcome-recording",
@@ -299,8 +459,30 @@ required_capabilities = [
   "freeze-thaw",
   "commit-close",
 ]
+release_adapter_revision = ""
+release_adapter_executable_sha256 = ""
 release_provider_revision = ""
 release_provider_executable_sha256 = ""
+
+[provider_dispatch_fence]
+status = "required-but-unsatisfied"
+registry_process = "nexus-effect-peer"
+registry_supervisor_and_native_adapter = "visa-nexusd"
+native_commit_validation = "visa-nexusd-validates-exact-native-v1-commit-receipt-and-chain"
+central_grant_rule = "visa-nexusd-atomically-consumes-one-exact-native-commit-into-one-exact-dispatch-grant"
+central_grant_replay = "same-request-id-and-bytes-return-byte-identical-grant-never-a-different-grant"
+serializable_grant_boundary = "commit-evidence-for-agent-validation-not-a-same-process-dispatch-permit"
+grant_binding = "effect-operation-id-idempotency-key-agent-role-agent-incarnation-native-receipt-and-request-digests"
+agent_local_validation = "exact-grant-and-durable-local-projection-must-match-before-mint"
+agent_local_authorization = "private-non-clone-ProfileDispatchAuthorization-minted-and-consumed-in-one-agent-process"
+agent_local_recovery = "persist-grant-and-armed-or-started-before-sink-after-crash-unknown-query-reconcile-never-grant-triggered-redispatch"
+regular_file_sink_process = "corresponding-visa-agent"
+logical_request_sink_process = "corresponding-visa-agent"
+controller_sink_access = "none"
+visa_nexusd_sink_access = "none"
+same_process_requirement = "authorize-dispatch-and-real-profile-sink-call-share-one-trusted-agent-process"
+existing_committed_effect_permit_equivalence = false
+grant_security_claim = "same-uid-local-tcb-replay-and-bypass-control-not-cryptographic-unforgeability"
 
 [[public_surface]]
 id = "visa-cli"
@@ -315,11 +497,40 @@ exit_code_policy = "required-but-unsatisfied"
 id = "visa-agent"
 binary = "visa-agent"
 status = "required-but-unsatisfied"
-frozen_boundary = "binary-name-worker-role-and-control-transport"
+frozen_boundary = "binary-name-direct-runtime-role-local-sink-and-control-transport"
 required_responsibilities = [
-  "source-worker",
-  "destination-worker",
-  "visa-agent-local-v1-stdio-worker",
+  "source-or-destination-agent-selected-at-startup",
+  "in-process-wasmtime-runtime",
+  "in-process-local-provider-and-profile-sink",
+  "durable-local-projection",
+  "same-uid-filesystem-uds-service",
+]
+typed_outcomes = "required-but-unsatisfied"
+exit_code_policy = "required-but-unsatisfied"
+
+[[public_surface]]
+id = "visa-ownershipd"
+binary = "visa-ownershipd"
+status = "required-but-unsatisfied"
+frozen_boundary = "binary-name-single-authority-role-store-and-local-rpc"
+required_responsibilities = [
+  "exclusive-ownership-store",
+  "reserve-seal-abort-commit-query",
+  "restart-and-exact-request-replay",
+  "same-uid-filesystem-uds-service",
+]
+typed_outcomes = "required-but-unsatisfied"
+exit_code_policy = "required-but-unsatisfied"
+
+[[public_surface]]
+id = "visa-nexusd"
+binary = "visa-nexusd"
+status = "required-but-unsatisfied"
+frozen_boundary = "binary-name-native-v1-adapter-grant-ledger-peer-supervisor-and-local-rpc"
+required_responsibilities = [
+  "exclusive-nexus-effect-peer-child-supervision",
+  "native-v1-validation-and-neutral-v2-mapping",
+  "single-exact-dispatch-grant-ledger",
   "same-uid-filesystem-uds-service",
 ]
 typed_outcomes = "required-but-unsatisfied"
@@ -331,6 +542,9 @@ required_release_cells = [
   "single-host-wasmtime-bounded-regular-file",
   "single-host-wasmtime-bounded-logical-request",
   "single-host-wasmtime-nexus-joint-handoff",
+  "single-host-six-process-role-inventory",
+  "single-host-agent-and-ownershipd-crash-reconnect",
+  "single-host-provider-dispatch-fence-at-real-profile-sinks",
 ]
 currently_release_supported_cells = []
 reject_at_admission = [
@@ -339,7 +553,14 @@ reject_at_admission = [
   "wit-source-byte-digest-mismatch",
   "component-or-profile-digest-mismatch",
   "provider-implementation-revision-or-executable-digest-mismatch",
+  "local-rpc-schema-role-frame-limit-or-executable-digest-mismatch",
+  "ownership-database-opened-outside-visa-ownershipd",
+  "second-ownership-writer-or-receipt-issuer",
   "neutral-wire-nexus-freeze-or-v2-mapping-mismatch",
+  "nexus-portal-v2-artifact-in-native-v1-slot",
+  "serialized-dispatch-proof-used-directly-as-local-sink-permit",
+  "respawned-nexus-peer-presented-as-the-original-registry",
+  "stdio-agent-worker-or-controller-owned-agent-topology",
   "non-linux-non-x86_64-cross-host-or-cross-boot-request",
   "raw-live-tcp-continuity",
   "effect-closure-provider-v2-preview-without-the-versioned-nexus-adapter",
@@ -350,6 +571,13 @@ non_claims = [
   "mtls-cryptographic-receipt-authenticity-freshness-or-anti-rollback",
   "byzantine-ownership-provider-or-host-safety",
   "real-nexus-ostd-irq-smp-or-retained-device-recovery",
+  "nexus-portal-v2-integration-or-kernel-backend",
+  "visa-nexusd-or-nexus-effect-peer-crash-progress-recovery",
+  "serializable-dispatch-grant-as-same-process-provider-permit",
+  "hostile-same-uid-ptrace-or-process-memory-safety",
+  "same-uid-authentication-credential-separation-or-tenant-isolation",
+  "cryptographic-unforgeability-of-local-dispatch-grants",
+  "agent-worker-stdio-subprocess-or-network-control-transport",
   "tee-kms-attestation-or-confidential-continuity",
   "universal-exactly-once-effects",
   "arbitrary-open-file-descriptor-directory-device-or-raw-tcp-continuity",
@@ -359,14 +587,58 @@ non_claims = [
   "production-slo-security-hardening-performance-or-general-market-readiness",
 ]
 
+[[failure_matrix]]
+role = "visa-controller"
+crash_safety = "no-durable-authority-to-lose"
+progress_recovery = "restart-and-reconnect-to-both-agents"
+registry_after_crash = "unchanged-in-nexus-effect-peer"
+source_disposition_after_crash = "unchanged-until-authoritative-query-and-reconcile"
+forbidden_fallback = "infer-abort-commit-or-dispatch-from-local-cache"
+
+[[failure_matrix]]
+role = "visa-agent"
+crash_safety = "durable-local-projection-reopens-fail-closed"
+progress_recovery = "restart-reconnect-query-and-exact-rpc-replay"
+registry_after_crash = "unchanged-in-nexus-effect-peer-owned-by-visa-nexusd"
+source_disposition_after_crash = "durable-local-state-reopened-then-authoritative-query-and-reconcile"
+forbidden_fallback = "blind-redispatch-or-local-ownership-decision"
+
+[[failure_matrix]]
+role = "visa-ownershipd"
+crash_safety = "sqlite-wal-full-preserves-one-non-equivocating-decision"
+progress_recovery = "restart-with-same-store-issuer-query-and-exact-replay"
+registry_after_crash = "unchanged-in-nexus-effect-peer"
+source_disposition_after_crash = "unchanged-by-service-restart-and-governed-by-the-durable-decision"
+forbidden_fallback = "second-writer-new-issuer-or-timeout-as-abort"
+
+[[failure_matrix]]
+role = "visa-nexusd"
+crash_safety = "terminal-phase-relative-fail-closed-no-new-dispatch-or-fabricated-closure"
+progress_recovery = "unsupported-in-0.1"
+registry_after_crash = "child-registry-is-not-reconnectable-or-replaceable"
+source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retains-prior-disposition-never-inferred-frozen"
+forbidden_fallback = "respawn-peer-or-mint-replacement-grant"
+
+[[failure_matrix]]
+role = "nexus-effect-peer"
+crash_safety = "terminal-phase-relative-fail-closed-no-new-dispatch-or-fabricated-closure"
+progress_recovery = "unsupported-in-0.1"
+registry_after_crash = "lost-in-memory-registry-cannot-be-recreated-as-the-same-authority"
+source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retains-prior-disposition-never-inferred-frozen"
+forbidden_fallback = "respawn-replay-as-original-registry-or-infer-effect-closure"
+
 [admission]
 schema_check = "python3 scripts/check-release-contract.py"
 release_ready_check = "python3 scripts/check-release-contract.py --release-ready"
 fail_closed_dimensions = [
   "product-version",
-  "crate-versions",
   "contract-joint-profile-and-resource-versions",
-  "postcard-golden-vectors",
+  "release-build-provenance",
+  "six-process-role-and-authority-topology",
+  "three-independent-local-rpc-schemas-and-golden-corpora",
+  "ownership-single-writer-store-issuer-and-replay",
+  "provider-dispatch-grant-and-agent-local-sink-authorization",
+  "postcard-seed-vectors-and-complete-semantic-corpus",
   "wit-package-ids-worlds-and-source-bytes",
   "neutral-wire-bytes",
   "nexus-freeze-contract-and-canonical-snapshot",
@@ -376,34 +648,70 @@ fail_closed_dimensions = [
   "release-readiness-closure",
 ]
 
+[evidence_policy]
+hash_algorithm = "sha-256"
+source_revision = "exact-40-hex-git-commit"
+required_for_every_satisfied_id = [
+  "evidence-path",
+  "evidence-sha256",
+  "source-revision",
+  "verifier-receipt-path",
+  "verifier-receipt-sha256",
+]
+path_policy = "repository-relative-regular-file-no-symlink"
+receipt_policy = "machine-readable-verifier-command-result-and-input-digests"
+
 [readiness]
 release_ready = false
 required_ids = [
   "contract-schema-frozen",
+  "process-topology-frozen",
   "public-cli",
   "public-agent",
+  "public-ownership-service",
+  "public-nexus-adapter-service",
+  "cli-agent-rpc-v1",
+  "agent-ownership-rpc-v1",
+  "agent-nexus-rpc-v1",
+  "ownership-single-writer-restart-replay",
   "stage3-dual-process",
   "visa-nexus-adapter",
   "provider-enforced-fence",
-  "release-semantic-golden-vectors",
+  "release-semantic-golden-corpus",
   "nexus-freeze-local-source-lock",
-  "nexus-wire-release-artifact",
+  "nexus-native-v1-wire-artifact",
   "neutral-nexus-mapping-v2",
-  "compatibility-recovery-observability-supply-chain",
+  "compatibility-matrix",
+  "crash-recovery-and-replay",
+  "observability-and-evidence",
+  "supply-chain-license-and-artifact-locks",
   "external-workload",
   "exact-tag-release-evidence",
 ]
-satisfied_ids = ["contract-schema-frozen", "release-semantic-golden-vectors"]
+satisfied_ids = []
 pending_ids = [
+  "contract-schema-frozen",
+  "process-topology-frozen",
   "public-cli",
   "public-agent",
+  "public-ownership-service",
+  "public-nexus-adapter-service",
+  "cli-agent-rpc-v1",
+  "agent-ownership-rpc-v1",
+  "agent-nexus-rpc-v1",
+  "ownership-single-writer-restart-replay",
   "stage3-dual-process",
   "visa-nexus-adapter",
   "provider-enforced-fence",
+  "release-semantic-golden-corpus",
   "nexus-freeze-local-source-lock",
-  "nexus-wire-release-artifact",
+  "nexus-native-v1-wire-artifact",
   "neutral-nexus-mapping-v2",
-  "compatibility-recovery-observability-supply-chain",
+  "compatibility-matrix",
+  "crash-recovery-and-replay",
+  "observability-and-evidence",
+  "supply-chain-license-and-artifact-locks",
   "external-workload",
   "exact-tag-release-evidence",
 ]
+evidence = []

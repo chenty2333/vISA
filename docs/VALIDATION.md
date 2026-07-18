@@ -194,9 +194,12 @@ The fast tier is the ordinary edit loop: formatting, locked metadata, strict
 linting and focused tests for the active spine, plus strict dependency direction
 and the [vISA 0.1 exact-version target-contract](../specs/release/visa-0.1.md)
 checker/self-tests. The default contract check proves that frozen identifiers,
-versions, digests, and the explicit pending/satisfied partition still match; it
-does not make the separate `--release-ready` admission pass. The tier proves
-local logic and structural direction, not adapter or continuity behavior.
+versions, digests, the six-process role/authority topology, three independent
+bounded local UDS contracts, and the explicit pending/satisfied partition still
+match. It also validates every attached satisfied-ID evidence path, digest,
+exact revision, and verifier receipt. It does not make the separate
+`--release-ready` admission pass. The tier proves local logic and structural
+direction, not implemented adapter or continuity behavior.
 
 ### Full
 
@@ -862,7 +865,13 @@ same-boot Linux x86-64 product cell and its version/digest boundaries. Its
 default checker is implemented in `fast`; release admission is a separate
 fail-closed `python3 scripts/check-release-contract.py --release-ready` command.
 The current contract is explicitly not release-ready and claims no supported
-product cell.
+product cell. The target topology is one short-lived controller, two long-lived
+agents that directly host Wasmtime and their real profile sinks, one independent
+SQLite ownership authority, and one `visa-nexusd` supervising one native-v1
+peer. Controller/agent/ownership/Nexus RPCs are local UDS only. Agent and
+controller crash recovery may reconnect to the surviving Registry; adapter or
+peer crash is terminal fail-closed in 0.1 and cannot be disguised by respawning
+a replacement Registry.
 
 The release tier reruns system scenarios in declared runtime/ISA/substrate
 cells with pinned inputs and provenance, then adds stress, recovery,

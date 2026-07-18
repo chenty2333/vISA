@@ -49,7 +49,9 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_current_contract_is_schema_valid_but_not_release_ready(self) -> None:
         pending = CHECKER.validate()
-        self.assertEqual(pending, CHECKER.EXPECTED_PENDING_IDS)
+        document = CHECKER.load_contract()
+        self.assertEqual(pending, document["readiness"]["pending_ids"])
+        self.assertEqual(document["readiness"]["satisfied_ids"], [])
 
     def test_release_ready_mode_fails_closed_on_pending_items(self) -> None:
         result = subprocess.run(
@@ -62,7 +64,7 @@ class ReleaseContractTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("release closure is incomplete", result.stderr)
-        self.assertIn("nexus-wire-release-artifact", result.stderr)
+        self.assertIn("nexus-native-v1-wire-artifact", result.stderr)
 
     def test_product_version_drift_is_rejected(self) -> None:
         path = self.mutated_contract('product_version = "0.1.0"', 'product_version = "0.1.1"')
@@ -75,6 +77,70 @@ class ReleaseContractTests(unittest.TestCase):
             'cargo_crate = "same-as-product-semver"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "version namespaces drifted"):
+            CHECKER.validate(path)
+
+    def test_six_process_topology_cannot_grow_a_worker_child(self) -> None:
+        path = self.mutated_contract(
+            'agent_child_processes = "none"',
+            'agent_child_processes = "one-worker-per-agent"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "single-host scope drifted"):
+            CHECKER.validate(path)
+
+    def test_six_process_inventory_is_exact(self) -> None:
+        path = self.mutated_contract(
+            "maximum_active_processes = 6\nsource_destination_topology",
+            "maximum_active_processes = 7\nsource_destination_topology",
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "single-host scope drifted"):
+            CHECKER.validate(path)
+
+    def test_local_rpc_frame_limit_cannot_reuse_the_test_worker_limit(self) -> None:
+        path = self.mutated_contract(
+            "max_frame_bytes_excluding_lf = 1048576",
+            "max_frame_bytes_excluding_lf = 16777216",
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "local RPC defaults drifted"):
+            CHECKER.validate(path)
+
+    def test_local_rpc_frame_measurement_is_frozen(self) -> None:
+        path = self.mutated_contract(
+            "measured_existing_jsonl_max_bytes = 53663",
+            "measured_existing_jsonl_max_bytes = 53664",
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "local RPC defaults drifted"):
+            CHECKER.validate(path)
+
+    def test_local_rpc_namespaces_cannot_be_conflated(self) -> None:
+        path = self.mutated_contract(
+            'schema = "visa.ownership.local.v1"',
+            'schema = "visa.agent.control.v1"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "agent-ownership RPC v1 drifted"):
+            CHECKER.validate(path)
+
+    def test_same_uid_boundary_cannot_be_promoted_to_tenant_authentication(self) -> None:
+        path = self.mutated_contract(
+            'security_boundary = "local-tcb-admission-and-integrity-not-malicious-same-uid-authentication-or-tenant-isolation"',
+            'security_boundary = "malicious-same-uid-authentication-and-tenant-isolation"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "local RPC defaults drifted"):
+            CHECKER.validate(path)
+
+    def test_ownership_authority_cannot_move_into_an_agent(self) -> None:
+        path = self.mutated_contract(
+            'decision_authority = "sole-reserve-seal-abort-commit-authority"',
+            'decision_authority = "source-agent-or-ownershipd"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "ownership service drifted"):
+            CHECKER.validate(path)
+
+    def test_ownership_store_cannot_be_opened_by_an_agent(self) -> None:
+        path = self.mutated_contract(
+            'agent_store_access = "none-rpc-only"',
+            'agent_store_access = "direct-sqlite"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "ownership service drifted"):
             CHECKER.validate(path)
 
     def test_crate_version_lock_drift_is_rejected(self) -> None:
@@ -146,6 +212,14 @@ bytes_hex = "0100"'''
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "release semantic vectors drifted"):
             CHECKER.validate(path)
 
+    def test_seed_vectors_cannot_close_the_semantic_corpus(self) -> None:
+        path = self.mutated_contract(
+            'seed_vectors_status = "representative-seeds-only-not-release-closure"',
+            'seed_vectors_status = "complete-release-corpus"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "semantic corpus closure drifted"):
+            CHECKER.validate(path)
+
     def test_neutral_wire_bytes_drift_is_rejected(self) -> None:
         document = CHECKER.load_contract()
         paths = [
@@ -179,9 +253,58 @@ bytes_hex = "0100"'''
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "Nexus native-v1 freeze drifted"):
             CHECKER.validate(path)
 
+    def test_portal_v2_cannot_fill_the_native_v1_artifact_slot(self) -> None:
+        path = self.mutated_contract(
+            'wire_family = "nexus-effect-peer-native-v1"',
+            'wire_family = "nexus.portal.v2"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "Nexus wire release artifact drifted"):
+            CHECKER.validate(path)
+
+    def test_serialized_grant_cannot_be_declared_the_in_process_permit(self) -> None:
+        path = self.mutated_contract(
+            "existing_committed_effect_permit_equivalence = false",
+            "existing_committed_effect_permit_equivalence = true",
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "provider dispatch fence drifted"):
+            CHECKER.validate(path)
+
+    def test_dispatch_grant_retry_must_be_byte_identical(self) -> None:
+        path = self.mutated_contract(
+            'central_grant_replay = "same-request-id-and-bytes-return-byte-identical-grant-never-a-different-grant"',
+            'central_grant_replay = "retry-may-mint-a-new-grant"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "provider dispatch fence drifted"):
+            CHECKER.validate(path)
+
+    def test_nexusd_crash_cannot_be_promoted_to_progress_recovery(self) -> None:
+        old = '''role = "visa-nexusd"
+crash_safety = "terminal-phase-relative-fail-closed-no-new-dispatch-or-fabricated-closure"
+progress_recovery = "unsupported-in-0.1"'''
+        new = old.replace('progress_recovery = "unsupported-in-0.1"', 'progress_recovery = "respawn-peer"')
+        path = self.mutated_contract(old, new)
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "process failure matrix drifted"):
+            CHECKER.validate(path)
+
+    def test_adapter_crash_cannot_infer_that_a_pre_freeze_source_is_frozen(self) -> None:
+        old = '''role = "visa-nexusd"
+crash_safety = "terminal-phase-relative-fail-closed-no-new-dispatch-or-fabricated-closure"
+progress_recovery = "unsupported-in-0.1"
+registry_after_crash = "child-registry-is-not-reconnectable-or-replaceable"
+source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retains-prior-disposition-never-inferred-frozen"'''
+        path = self.mutated_contract(
+            old,
+            old.replace(
+                "already-frozen-remains-frozen-pre-freeze-retains-prior-disposition-never-inferred-frozen",
+                "source-is-always-frozen",
+            ),
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "process failure matrix drifted"):
+            CHECKER.validate(path)
+
     def test_provider_identity_requirement_drift_is_rejected(self) -> None:
         path = self.mutated_contract(
-            'release_adapter_identity = "exact-nexus-revision-plus-executable-sha256-plus-observed-child-executable"',
+            'release_adapter_identity = "exact-visa-nexusd-revision-and-executable-plus-exact-nexus-revision-and-observed-child-executable"',
             'release_adapter_identity = "provider-name-only"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "provider SPI drifted"):
@@ -202,7 +325,7 @@ bytes_hex = "0100"'''
 
     def test_release_ready_boolean_alone_cannot_close_pending_work(self) -> None:
         path = self.mutated_contract("release_ready = false", "release_ready = true")
-        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "must not claim release readiness"):
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "derived release-ready state drifted"):
             CHECKER.validate(path)
 
     def test_supported_cells_cannot_be_claimed_before_closure(self) -> None:
@@ -213,10 +336,73 @@ bytes_hex = "0100"'''
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "current release support drifted"):
             CHECKER.validate(path)
 
+    def test_satisfied_id_requires_exact_evidence_and_verifier_receipt(self) -> None:
+        document = CHECKER.load_contract()
+        readiness = document["readiness"]
+        readiness_id = readiness["pending_ids"].pop(0)
+        readiness["satisfied_ids"].append(readiness_id)
+        evidence_path = "evidence/contract.json"
+        receipt_path = "evidence/receipt.json"
+        evidence_bytes = b'{"contract_revision":2,"schema":"visa.release-contract.v1"}\n'
+        evidence_sha = CHECKER.hashlib.sha256(evidence_bytes).hexdigest()
+        evidence_file = self.root / evidence_path
+        evidence_file.parent.mkdir(parents=True)
+        evidence_file.write_bytes(evidence_bytes)
+        revision = "a" * 40
+        receipt = {
+            "schema": "visa.release-readiness-verifier-receipt.v1",
+            "readiness_id": readiness_id,
+            "source_revision": revision,
+            "verifier_command": "python3 scripts/check-release-contract.py",
+            "result": "passed",
+            "input_sha256": {evidence_path: evidence_sha},
+        }
+        receipt_bytes = (CHECKER.json.dumps(receipt, sort_keys=True) + "\n").encode()
+        receipt_file = self.root / receipt_path
+        receipt_file.write_bytes(receipt_bytes)
+        readiness["evidence"] = [
+            {
+                "id": readiness_id,
+                "evidence_path": evidence_path,
+                "evidence_sha256": evidence_sha,
+                "source_revision": revision,
+                "verifier_receipt_path": receipt_path,
+                "verifier_receipt_sha256": CHECKER.hashlib.sha256(receipt_bytes).hexdigest(),
+            }
+        ]
+        self.assertEqual(CHECKER.check_readiness(document, self.root), readiness["pending_ids"])
+
+    def test_satisfied_id_without_evidence_fails_closed(self) -> None:
+        document = CHECKER.load_contract()
+        readiness = document["readiness"]
+        readiness_id = readiness["pending_ids"].pop(0)
+        readiness["satisfied_ids"].append(readiness_id)
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "evidence coverage drifted"):
+            CHECKER.check_readiness(document, self.root)
+
+    def test_unknown_build_crate_lock_key_is_rejected(self) -> None:
+        old = '''[[build_crate_lock]]
+name = "contract_core"
+path = "crates/core/contract_core/Cargo.toml"
+version = "0.3.0"'''
+        path = self.mutated_contract(old, old + '\nunreviewed = "claim"')
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "build crate lock entry keys drifted"):
+            CHECKER.validate(path)
+
+    def test_unknown_wit_lock_key_is_rejected(self) -> None:
+        old = '''id = "cooperative-handoff"
+path = "wit/cooperative-handoff/world.wit"
+package = "visa:continuity@0.1.0"
+world = "cooperative-handoff"
+sha256 = "709eb08784d446068bbaed47dbfb1dddd637f957cf5de1f3713d5be0aa7d5920"'''
+        path = self.mutated_contract(old, old + '\nunreviewed = "claim"')
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "WIT lock entry keys drifted"):
+            CHECKER.validate(path)
+
     def test_unknown_contract_key_is_rejected(self) -> None:
         path = self.mutated_contract(
-            'contract_revision = 1',
-            'contract_revision = 1\nunreviewed_claim = "production-ready"',
+            'contract_revision = 2',
+            'contract_revision = 2\nunreviewed_claim = "production-ready"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "unknown=.*unreviewed_claim"):
             CHECKER.validate(path)

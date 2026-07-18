@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import stat
 import sys
@@ -26,15 +27,22 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "compatibility_policy",
     "version_namespaces",
     "scope",
+    "process_topology",
+    "local_rpc_defaults",
+    "cli_agent_rpc_v1",
+    "agent_ownership_rpc_v1",
+    "agent_nexus_rpc_v1",
+    "ownership_service",
     "portable_contract",
     "joint_protocol",
     "cooperative_profile",
     "resource_profile",
-    "crate_lock",
-    "implementation_lock",
+    "build_crate_lock",
+    "build_provenance",
     "wit_lock",
     "golden_vector",
     "release_semantic_vector",
+    "release_semantic_corpus",
     "neutral_wire_v1",
     "historical_nexus_mapping_v1",
     "nexus_native_v1",
@@ -42,9 +50,12 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "nexus_wire_artifact",
     "required_nexus_mapping_v2",
     "provider_spi",
+    "provider_dispatch_fence",
     "public_surface",
     "support_policy",
+    "failure_matrix",
     "admission",
+    "evidence_policy",
     "readiness",
 }
 
@@ -58,6 +69,7 @@ EXPECTED_VERSION_NAMESPACES = {
     "neutral_wire": "visa-nexus-handoff-neutral-wire-version",
     "nexus_wire": "nexus-effect-peer-native-wire-version",
     "provider_spi": "in-tree-rust-source-contract-only",
+    "local_rpc": "independent-versioned-schema-per-local-process-boundary",
     "rust_trait_abi": "not-defined",
 }
 
@@ -68,14 +80,16 @@ EXPECTED_SCOPE = {
     "architecture": "x86_64",
     "endianness": "little",
     "pointer_width_bits": 64,
-    "source_destination_topology": "two-distinct-visa-agent-processes",
-    "orchestrator_topology": "separate-visa-cli-or-controller-process",
-    "effect_provider_topology": "separate-nexus-effect-peer-process",
-    "stage3_worker_protocol": "visa-agent-local-v1",
-    "stage3_worker_transport": "bounded-json-lines-lf-over-stdio",
-    "cli_agent_transport": "filesystem-unix-domain-socket",
-    "cli_agent_socket_mode": "0600",
-    "cli_agent_peer_identity": "linux-so-peercred-same-uid",
+    "maximum_active_processes": 6,
+    "source_destination_topology": "two-long-lived-visa-agent-processes",
+    "agent_execution_model": "in-process-wasmtime-local-provider-profile-sink-and-durable-projection",
+    "orchestrator_topology": "one-short-lived-visa-cli-controller-process",
+    "ownership_service_topology": "one-independent-visa-ownershipd-process",
+    "nexus_adapter_topology": "one-independent-visa-nexusd-process",
+    "effect_provider_topology": "one-nexus-effect-peer-child-of-visa-nexusd",
+    "controller_child_processes": "none",
+    "agent_child_processes": "none",
+    "local_control_transport": "bounded-json-lines-lf-over-filesystem-unix-stream",
     "effect_provider_transport": "bounded-json-lines-lf",
     "network_control_transport": False,
     "failure_model": "same-boot-crash-stop-retry-reorder-lost-ack",
@@ -173,27 +187,36 @@ EXPECTED_REQUIRED_CELLS = [
     "single-host-wasmtime-bounded-regular-file",
     "single-host-wasmtime-bounded-logical-request",
     "single-host-wasmtime-nexus-joint-handoff",
+    "single-host-six-process-role-inventory",
+    "single-host-agent-and-ownershipd-crash-reconnect",
+    "single-host-provider-dispatch-fence-at-real-profile-sinks",
 ]
 
 EXPECTED_REQUIRED_IDS = [
     "contract-schema-frozen",
+    "process-topology-frozen",
     "public-cli",
     "public-agent",
+    "public-ownership-service",
+    "public-nexus-adapter-service",
+    "cli-agent-rpc-v1",
+    "agent-ownership-rpc-v1",
+    "agent-nexus-rpc-v1",
+    "ownership-single-writer-restart-replay",
     "stage3-dual-process",
     "visa-nexus-adapter",
     "provider-enforced-fence",
-    "release-semantic-golden-vectors",
+    "release-semantic-golden-corpus",
     "nexus-freeze-local-source-lock",
-    "nexus-wire-release-artifact",
+    "nexus-native-v1-wire-artifact",
     "neutral-nexus-mapping-v2",
-    "compatibility-recovery-observability-supply-chain",
+    "compatibility-matrix",
+    "crash-recovery-and-replay",
+    "observability-and-evidence",
+    "supply-chain-license-and-artifact-locks",
     "external-workload",
     "exact-tag-release-evidence",
 ]
-
-EXPECTED_SATISFIED_IDS = ["contract-schema-frozen", "release-semantic-golden-vectors"]
-EXPECTED_PENDING_IDS = [value for value in EXPECTED_REQUIRED_IDS if value not in EXPECTED_SATISFIED_IDS]
-
 
 class ReleaseContractError(RuntimeError):
     pass
@@ -282,7 +305,7 @@ def check_header(document: dict[str, Any]) -> None:
     expected = {
         "schema": "visa.release-contract.v1",
         "contract_id": "visa-product-0.1",
-        "contract_revision": 1,
+        "contract_revision": 2,
         "status": "frozen-target-not-release-ready",
         "product_name": "vISA",
         "product_version": "0.1.0",
@@ -292,6 +315,184 @@ def check_header(document: dict[str, Any]) -> None:
         require_exact_value(document.get(field), value, field)
     require_exact_value(document["version_namespaces"], EXPECTED_VERSION_NAMESPACES, "version namespaces")
     require_exact_value(document["scope"], EXPECTED_SCOPE, "single-host scope")
+
+
+def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) -> None:
+    require_exact_value(
+        document["process_topology"],
+        {
+            "controller_processes": 1,
+            "agent_processes": 2,
+            "ownership_service_processes": 1,
+            "nexus_adapter_processes": 1,
+            "nexus_effect_peer_processes": 1,
+            "maximum_active_processes": 6,
+            "source_agent_role": "source-wasmtime-local-provider-profile-sink-and-durable-projection",
+            "destination_agent_role": "destination-wasmtime-local-provider-profile-sink-and-durable-projection",
+            "ownership_service_role": "sole-durable-reservation-seal-abort-commit-and-query-authority",
+            "nexus_adapter_role": "sole-native-v1-adapter-dispatch-grant-ledger-and-peer-supervisor",
+            "nexus_effect_peer_role": "sole-in-memory-authoritative-nexus-registry",
+            "controller_role": "short-lived-orchestrator-client-with-no-durable-decision-authority",
+            "registry_owner_during_controller_or_agent_crash": "nexus-effect-peer-owned-by-visa-nexusd",
+            "forbidden_topologies": [
+                "controller-owned-agent-worker",
+                "agent-owned-stdio-worker-child",
+                "controller-or-agent-owned-ownership-database",
+                "controller-or-agent-owned-nexus-effect-peer",
+            ],
+        },
+        "six-process topology",
+    )
+    defaults = {
+        "profile": "visa.local-uds-jsonl.v1",
+        "transport": "bounded-json-lines-lf-over-filesystem-unix-stream",
+        "encoding": "utf-8-json-deny-unknown-fields",
+        "max_frame_bytes_excluding_lf": 1_048_576,
+        "max_inflight_mutations_per_connection": 1,
+        "large_artifact_policy": "digest-plus-secure-path-or-fd-reference-never-inline",
+        "frame_limit_basis": (
+            "measured-existing-jsonl-max-53663-native-and-profile-chunks-65536-"
+            "product-jsonl-cap-1048576"
+        ),
+        "measured_existing_jsonl_max_bytes": 53_663,
+        "durable_native_request_bound_bytes": 65_536,
+        "profile_response_chunk_bound_bytes": 65_536,
+        "existing_product_jsonl_bound_bytes": 1_048_576,
+        "headroom_policy": "one-mib-control-envelope-with-large-artifacts-out-of-band",
+        "runtime_directory": "${XDG_RUNTIME_DIR}/visa/0.1",
+        "runtime_directory_mode": "0700",
+        "socket_mode": "0600",
+        "peer_identity": "linux-so-peercred-same-uid",
+        "security_boundary": (
+            "local-tcb-admission-and-integrity-not-malicious-same-uid-authentication-or-"
+            "tenant-isolation"
+        ),
+        "socket_path_policy": "short-role-name-and-platform-sun-path-preflight",
+        "symlink_policy": "reject-runtime-dir-and-socket-symlinks",
+        "network_transport": False,
+    }
+    require_exact_value(document["local_rpc_defaults"], defaults, "local RPC defaults")
+    require(
+        defaults["measured_existing_jsonl_max_bytes"]
+        < defaults["max_frame_bytes_excluding_lf"],
+        "local RPC frame lacks measured-corpus headroom",
+    )
+    require_source_pattern(
+        root,
+        "crates/runtime/visa_joint_handoff/src/durable.rs",
+        r"^pub const MAX_NATIVE_REQUEST_BYTES: usize = 64 \* 1024;$",
+        "durable native request bound",
+    )
+    require_source_pattern(
+        root,
+        "crates/core/visa_profile/src/logical_request.rs",
+        r"^pub const MAX_LOGICAL_RESPONSE_CHUNK_BYTES: u32 = 64 \* 1024;$",
+        "logical-response chunk bound",
+    )
+    require_source_pattern(
+        root,
+        "crates/runtime/visa_jco_node/src/protocol.rs",
+        r"^pub\(crate\) const MAX_JSONL_MESSAGE_BYTES: usize = 1024 \* 1024;$",
+        "existing product JSONL bound",
+    )
+    common_pending = {
+        "status": "required-but-unsatisfied",
+        "protocol_major": 1,
+        "protocol_minor": 0,
+        "framing_profile": "visa.local-uds-jsonl.v1",
+        "schema_path": "",
+        "schema_sha256": "",
+        "golden_corpus_path": "",
+        "golden_corpus_sha256": "",
+    }
+    cli_agent = {
+        **common_pending,
+        "schema": "visa.agent.control.v1",
+        "client": "visa-controller",
+        "servers": ["source-visa-agent", "destination-visa-agent"],
+        "required_operations": ["status", "run", "handoff", "reconcile", "verify-evidence"],
+        "handshake": "exact-product-protocol-role-and-executable-sha256-before-mutation",
+        "request_replay": "same-id-same-canonical-bytes-same-response-conflicting-bytes-rejected",
+        "timeout_disposition": "unknown-query-or-exact-replay-never-inferred-abort",
+    }
+    ownership = {
+        **common_pending,
+        "schema": "visa.ownership.local.v1",
+        "clients": ["source-visa-agent", "destination-visa-agent"],
+        "server": "visa-ownershipd",
+        "client_authority": (
+            "submit-idempotent-proposals-and-query-only-no-receipt-issuance-or-local-decision"
+        ),
+        "required_operations": ["initialize-unit", "reserve", "seal", "abort", "commit", "query"],
+        "handshake": (
+            "exact-product-protocol-role-service-incarnation-and-executable-sha256-before-mutation"
+        ),
+        "request_replay": "same-id-same-canonical-bytes-same-receipt-conflicting-bytes-rejected",
+        "timeout_disposition": "unknown-query-or-exact-replay-never-inferred-abort",
+    }
+    nexus = {
+        **common_pending,
+        "schema": "visa.nexus-adapter.local.v1",
+        "clients": ["source-visa-agent", "destination-visa-agent"],
+        "server": "visa-nexusd",
+        "required_operations": [
+            "descriptor",
+            "register",
+            "prepare",
+            "commit-and-authorize-dispatch",
+            "record-outcome",
+            "complete",
+            "freeze",
+            "thaw",
+            "close-step",
+            "query",
+        ],
+        "handshake": (
+            "exact-product-protocol-role-native-wire-family-service-incarnation-and-"
+            "executable-sha256-before-mutation"
+        ),
+        "request_replay": (
+            "same-id-same-canonical-bytes-byte-identical-response-or-grant-conflicting-bytes-"
+            "rejected"
+        ),
+        "timeout_disposition": (
+            "unknown-query-or-exact-replay-never-inferred-abort-or-dispatch"
+        ),
+        "agent_crash_after_grant": (
+            "durable-armed-or-started-state-then-unknown-query-reconcile-never-grant-triggered-"
+            "redispatch"
+        ),
+    }
+    require_exact_value(document["cli_agent_rpc_v1"], cli_agent, "CLI-agent RPC v1")
+    require_exact_value(document["agent_ownership_rpc_v1"], ownership, "agent-ownership RPC v1")
+    require_exact_value(document["agent_nexus_rpc_v1"], nexus, "agent-Nexus RPC v1")
+    schemas = {cli_agent["schema"], ownership["schema"], nexus["schema"]}
+    require(len(schemas) == 3, "local RPC schemas must remain independent")
+
+    require_exact_value(
+        document["ownership_service"],
+        {
+            "status": "required-but-unsatisfied",
+            "binary": "visa-ownershipd",
+            "decision_authority": "sole-reserve-seal-abort-commit-authority",
+            "storage": "single-sqlite-wal-full",
+            "single_writer": "exclusive-process-lock-plus-immediate-transactions",
+            "issuer_identity": "persisted-and-rechecked-across-process-restart",
+            "decision_request_policy": (
+                "client-requests-are-proposals-service-state-machine-alone-issues-immutable-"
+                "receipts"
+            ),
+            "database_path_policy": "xdg-state-home-versioned-private-path",
+            "database_parent_mode": "0700",
+            "database_mode": "0600",
+            "controller_store_access": "none",
+            "agent_store_access": "none-rpc-only",
+            "nexus_store_access": "none",
+            "release_source_revision": "",
+            "release_executable_sha256": "",
+        },
+        "ownership service",
+    )
 
 
 def check_core_namespaces(document: dict[str, Any], root: Path) -> None:
@@ -422,10 +623,13 @@ def check_resource_profiles(document: dict[str, Any], root: Path) -> None:
 
 
 def check_crates_and_dependencies(document: dict[str, Any], root: Path) -> None:
-    entries = document["crate_lock"]
-    require(isinstance(entries, list), "crate_lock must be an array")
+    entries = document["build_crate_lock"]
+    require(isinstance(entries, list), "build_crate_lock must be an array")
+    for entry in entries:
+        require(isinstance(entry, dict), "build crate lock entries must be tables")
+        require_exact_keys(entry, {"name", "path", "version"}, "build crate lock entry")
     observed = [(entry.get("name"), entry.get("path"), entry.get("version")) for entry in entries]
-    require_exact_value(observed, EXPECTED_CRATES, "crate version locks")
+    require_exact_value(observed, EXPECTED_CRATES, "build crate version locks")
     for name, path, version in EXPECTED_CRATES:
         cargo = load_toml_bytes(read_regular_file(root, path, f"{name} manifest"), path)
         package = cargo.get("package")
@@ -433,17 +637,33 @@ def check_crates_and_dependencies(document: dict[str, Any], root: Path) -> None:
         require_exact_value(package.get("name"), name, f"{name} Cargo package name")
         require_exact_value(package.get("version"), version, f"{name} Cargo package version")
 
-    implementation = document["implementation_lock"]
+    implementation = document["build_provenance"]
     require_exact_value(
         implementation,
         {
+            "classification": "release-build-provenance-not-wire-or-product-compatibility",
             "wasmtime": "43.0.2",
             "rusqlite": "0.40.1-bundled",
-            "cargo_lock": "required-at-exact-release-tag",
+            "postcard": "1.1.3",
+            "cargo_lock_path": "Cargo.lock",
+            "cargo_lock_sha256": "7a85d5797581ee9665ce9cff97b52c6f4604ccc3cae6b7bf94c695cbdd48a304",
+            "rust_toolchain_path": "rust-toolchain.toml",
+            "rust_toolchain_sha256": "265d3cd0dc82929f39070011132b143bf58f28bb287011f61d36b95d5b4471cc",
+            "exact_release_tag_receipt": "required-but-unsatisfied",
             "rust_trait_abi": "not-promised",
         },
-        "implementation lock",
+        "build provenance",
     )
+    for path_field, digest_field in (
+        ("cargo_lock_path", "cargo_lock_sha256"),
+        ("rust_toolchain_path", "rust_toolchain_sha256"),
+    ):
+        raw = read_regular_file(root, implementation[path_field], "build provenance")
+        require_exact_value(
+            hashlib.sha256(raw).hexdigest(),
+            implementation[digest_field],
+            f"{implementation[path_field]} build-provenance SHA-256",
+        )
     workspace = load_toml_bytes(read_regular_file(root, "Cargo.toml", "workspace manifest"), "Cargo.toml")
     wasmtime = workspace.get("workspace", {}).get("dependencies", {}).get("wasmtime")
     require(isinstance(wasmtime, dict), "workspace wasmtime dependency must be a table")
@@ -483,6 +703,13 @@ def check_crates_and_dependencies(document: dict[str, Any], root: Path) -> None:
 def check_wits(document: dict[str, Any], root: Path) -> None:
     entries = document["wit_lock"]
     require(isinstance(entries, list), "wit_lock must be an array")
+    for entry in entries:
+        require(isinstance(entry, dict), "WIT lock entries must be tables")
+        require_exact_keys(
+            entry,
+            {"id", "path", "package", "world", "sha256"},
+            "WIT lock entry",
+        )
     observed = [
         (entry.get("id"), entry.get("path"), entry.get("package"), entry.get("world"), entry.get("sha256"))
         for entry in entries
@@ -572,6 +799,35 @@ def check_release_semantic_vectors(document: dict[str, Any], root: Path) -> None
         )
 
 
+def check_release_semantic_corpus(document: dict[str, Any]) -> None:
+    require_exact_value(
+        document["release_semantic_corpus"],
+        {
+            "status": "required-but-unsatisfied",
+            "seed_vectors_status": "representative-seeds-only-not-release-closure",
+            "inventory_schema": "visa.release-semantic-type-inventory.v1",
+            "corpus_schema": "visa.release-semantic-golden-corpus.v1",
+            "required_crates": ["contract_core", "joint_handoff_core", "visa_profile"],
+            "coverage_rule": "every-durable-or-public-serialized-type-and-every-enum-variant",
+            "required_checks": [
+                "exact-canonical-encode",
+                "decode-round-trip",
+                "unknown-and-trailing-byte-rejection",
+                "optional-empty-nonempty-and-bounded-extrema",
+                "rust-constructed-corpus-not-source-literal-presence",
+            ],
+            "inventory_path": "",
+            "inventory_sha256": "",
+            "corpus_path": "",
+            "corpus_sha256": "",
+            "generator_source_revision": "",
+            "verifier_receipt_path": "",
+            "verifier_receipt_sha256": "",
+        },
+        "release semantic corpus closure",
+    )
+
+
 def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
     neutral = document["neutral_wire_v1"]
     expected_neutral = {
@@ -654,7 +910,12 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
         artifact,
         {
             "status": "required-but-unsatisfied",
-            "kind": "lightweight-versioned-crate-or-release-artifact",
+            "kind": "nexus-owned-native-v1-wire-crate-or-release-bundle",
+            "wire_family": "nexus-effect-peer-native-v1",
+            "freeze_contract_id": "nexus-effect-peer-native-v1",
+            "license": "MPL-2.0",
+            "portal_v2_eligible": False,
+            "freeze_origin_revision": "cb773539401107efe7a7ad036b80ff40d8ec305c",
             "artifact_id": "",
             "source_revision": "",
             "sha256": "",
@@ -692,7 +953,10 @@ def check_provider_spi(document: dict[str, Any], root: Path) -> None:
         "protocol_minor": 0,
         "stability": "rust-source-preview",
         "provider_identity_in_trait": False,
-        "release_adapter_identity": "exact-nexus-revision-plus-executable-sha256-plus-observed-child-executable",
+        "release_adapter_identity": (
+            "exact-visa-nexusd-revision-and-executable-plus-exact-nexus-revision-and-"
+            "observed-child-executable"
+        ),
         "required_capabilities": [
             "effect-admission",
             "outcome-recording",
@@ -701,6 +965,8 @@ def check_provider_spi(document: dict[str, Any], root: Path) -> None:
             "freeze-thaw",
             "commit-close",
         ],
+        "release_adapter_revision": "",
+        "release_adapter_executable_sha256": "",
         "release_provider_revision": "",
         "release_provider_executable_sha256": "",
     }
@@ -721,6 +987,57 @@ def check_provider_spi(document: dict[str, Any], root: Path) -> None:
     require_source_pattern(root, path, r"^pub trait EffectClosureProvider: Send \+ Sync \{$", "provider trait")
 
 
+def check_provider_dispatch_fence(document: dict[str, Any]) -> None:
+    require_exact_value(
+        document["provider_dispatch_fence"],
+        {
+            "status": "required-but-unsatisfied",
+            "registry_process": "nexus-effect-peer",
+            "registry_supervisor_and_native_adapter": "visa-nexusd",
+            "native_commit_validation": (
+                "visa-nexusd-validates-exact-native-v1-commit-receipt-and-chain"
+            ),
+            "central_grant_rule": (
+                "visa-nexusd-atomically-consumes-one-exact-native-commit-into-one-exact-"
+                "dispatch-grant"
+            ),
+            "central_grant_replay": (
+                "same-request-id-and-bytes-return-byte-identical-grant-never-a-different-grant"
+            ),
+            "serializable_grant_boundary": (
+                "commit-evidence-for-agent-validation-not-a-same-process-dispatch-permit"
+            ),
+            "grant_binding": (
+                "effect-operation-id-idempotency-key-agent-role-agent-incarnation-native-"
+                "receipt-and-request-digests"
+            ),
+            "agent_local_validation": (
+                "exact-grant-and-durable-local-projection-must-match-before-mint"
+            ),
+            "agent_local_authorization": (
+                "private-non-clone-ProfileDispatchAuthorization-minted-and-consumed-in-one-"
+                "agent-process"
+            ),
+            "agent_local_recovery": (
+                "persist-grant-and-armed-or-started-before-sink-after-crash-unknown-query-"
+                "reconcile-never-grant-triggered-redispatch"
+            ),
+            "regular_file_sink_process": "corresponding-visa-agent",
+            "logical_request_sink_process": "corresponding-visa-agent",
+            "controller_sink_access": "none",
+            "visa_nexusd_sink_access": "none",
+            "same_process_requirement": (
+                "authorize-dispatch-and-real-profile-sink-call-share-one-trusted-agent-process"
+            ),
+            "existing_committed_effect_permit_equivalence": False,
+            "grant_security_claim": (
+                "same-uid-local-tcb-replay-and-bypass-control-not-cryptographic-unforgeability"
+            ),
+        },
+        "provider dispatch fence",
+    )
+
+
 def check_public_surface(document: dict[str, Any]) -> None:
     require_exact_value(
         document["public_surface"],
@@ -738,11 +1055,42 @@ def check_public_surface(document: dict[str, Any]) -> None:
                 "id": "visa-agent",
                 "binary": "visa-agent",
                 "status": "required-but-unsatisfied",
-                "frozen_boundary": "binary-name-worker-role-and-control-transport",
+                "frozen_boundary": "binary-name-direct-runtime-role-local-sink-and-control-transport",
                 "required_responsibilities": [
-                    "source-worker",
-                    "destination-worker",
-                    "visa-agent-local-v1-stdio-worker",
+                    "source-or-destination-agent-selected-at-startup",
+                    "in-process-wasmtime-runtime",
+                    "in-process-local-provider-and-profile-sink",
+                    "durable-local-projection",
+                    "same-uid-filesystem-uds-service",
+                ],
+                "typed_outcomes": "required-but-unsatisfied",
+                "exit_code_policy": "required-but-unsatisfied",
+            },
+            {
+                "id": "visa-ownershipd",
+                "binary": "visa-ownershipd",
+                "status": "required-but-unsatisfied",
+                "frozen_boundary": "binary-name-single-authority-role-store-and-local-rpc",
+                "required_responsibilities": [
+                    "exclusive-ownership-store",
+                    "reserve-seal-abort-commit-query",
+                    "restart-and-exact-request-replay",
+                    "same-uid-filesystem-uds-service",
+                ],
+                "typed_outcomes": "required-but-unsatisfied",
+                "exit_code_policy": "required-but-unsatisfied",
+            },
+            {
+                "id": "visa-nexusd",
+                "binary": "visa-nexusd",
+                "status": "required-but-unsatisfied",
+                "frozen_boundary": (
+                    "binary-name-native-v1-adapter-grant-ledger-peer-supervisor-and-local-rpc"
+                ),
+                "required_responsibilities": [
+                    "exclusive-nexus-effect-peer-child-supervision",
+                    "native-v1-validation-and-neutral-v2-mapping",
+                    "single-exact-dispatch-grant-ledger",
                     "same-uid-filesystem-uds-service",
                 ],
                 "typed_outcomes": "required-but-unsatisfied",
@@ -751,6 +1099,85 @@ def check_public_surface(document: dict[str, Any]) -> None:
         ],
         "public CLI/agent surface",
     )
+
+
+def check_failure_matrix(document: dict[str, Any]) -> None:
+    expected = [
+        {
+            "role": "visa-controller",
+            "crash_safety": "no-durable-authority-to-lose",
+            "progress_recovery": "restart-and-reconnect-to-both-agents",
+            "registry_after_crash": "unchanged-in-nexus-effect-peer",
+            "source_disposition_after_crash": (
+                "unchanged-until-authoritative-query-and-reconcile"
+            ),
+            "forbidden_fallback": "infer-abort-commit-or-dispatch-from-local-cache",
+        },
+        {
+            "role": "visa-agent",
+            "crash_safety": "durable-local-projection-reopens-fail-closed",
+            "progress_recovery": "restart-reconnect-query-and-exact-rpc-replay",
+            "registry_after_crash": "unchanged-in-nexus-effect-peer-owned-by-visa-nexusd",
+            "source_disposition_after_crash": (
+                "durable-local-state-reopened-then-authoritative-query-and-reconcile"
+            ),
+            "forbidden_fallback": "blind-redispatch-or-local-ownership-decision",
+        },
+        {
+            "role": "visa-ownershipd",
+            "crash_safety": "sqlite-wal-full-preserves-one-non-equivocating-decision",
+            "progress_recovery": "restart-with-same-store-issuer-query-and-exact-replay",
+            "registry_after_crash": "unchanged-in-nexus-effect-peer",
+            "source_disposition_after_crash": (
+                "unchanged-by-service-restart-and-governed-by-the-durable-decision"
+            ),
+            "forbidden_fallback": "second-writer-new-issuer-or-timeout-as-abort",
+        },
+        {
+            "role": "visa-nexusd",
+            "crash_safety": (
+                "terminal-phase-relative-fail-closed-no-new-dispatch-or-fabricated-closure"
+            ),
+            "progress_recovery": "unsupported-in-0.1",
+            "registry_after_crash": "child-registry-is-not-reconnectable-or-replaceable",
+            "source_disposition_after_crash": (
+                "already-frozen-remains-frozen-pre-freeze-retains-prior-disposition-never-"
+                "inferred-frozen"
+            ),
+            "forbidden_fallback": "respawn-peer-or-mint-replacement-grant",
+        },
+        {
+            "role": "nexus-effect-peer",
+            "crash_safety": (
+                "terminal-phase-relative-fail-closed-no-new-dispatch-or-fabricated-closure"
+            ),
+            "progress_recovery": "unsupported-in-0.1",
+            "registry_after_crash": (
+                "lost-in-memory-registry-cannot-be-recreated-as-the-same-authority"
+            ),
+            "source_disposition_after_crash": (
+                "already-frozen-remains-frozen-pre-freeze-retains-prior-disposition-never-"
+                "inferred-frozen"
+            ),
+            "forbidden_fallback": (
+                "respawn-replay-as-original-registry-or-infer-effect-closure"
+            ),
+        },
+    ]
+    require_exact_value(document["failure_matrix"], expected, "process failure matrix")
+    for entry in document["failure_matrix"]:
+        require_exact_keys(
+            entry,
+            {
+                "role",
+                "crash_safety",
+                "progress_recovery",
+                "registry_after_crash",
+                "source_disposition_after_crash",
+                "forbidden_fallback",
+            },
+            "failure matrix entry",
+        )
 
 
 def check_support_and_admission(document: dict[str, Any]) -> None:
@@ -770,7 +1197,14 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
             "wit-source-byte-digest-mismatch",
             "component-or-profile-digest-mismatch",
             "provider-implementation-revision-or-executable-digest-mismatch",
+            "local-rpc-schema-role-frame-limit-or-executable-digest-mismatch",
+            "ownership-database-opened-outside-visa-ownershipd",
+            "second-ownership-writer-or-receipt-issuer",
             "neutral-wire-nexus-freeze-or-v2-mapping-mismatch",
+            "nexus-portal-v2-artifact-in-native-v1-slot",
+            "serialized-dispatch-proof-used-directly-as-local-sink-permit",
+            "respawned-nexus-peer-presented-as-the-original-registry",
+            "stdio-agent-worker-or-controller-owned-agent-topology",
             "non-linux-non-x86_64-cross-host-or-cross-boot-request",
             "raw-live-tcp-continuity",
             "effect-closure-provider-v2-preview-without-the-versioned-nexus-adapter",
@@ -783,6 +1217,13 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
         "mtls-cryptographic-receipt-authenticity-freshness-or-anti-rollback",
         "byzantine-ownership-provider-or-host-safety",
         "real-nexus-ostd-irq-smp-or-retained-device-recovery",
+        "nexus-portal-v2-integration-or-kernel-backend",
+        "visa-nexusd-or-nexus-effect-peer-crash-progress-recovery",
+        "serializable-dispatch-grant-as-same-process-provider-permit",
+        "hostile-same-uid-ptrace-or-process-memory-safety",
+        "same-uid-authentication-credential-separation-or-tenant-isolation",
+        "cryptographic-unforgeability-of-local-dispatch-grants",
+        "agent-worker-stdio-subprocess-or-network-control-transport",
         "tee-kms-attestation-or-confidential-continuity",
         "universal-exactly-once-effects",
         "arbitrary-open-file-descriptor-directory-device-or-raw-tcp-continuity",
@@ -806,9 +1247,13 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
         admission.get("fail_closed_dimensions"),
         [
             "product-version",
-            "crate-versions",
             "contract-joint-profile-and-resource-versions",
-            "postcard-golden-vectors",
+            "release-build-provenance",
+            "six-process-role-and-authority-topology",
+            "three-independent-local-rpc-schemas-and-golden-corpora",
+            "ownership-single-writer-store-issuer-and-replay",
+            "provider-dispatch-grant-and-agent-local-sink-authorization",
+            "postcard-seed-vectors-and-complete-semantic-corpus",
             "wit-package-ids-worlds-and-source-bytes",
             "neutral-wire-bytes",
             "nexus-freeze-contract-and-canonical-snapshot",
@@ -821,9 +1266,30 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
     )
 
 
-def check_readiness(document: dict[str, Any]) -> list[str]:
+def check_readiness(document: dict[str, Any], root: Path) -> list[str]:
+    require_exact_value(
+        document["evidence_policy"],
+        {
+            "hash_algorithm": "sha-256",
+            "source_revision": "exact-40-hex-git-commit",
+            "required_for_every_satisfied_id": [
+                "evidence-path",
+                "evidence-sha256",
+                "source-revision",
+                "verifier-receipt-path",
+                "verifier-receipt-sha256",
+            ],
+            "path_policy": "repository-relative-regular-file-no-symlink",
+            "receipt_policy": "machine-readable-verifier-command-result-and-input-digests",
+        },
+        "readiness evidence policy",
+    )
     readiness = document["readiness"]
-    require_exact_keys(readiness, {"release_ready", "required_ids", "satisfied_ids", "pending_ids"}, "readiness")
+    require_exact_keys(
+        readiness,
+        {"release_ready", "required_ids", "satisfied_ids", "pending_ids", "evidence"},
+        "readiness",
+    )
     required = readiness["required_ids"]
     satisfied = readiness["satisfied_ids"]
     pending = readiness["pending_ids"]
@@ -833,26 +1299,110 @@ def check_readiness(document: dict[str, Any]) -> list[str]:
     require_exact_value(required, EXPECTED_REQUIRED_IDS, "required release closure IDs")
     require(set(satisfied).isdisjoint(pending), "satisfied and pending release IDs must be disjoint")
     require(set(satisfied) | set(pending) == set(required), "readiness IDs must partition required IDs")
-    require_exact_value(satisfied, EXPECTED_SATISFIED_IDS, "satisfied release closure")
-    require_exact_value(pending, EXPECTED_PENDING_IDS, "pending release closure")
-    require(readiness["release_ready"] is False, "current contract must not claim release readiness")
+    evidence = readiness["evidence"]
+    require(isinstance(evidence, list), "readiness evidence must be a list")
+    evidence_ids: list[str] = []
+    for entry in evidence:
+        require(isinstance(entry, dict), "readiness evidence entries must be tables")
+        require_exact_keys(
+            entry,
+            {
+                "id",
+                "evidence_path",
+                "evidence_sha256",
+                "source_revision",
+                "verifier_receipt_path",
+                "verifier_receipt_sha256",
+            },
+            "readiness evidence entry",
+        )
+        readiness_id = entry["id"]
+        require(readiness_id in satisfied, f"evidence exists for non-satisfied ID {readiness_id!r}")
+        evidence_ids.append(readiness_id)
+        require(is_lower_hex(entry["evidence_sha256"], 64), "evidence SHA-256 must be exact")
+        require(is_lower_hex(entry["source_revision"], 40), "evidence source revision must be exact")
+        require(
+            is_lower_hex(entry["verifier_receipt_sha256"], 64),
+            "verifier receipt SHA-256 must be exact",
+        )
+        evidence_bytes = read_regular_file(root, entry["evidence_path"], "readiness evidence")
+        receipt_bytes = read_regular_file(
+            root, entry["verifier_receipt_path"], "readiness verifier receipt"
+        )
+        require_exact_value(
+            hashlib.sha256(evidence_bytes).hexdigest(),
+            entry["evidence_sha256"],
+            f"{readiness_id} evidence SHA-256",
+        )
+        require_exact_value(
+            hashlib.sha256(receipt_bytes).hexdigest(),
+            entry["verifier_receipt_sha256"],
+            f"{readiness_id} verifier receipt SHA-256",
+        )
+        try:
+            receipt = json.loads(receipt_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ReleaseContractError(f"{readiness_id} verifier receipt is not JSON") from error
+        require(isinstance(receipt, dict), f"{readiness_id} verifier receipt must be an object")
+        require_exact_keys(
+            receipt,
+            {
+                "schema",
+                "readiness_id",
+                "source_revision",
+                "verifier_command",
+                "result",
+                "input_sha256",
+            },
+            f"{readiness_id} verifier receipt",
+        )
+        require_exact_value(
+            receipt["schema"],
+            "visa.release-readiness-verifier-receipt.v1",
+            f"{readiness_id} verifier receipt schema",
+        )
+        require_exact_value(receipt["readiness_id"], readiness_id, "receipt readiness ID")
+        require_exact_value(receipt["source_revision"], entry["source_revision"], "receipt revision")
+        require(
+            isinstance(receipt["verifier_command"], str) and bool(receipt["verifier_command"]),
+            f"{readiness_id} verifier command must be non-empty",
+        )
+        require_exact_value(receipt["result"], "passed", f"{readiness_id} verifier result")
+        inputs = receipt["input_sha256"]
+        require(isinstance(inputs, dict), f"{readiness_id} receipt inputs must be an object")
+        require_exact_value(
+            inputs.get(entry["evidence_path"]),
+            entry["evidence_sha256"],
+            f"{readiness_id} receipt evidence input",
+        )
+        require(
+            all(isinstance(path, str) and is_lower_hex(digest, 64) for path, digest in inputs.items()),
+            f"{readiness_id} receipt input digests must be exact",
+        )
+    require(len(evidence_ids) == len(set(evidence_ids)), "readiness evidence IDs must be unique")
+    require_exact_value(set(evidence_ids), set(satisfied), "satisfied readiness evidence coverage")
+    require_exact_value(readiness["release_ready"], not pending, "derived release-ready state")
     return pending
 
 
 def validate(contract_path: Path = DEFAULT_CONTRACT, root: Path = ROOT) -> list[str]:
     document = load_contract(contract_path)
     check_header(document)
+    check_process_topology_and_local_rpcs(document, root)
     check_core_namespaces(document, root)
     check_resource_profiles(document, root)
     check_crates_and_dependencies(document, root)
     check_wits(document, root)
     check_golden_vectors(document, root)
     check_release_semantic_vectors(document, root)
+    check_release_semantic_corpus(document)
     check_neutral_and_nexus(document, root)
     check_provider_spi(document, root)
+    check_provider_dispatch_fence(document)
     check_public_surface(document)
+    check_failure_matrix(document)
     check_support_and_admission(document)
-    return check_readiness(document)
+    return check_readiness(document, root)
 
 
 def parse_arguments() -> argparse.Namespace:
