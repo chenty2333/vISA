@@ -250,6 +250,8 @@ using a second implementation of the gate.
 `fast` checks locked metadata, formatting, strict active-spine dependency
 direction, the Stage 1 legacy-deletion/oracle boundary, first-party Rust file
 sizes (including not-yet-added files), the build/cache/evidence CI contract, the
+schema-valid but deliberately not-yet-release-ready
+[vISA 0.1 exact-version target contract](../specs/release/visa-0.1.md), the
 locked JcoNode Cargo/source/Node/V8 identity, strict Clippy for active-spine
 targets, and active-spine tests. `full`
 includes `fast`, then adds shell parsing,
@@ -268,6 +270,18 @@ python3 scripts/check-dependency-direction.py
 It rejects dependencies that point against the accepted contract -> reducer ->
 coordinator -> adapter/tool direction. Oracle packages remain buildable under
 `full`, but they cannot enter the protected production spine.
+
+Check the frozen vISA 0.1 target separately with:
+
+```sh
+python3 scripts/check-release-contract.py
+python3 scripts/check-release-contract.py --release-ready
+```
+
+The first command is part of `fast` and validates the frozen contract and its
+current pending/satisfied partition. The second is the fail-closed release
+admission command; it intentionally fails until every listed closure item has
+exact release evidence.
 
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,

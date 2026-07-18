@@ -85,7 +85,7 @@ v2 receipt, exact-binary process evidence, or final clean-vISA artifact.
 
 | Tier | Current operation | What a pass establishes |
 | --- | --- | --- |
-| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, first-party Rust file-size maintenance, the build/cache/evidence CI contract, locked JcoNode Cargo/source/Node/V8 identity, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, adapters, profile, evidence packages, and CI policy satisfy their local logic and structural edit-loop gates. |
+| `fast` | Locked metadata, formatting, strict active-spine dependency direction, the Stage 1 deletion/oracle-boundary audit, first-party Rust file-size maintenance, the build/cache/evidence CI contract, the frozen vISA 0.1 exact-version target-contract checker and self-tests, locked JcoNode Cargo/source/Node/V8 identity, strict active-spine Clippy, and active-spine tests | The selected contract, reducer, port, coordinator, adapters, profile, evidence packages, and CI policy satisfy their local logic and structural edit-loop gates. The 0.1 target may be schema-valid while release closure remains incomplete. |
 | `full` | Everything in `fast`, shell parsing, default-feature workspace tests, current opt-in feature tests, active no-std check, selected Wasm check, kernel target check, benchmark compilation, and report/artifact fixture gates | The checked repository builds and tests across its declared compile targets and current fixture contracts. It does not prove a live handoff. |
 | `system` | All 31 registered Stage 1 lifecycle and fault cases through isolated source/destination workers, followed by independent validation of the produced execution bundle | The named single-runtime reference cell satisfies the Stage 1 workload, resource, authority, recovery, fencing, and evidence contract. It does not repeat `full` or prove another runtime or ISA. |
 | `system-jco-node` | The same 31 registered cases with JcoNode explicitly selected at source and destination, followed by independent Stage 1 validation | The pinned Jco/Node/V8 translated execution cell satisfies the Stage 1 contract without a Wasmtime execution fallback. It does not prove a fully independent Component Model implementation. |
@@ -191,9 +191,12 @@ exist.
 ### Fast
 
 The fast tier is the ordinary edit loop: formatting, locked metadata, strict
-linting and focused tests for the active spine, plus strict dependency direction.
-It proves local logic and structural direction, not adapter or continuity
-behavior.
+linting and focused tests for the active spine, plus strict dependency direction
+and the [vISA 0.1 exact-version target-contract](../specs/release/visa-0.1.md)
+checker/self-tests. The default contract check proves that frozen identifiers,
+versions, digests, and the explicit pending/satisfied partition still match; it
+does not make the separate `--release-ready` admission pass. The tier proves
+local logic and structural direction, not adapter or continuity behavior.
 
 ### Full
 
@@ -852,6 +855,14 @@ Wasmtime/Wacogo strict outer evidence is v3; the two parsers reject mixed or
 unknown schemas, and older bundles do not inherit either newer claim boundary.
 
 ### Release
+
+The machine-readable [vISA 0.1 exact-version target
+contract](../specs/release/visa-0.1.toml) freezes the intended single-host,
+same-boot Linux x86-64 product cell and its version/digest boundaries. Its
+default checker is implemented in `fast`; release admission is a separate
+fail-closed `python3 scripts/check-release-contract.py --release-ready` command.
+The current contract is explicitly not release-ready and claims no supported
+product cell.
 
 The release tier reruns system scenarios in declared runtime/ISA/substrate
 cells with pinned inputs and provenance, then adds stress, recovery,

@@ -179,6 +179,13 @@ gate_ci_contract() {
         python3 scripts/check-ci-contract.py
 }
 
+gate_release_contract() {
+    run_gate "release: vISA 0.1 frozen target contract" \
+        python3 scripts/check-release-contract.py
+    run_gate "release: contract checker self-tests" \
+        python3 scripts/test-check-release-contract.py
+}
+
 gate_jco_node_toolchain() {
     run_gate "toolchain: locked JcoNode translation and Node/V8 execution" \
         python3 scripts/check-jco-node-toolchain.py
@@ -263,6 +270,7 @@ gate_fast() {
     gate_stage1_deletions
     gate_file_size
     gate_ci_contract
+    gate_release_contract
     gate_jco_node_toolchain
     gate_joint_handoff_source_lock
     gate_nexus_handoff_verifier_self_tests
