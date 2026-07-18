@@ -1,10 +1,11 @@
 use contract_core::{
-    ActivationRole, ActivationStatus, Digest, EffectRequest, HandoffPhase, JournalPosition,
-    ProfileAccess,
+    ActivationRole, ActivationStatus, Digest, EffectOutcome, EffectRequest, HandoffPhase,
+    JournalPosition, ProfileAccess,
 };
 use substrate_api::{
-    CommittedEffectPermit, EffectAdmissionProfile, EffectClosureProvider,
-    EffectDispatchAcquireError, EffectDispatchOutcome, EffectRequestBinding,
+    CommittedEffectPermit, DispatchedEffectOutcomeFailure, EffectAdmissionProfile,
+    EffectClosureProvider, EffectDispatchAcquireError, EffectDispatchFinishFailure,
+    EffectDispatchOutcome, EffectRequestBinding, OutcomeRecordedEffect,
 };
 use visa_component_adapter::{
     AdapterProvider, LogicalRequestComponentState, LogicalRequestWorkloadLifecycle,
@@ -45,6 +46,216 @@ pub struct LogicalRequestCallResult {
     pub effect_operation_id: String,
     pub result: LogicalRequestResult,
 }
+
+/// One admitted guest attempt whose exact canonical effect outcome has already
+/// been recorded by the same closure provider which admitted the dispatch.
+///
+/// `call` describes the Wasmtime/guest result. A guest error does not erase
+/// closure progress: callers still receive the provider-bound
+/// [`OutcomeRecordedEffect`] and may explicitly complete or retain it for
+/// handoff cohort closure.
+pub struct AdmittedLogicalRequestExecution<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    call: Result<LogicalRequestCallResult, LogicalRequestAdapterError>,
+    outcome_recorded: OutcomeRecordedEffect<'a, C>,
+}
+
+impl<'a, C> AdmittedLogicalRequestExecution<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    pub const fn call(&self) -> &Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        &self.call
+    }
+
+    pub const fn outcome_recorded(&self) -> &OutcomeRecordedEffect<'a, C> {
+        &self.outcome_recorded
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (Result<LogicalRequestCallResult, LogicalRequestAdapterError>, OutcomeRecordedEffect<'a, C>)
+    {
+        (self.call, self.outcome_recorded)
+    }
+}
+
+impl<C> std::fmt::Debug for AdmittedLogicalRequestExecution<'_, C>
+where
+    C: EffectClosureProvider,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AdmittedLogicalRequestExecution")
+            .field("call", &self.call)
+            .field("effect", self.outcome_recorded.effect())
+            .field("outcome", self.outcome_recorded.outcome())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Provider finish acknowledgement loss after the guest attempt. The exact
+/// call result, canonical outcome, and consumed one-shot dispatch state remain
+/// owned by this value; retry can only close the same fence, never dispatch
+/// again.
+pub struct AdmittedLogicalRequestFinishFailure<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    call: Result<LogicalRequestCallResult, LogicalRequestAdapterError>,
+    outcome: EffectOutcome,
+    provider_failure: EffectDispatchFinishFailure<'a, C>,
+}
+
+impl<'a, C> AdmittedLogicalRequestFinishFailure<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    pub const fn call(&self) -> &Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        &self.call
+    }
+
+    pub const fn outcome(&self) -> &EffectOutcome {
+        &self.outcome
+    }
+
+    pub const fn provider_failure(&self) -> &EffectDispatchFinishFailure<'a, C> {
+        &self.provider_failure
+    }
+
+    pub fn query(&self) -> Result<Option<C::QueryObservation>, C::Error> {
+        self.provider_failure.query()
+    }
+
+    pub fn retry(
+        self,
+    ) -> Result<AdmittedLogicalRequestExecution<'a, C>, AdmittedLogicalRequestError<'a, C>> {
+        let Self { call, outcome, provider_failure } = self;
+        match provider_failure.retry() {
+            Ok(dispatched) => record_admitted_outcome(call, dispatched, outcome),
+            Err(provider_failure) => Err(AdmittedLogicalRequestError::Finish(Box::new(Self {
+                call,
+                outcome,
+                provider_failure,
+            }))),
+        }
+    }
+}
+
+/// Canonical outcome acknowledgement loss after a successfully closed guest
+/// dispatch. The dispatched typestate and exact outcome are retained for
+/// provider query or byte-for-byte retry without reopening dispatch.
+pub struct AdmittedLogicalRequestOutcomeFailure<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    call: Result<LogicalRequestCallResult, LogicalRequestAdapterError>,
+    provider_failure: DispatchedEffectOutcomeFailure<'a, C>,
+}
+
+impl<'a, C> AdmittedLogicalRequestOutcomeFailure<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    pub const fn call(&self) -> &Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        &self.call
+    }
+
+    pub const fn outcome(&self) -> &EffectOutcome {
+        self.provider_failure.outcome()
+    }
+
+    pub const fn provider_failure(&self) -> &DispatchedEffectOutcomeFailure<'a, C> {
+        &self.provider_failure
+    }
+
+    pub fn query(&self) -> Result<Option<C::QueryObservation>, C::Error> {
+        self.provider_failure.query()
+    }
+
+    pub fn retry(
+        self,
+    ) -> Result<AdmittedLogicalRequestExecution<'a, C>, AdmittedLogicalRequestError<'a, C>> {
+        let Self { call, provider_failure } = self;
+        match provider_failure.retry() {
+            Ok(outcome_recorded) => Ok(AdmittedLogicalRequestExecution { call, outcome_recorded }),
+            Err(provider_failure) => {
+                Err(AdmittedLogicalRequestError::Outcome(Box::new(Self { call, provider_failure })))
+            }
+        }
+    }
+}
+
+/// Failure of an admitted start. `Adapter` occurs before a provider-consumed
+/// guest attempt. The other variants retain their one-way provider typestate
+/// and can be queried or retried without another sink dispatch.
+pub enum AdmittedLogicalRequestError<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    Adapter(LogicalRequestAdapterError),
+    Finish(Box<AdmittedLogicalRequestFinishFailure<'a, C>>),
+    Outcome(Box<AdmittedLogicalRequestOutcomeFailure<'a, C>>),
+}
+
+impl<'a, C> AdmittedLogicalRequestError<'a, C>
+where
+    C: EffectClosureProvider,
+{
+    pub fn retry(
+        self,
+    ) -> Result<AdmittedLogicalRequestExecution<'a, C>, AdmittedLogicalRequestError<'a, C>> {
+        match self {
+            Self::Adapter(error) => Err(Self::Adapter(error)),
+            Self::Finish(failure) => (*failure).retry(),
+            Self::Outcome(failure) => (*failure).retry(),
+        }
+    }
+}
+
+impl<C> std::fmt::Debug for AdmittedLogicalRequestError<'_, C>
+where
+    C: EffectClosureProvider,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Adapter(error) => formatter.debug_tuple("Adapter").field(error).finish(),
+            Self::Finish(failure) => formatter
+                .debug_struct("Finish")
+                .field("call", failure.call())
+                .field("effect", failure.provider_failure().effect())
+                .field("outcome", failure.outcome())
+                .finish_non_exhaustive(),
+            Self::Outcome(failure) => formatter
+                .debug_struct("Outcome")
+                .field("call", failure.call())
+                .field("effect", failure.provider_failure().dispatched().effect())
+                .field("outcome", failure.outcome())
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+impl<C> std::fmt::Display for AdmittedLogicalRequestError<'_, C>
+where
+    C: EffectClosureProvider,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Adapter(error) => error.fmt(formatter),
+            Self::Finish(_) => formatter.write_str(
+                "guest dispatch completed but provider fence acknowledgement is unresolved",
+            ),
+            Self::Outcome(_) => formatter.write_str(
+                "guest dispatch completed but canonical outcome acknowledgement is unresolved",
+            ),
+        }
+    }
+}
+
+impl<C> std::error::Error for AdmittedLogicalRequestError<'_, C> where C: EffectClosureProvider {}
 
 /// Immutable preview of one logical-request start. Private fields prevent a
 /// caller from substituting request bytes or canonical effect identity between
@@ -440,71 +651,94 @@ where
         prepared: &PreparedLogicalRequestStart,
         provider: &'a C,
         permit: CommittedEffectPermit<'a, C>,
-    ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError>
+    ) -> Result<AdmittedLogicalRequestExecution<'a, C>, AdmittedLogicalRequestError<'a, C>>
     where
         C: EffectClosureProvider,
     {
         if self.admission_profile != EffectAdmissionProfile::AdmissionRequired {
-            return Err(LogicalRequestAdapterError::AdmissionRequired);
+            return Err(AdmittedLogicalRequestError::Adapter(
+                LogicalRequestAdapterError::AdmissionRequired,
+            ));
         }
-        let descriptor =
-            provider.descriptor().map_err(|_| LogicalRequestAdapterError::AdmissionRejected)?;
+        let descriptor = provider.descriptor().map_err(|_| {
+            AdmittedLogicalRequestError::Adapter(LogicalRequestAdapterError::AdmissionRejected)
+        })?;
         if !descriptor.admission_profile.satisfies(EffectAdmissionProfile::AdmissionRequired) {
-            return Err(LogicalRequestAdapterError::AdmissionRejected);
+            return Err(AdmittedLogicalRequestError::Adapter(
+                LogicalRequestAdapterError::AdmissionRejected,
+            ));
         }
-        self.review_prepared_start(prepared)?;
-        let binding = EffectRequestBinding::from_effect(prepared.effect_request())
-            .map_err(|_| LogicalRequestAdapterError::InvalidCanonicalProfile)?;
+        self.review_prepared_start(prepared).map_err(AdmittedLogicalRequestError::Adapter)?;
+        let binding =
+            EffectRequestBinding::from_effect(prepared.effect_request()).map_err(|_| {
+                AdmittedLogicalRequestError::Adapter(
+                    LogicalRequestAdapterError::InvalidCanonicalProfile,
+                )
+            })?;
         let mut dispatch =
             permit.consume(provider, prepared.effect_request()).map_err(|error| match error {
                 EffectDispatchAcquireError::BindingMismatch
-                | EffectDispatchAcquireError::Provider(_) => {
-                    LogicalRequestAdapterError::AdmissionRejected
-                }
+                | EffectDispatchAcquireError::Provider(_) => AdmittedLogicalRequestError::Adapter(
+                    LogicalRequestAdapterError::AdmissionRejected,
+                ),
             })?;
-        let Some(authorization) = dispatch.take_profile_authorization() else {
-            return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
-                Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
-            } else {
-                Err(LogicalRequestAdapterError::AdmissionRejected)
-            };
-        };
-        if self.coordinator_mut().arm_profile_dispatch(authorization).is_err() {
-            return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
-                Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
-            } else {
-                Err(LogicalRequestAdapterError::AdmissionRejected)
-            };
-        }
-        if !self.store.data_mut().arm_admitted_start(prepared.effect_request().clone()) {
-            let _ = self.coordinator_mut().finish_profile_dispatch(binding);
-            return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
-                Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
-            } else {
-                Err(LogicalRequestAdapterError::AdmissionRejected)
-            };
-        }
-        let mut result = self.dispatch_reviewed_start(prepared);
-        let host_consumed = self.store.data_mut().finish_admitted_start();
-        let sink_consumed = match self.coordinator_mut().finish_profile_dispatch(binding) {
-            Ok(consumed) => consumed,
-            Err(_) => {
-                let _ = dispatch.finish(EffectDispatchOutcome::GuestFailed);
-                return Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown);
+
+        let call = match dispatch.take_profile_authorization() {
+            None => Err(LogicalRequestAdapterError::AdmissionRejected),
+            Some(authorization) => {
+                if self.coordinator_mut().arm_profile_dispatch(authorization).is_err() {
+                    Err(LogicalRequestAdapterError::AdmissionRejected)
+                } else if !self
+                    .store
+                    .data_mut()
+                    .arm_admitted_start(prepared.effect_request().clone())
+                {
+                    let _ = self.coordinator_mut().finish_profile_dispatch(binding);
+                    Err(LogicalRequestAdapterError::AdmissionRejected)
+                } else {
+                    let mut call = self.dispatch_reviewed_start(prepared);
+                    let host_consumed = self.store.data_mut().finish_admitted_start();
+                    let sink_consumed =
+                        match self.coordinator_mut().finish_profile_dispatch(binding) {
+                            Ok(consumed) => consumed,
+                            Err(_) => {
+                                call = Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown);
+                                false
+                            }
+                        };
+                    if (!host_consumed || !sink_consumed) && call.is_ok() {
+                        call = Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
+                    }
+                    call
+                }
             }
         };
-        if (!host_consumed || !sink_consumed) && result.is_ok() {
-            result = Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
-        }
-        let outcome = if result.is_ok() {
+
+        // The local coordinator journal is the only source of a determinate
+        // canonical outcome. Once guest code has been entered, any trap or
+        // validation failure without an exact resolved record is conservatively
+        // Indeterminate: the real sink may already have executed.
+        let canonical_outcome = self
+            .coordinator()
+            .state()
+            .operations
+            .iter()
+            .find(|record| record.request == *prepared.effect_request())
+            .and_then(|record| record.outcome.clone())
+            .unwrap_or(EffectOutcome::Indeterminate { evidence: None });
+        let dispatch_outcome = if call.is_ok() {
             EffectDispatchOutcome::GuestReturned
         } else {
             EffectDispatchOutcome::GuestFailed
         };
-        if dispatch.finish(outcome).is_err() {
-            return Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown);
-        }
-        result
+        let dispatched = dispatch.finish(dispatch_outcome).map_err(|provider_failure| {
+            AdmittedLogicalRequestError::Finish(Box::new(AdmittedLogicalRequestFinishFailure {
+                call: call.clone(),
+                outcome: canonical_outcome.clone(),
+                provider_failure,
+            }))
+        })?;
+        record_admitted_outcome(call, dispatched, canonical_outcome)
     }
 
     pub fn observe(
@@ -806,6 +1040,22 @@ where
         } else {
             Ok(())
         }
+    }
+}
+
+fn record_admitted_outcome<'a, C>(
+    call: Result<LogicalRequestCallResult, LogicalRequestAdapterError>,
+    dispatched: substrate_api::DispatchedEffectPermit<'a, C>,
+    outcome: EffectOutcome,
+) -> Result<AdmittedLogicalRequestExecution<'a, C>, AdmittedLogicalRequestError<'a, C>>
+where
+    C: EffectClosureProvider,
+{
+    match dispatched.record_outcome(outcome) {
+        Ok(outcome_recorded) => Ok(AdmittedLogicalRequestExecution { call, outcome_recorded }),
+        Err(provider_failure) => Err(AdmittedLogicalRequestError::Outcome(Box::new(
+            AdmittedLogicalRequestOutcomeFailure { call, provider_failure },
+        ))),
     }
 }
 

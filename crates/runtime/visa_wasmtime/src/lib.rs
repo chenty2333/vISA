@@ -17,6 +17,8 @@ pub use adapter::{
 };
 pub use host::StoreState;
 pub use logical_request::{
+    AdmittedLogicalRequestError, AdmittedLogicalRequestExecution,
+    AdmittedLogicalRequestFinishFailure, AdmittedLogicalRequestOutcomeFailure,
     ContinuityDisposition, DeliveryPolicy, EffectAdmissionProfile,
     LOGICAL_REQUEST_COMPONENT_STATE_ENCODING, LogicalRequestAdapter, LogicalRequestAdapterError,
     LogicalRequestCallResult, LogicalRequestComponentState, LogicalRequestFailure,

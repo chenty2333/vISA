@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use substrate_api::{
     AuthorityPolicy, AuthorityPort, EffectAdmissionProfile, EffectAdmissionSession,
-    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProviderLimits,
-    EffectClosureProviderRequirements, JournalScope,
+    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProvider,
+    EffectClosureProviderLimits, EffectClosureProviderRequirements, JournalScope,
 };
 use substrate_host::{
     FaultPoint, LoopbackLogicalPeer, LoopbackLogicalPeerBehavior, SqliteProvider,
@@ -60,8 +60,9 @@ use crate::{
     LostAckProjectionLog, NativeJsonlExchange, NativeResponseLossObservation,
     NexusProcessQualificationInputs, OwnershipCommitRequest, OwnershipLogError, OwnershipQuery,
     OwnershipReserveRequest, OwnershipSealRequest, ProcessEffectPeer, ProcessEffectPeerIdentity,
-    ProcessLiveEffectAdvance, ProcessLiveEffectCommitMetadata, ProcessLiveEffectPhase,
-    ReferenceOwnershipLog, SqliteJointProjectionLog, admission_component, effect_receipt_issuer,
+    ProcessEffectQueryPhase, ProcessLiveEffectAdvance, ProcessLiveEffectCommitMetadata,
+    ProcessLiveEffectPhase, ReferenceOwnershipLog, SqliteJointProjectionLog, admission_component,
+    effect_receipt_issuer,
     nexus_effect_wire::{PeerCommand, PeerRequest},
     ownership_receipt_issuer,
     process_effect_peer::validate_native_jsonl_chain,
@@ -1276,9 +1277,11 @@ impl AdmissionPrefix {
             return Err("external request ran before Nexus admission Commit".to_owned());
         }
 
-        let started = source
+        let before_outcome = process_peer.native_transcript().map_err(debug)?;
+        let admitted = source
             .start_admitted(&prepared_start, &process_peer, committed_permit)
             .map_err(debug)?;
+        let started = admitted.call().as_ref().map_err(debug)?;
         if started.effect_operation_id.is_empty() {
             return Err("prepared source start omitted its effect identity".to_owned());
         }
@@ -1306,6 +1309,27 @@ impl AdmissionPrefix {
         let source_outcome =
             source_record.outcome.clone().ok_or("source Start omitted its provider outcome")?;
         require_unknown_start_outcome(&source_outcome)?;
+        if admitted.outcome_recorded().outcome() != &source_outcome {
+            return Err("provider-neutral outcome typestate diverged from source truth".to_owned());
+        }
+        let outcome_recorded = admitted.outcome_recorded().outcome_evidence().clone();
+        require_advance(&outcome_recorded, ProcessLiveEffectPhase::OutcomeRecorded, 4, false)?;
+        if outcome_recorded.native_sequence().is_some()
+            || outcome_recorded.native_request_sha256().is_some()
+            || outcome_recorded.native_receipt_sha256().is_some()
+        {
+            return Err("adapter-only outcome recording emitted native receipt metadata".to_owned());
+        }
+        let queried = process_peer
+            .query_effect(prepared_start.effect_request())
+            .map_err(debug)?
+            .ok_or("provider-neutral outcome query omitted the admitted effect")?;
+        if queried.phase() != ProcessEffectQueryPhase::OutcomeRecorded
+            || queried.outcome() != Some(&source_outcome)
+        {
+            return Err("provider-neutral outcome query omitted canonical outcome_value".to_owned());
+        }
+        drop(admitted);
         let source_start_state = source.coordinator().state().clone();
         let source_start_journal_position = source.coordinator().journal_position();
         let source_start_state_digest = source.coordinator().state_digest().map_err(debug)?;
@@ -1316,17 +1340,6 @@ impl AdmissionPrefix {
             ..registration.record.clone()
         };
         let final_publication = publication(&fixture, final_record);
-        let before_outcome = process_peer.native_transcript().map_err(debug)?;
-        let outcome_recorded = process_peer
-            .record_live_effect_outcome(committed.token(), final_publication.clone())
-            .map_err(|error| format!("record admission provider outcome: {error:?}"))?;
-        require_advance(&outcome_recorded, ProcessLiveEffectPhase::OutcomeRecorded, 4, false)?;
-        if outcome_recorded.native_sequence().is_some()
-            || outcome_recorded.native_request_sha256().is_some()
-            || outcome_recorded.native_receipt_sha256().is_some()
-        {
-            return Err("adapter-only outcome recording emitted native receipt metadata".to_owned());
-        }
         let after_outcome = process_peer.native_transcript().map_err(debug)?;
         if before_outcome != after_outcome {
             return Err("adapter-only outcome recording extended the native transcript".to_owned());
@@ -3059,7 +3072,7 @@ mod tests {
     use std::{
         os::unix::fs::symlink,
         path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::atomic::{AtomicBool, AtomicU64, Ordering},
     };
 
     use contract_core::{ProfileAccess, state_digest};
@@ -3070,14 +3083,17 @@ mod tests {
     use visa_component_adapter::{ProfileBinding, identity_string, profile_execute};
     use visa_profile::{LogicalRequestOperation, encode_logical_request_operation};
     use visa_runtime::CommandReceipt;
-    use visa_wasmtime::{LogicalRequestFailure, LogicalRequestWorkloadFailure};
+    use visa_wasmtime::{
+        AdmittedLogicalRequestError, LogicalRequestFailure, LogicalRequestWorkloadFailure,
+    };
 
     use super::*;
     use crate::{
         ReferenceEffectCommitEvidence, ReferenceEffectCommitMetadata,
         ReferenceEffectCompletionEvidence, ReferenceEffectCompletionRequest,
         ReferenceEffectDispatchFence, ReferenceEffectOutcomeEvidence, ReferenceEffectPeer,
-        ReferenceEffectQueryObservation, ReferencePreparedEffect, ReferenceRegisteredEffect,
+        ReferenceEffectQueryObservation, ReferenceEffectQueryPhase, ReferencePreparedEffect,
+        ReferenceRegisteredEffect,
         nexus_effect_wire::{
             AUTHENTICATION_BOUNDARY, NativeHandoffStatus, NativeReceipt, NativeReceiptPayload,
             PeerRequest, PeerResponse, RECEIPT_SCHEMA, RESPONSE_SCHEMA, ReceiptDigestInput,
@@ -3090,11 +3106,15 @@ mod tests {
 
     struct FinishAckLossProvider {
         inner: ReferenceEffectPeer,
+        lose_next_finish_ack: AtomicBool,
     }
 
     impl FinishAckLossProvider {
         fn new(config: EffectPeerConfig) -> Self {
-            Self { inner: ReferenceEffectPeer::new_admission_required(config).unwrap() }
+            Self {
+                inner: ReferenceEffectPeer::new_admission_required(config).unwrap(),
+                lose_next_finish_ack: AtomicBool::new(true),
+            }
         }
     }
 
@@ -3157,7 +3177,11 @@ mod tests {
             outcome: EffectDispatchOutcome,
         ) -> Result<(), Self::Error> {
             EffectClosureProvider::finish_effect_dispatch(&self.inner, effect, fence, outcome)?;
-            Err(EffectPeerError::AcknowledgementLost { request_id: 1 })
+            if self.lose_next_finish_ack.swap(false, Ordering::SeqCst) {
+                Err(EffectPeerError::AcknowledgementLost { request_id: 1 })
+            } else {
+                Ok(())
+            }
         }
 
         fn record_effect_outcome(
@@ -3167,6 +3191,116 @@ mod tests {
             outcome: &EffectOutcome,
         ) -> Result<Self::OutcomeEvidence, Self::Error> {
             EffectClosureProvider::record_effect_outcome(&self.inner, effect, committed, outcome)
+        }
+
+        fn complete_effect(
+            &self,
+            effect: &EffectRequest,
+            request: &Self::CompletionRequest,
+        ) -> Result<Self::CompletionEvidence, Self::Error> {
+            EffectClosureProvider::complete_effect(&self.inner, effect, request)
+        }
+
+        fn query_effect(
+            &self,
+            effect: &EffectRequest,
+        ) -> Result<Option<Self::QueryObservation>, Self::Error> {
+            EffectClosureProvider::query_effect(&self.inner, effect)
+        }
+    }
+
+    struct OutcomeAckLossProvider {
+        inner: ReferenceEffectPeer,
+        lose_next_outcome_ack: AtomicBool,
+    }
+
+    impl OutcomeAckLossProvider {
+        fn new(config: EffectPeerConfig) -> Self {
+            Self {
+                inner: ReferenceEffectPeer::new_admission_required(config).unwrap(),
+                lose_next_outcome_ack: AtomicBool::new(true),
+            }
+        }
+    }
+
+    impl EffectClosureProvider for OutcomeAckLossProvider {
+        type RegistrationRequest = EffectAdmissionRegistration;
+        type Registered = ReferenceRegisteredEffect;
+        type Prepared = ReferencePreparedEffect;
+        type CommitMetadata = ReferenceEffectCommitMetadata;
+        type CommitEvidence = ReferenceEffectCommitEvidence;
+        type DispatchFence = ReferenceEffectDispatchFence;
+        type OutcomeEvidence = ReferenceEffectOutcomeEvidence;
+        type CompletionRequest = ReferenceEffectCompletionRequest;
+        type CompletionEvidence = ReferenceEffectCompletionEvidence;
+        type QueryObservation = ReferenceEffectQueryObservation;
+        type Error = EffectPeerError;
+
+        fn descriptor(
+            &self,
+        ) -> Result<substrate_api::EffectClosureProviderDescriptor, Self::Error> {
+            EffectClosureProvider::descriptor(&self.inner)
+        }
+
+        fn register_effect(
+            &self,
+            effect: &EffectRequest,
+            request: &Self::RegistrationRequest,
+        ) -> Result<Self::Registered, Self::Error> {
+            EffectClosureProvider::register_effect(&self.inner, effect, request)
+        }
+
+        fn prepare_effect(
+            &self,
+            effect: &EffectRequest,
+            registered: &Self::Registered,
+        ) -> Result<Self::Prepared, Self::Error> {
+            EffectClosureProvider::prepare_effect(&self.inner, effect, registered)
+        }
+
+        fn commit_effect(
+            &self,
+            effect: &EffectRequest,
+            prepared: &Self::Prepared,
+            metadata: &Self::CommitMetadata,
+        ) -> Result<Self::CommitEvidence, Self::Error> {
+            EffectClosureProvider::commit_effect(&self.inner, effect, prepared, metadata)
+        }
+
+        fn consume_committed_effect(
+            &self,
+            effect: &EffectRequest,
+            evidence: &Self::CommitEvidence,
+        ) -> Result<Self::DispatchFence, Self::Error> {
+            EffectClosureProvider::consume_committed_effect(&self.inner, effect, evidence)
+        }
+
+        fn finish_effect_dispatch(
+            &self,
+            effect: &EffectRequest,
+            fence: &Self::DispatchFence,
+            outcome: EffectDispatchOutcome,
+        ) -> Result<(), Self::Error> {
+            EffectClosureProvider::finish_effect_dispatch(&self.inner, effect, fence, outcome)
+        }
+
+        fn record_effect_outcome(
+            &self,
+            effect: &EffectRequest,
+            committed: &Self::CommitEvidence,
+            outcome: &EffectOutcome,
+        ) -> Result<Self::OutcomeEvidence, Self::Error> {
+            let evidence = EffectClosureProvider::record_effect_outcome(
+                &self.inner,
+                effect,
+                committed,
+                outcome,
+            )?;
+            if self.lose_next_outcome_ack.swap(false, Ordering::SeqCst) {
+                Err(EffectPeerError::AcknowledgementLost { request_id: 2 })
+            } else {
+                Ok(evidence)
+            }
         }
 
         fn complete_effect(
@@ -3250,6 +3384,27 @@ mod tests {
         fixture: &AdmissionFixture,
         prepared: &PreparedLogicalRequestStart,
     ) -> substrate_api::CommittedEffectPermit<'a, FinishAckLossProvider> {
+        let registration = reference_registration(fixture, prepared);
+        EffectAdmissionSession::new(peer)
+            .register(
+                prepared.effect_request().clone(),
+                EffectAdmissionRegistration::new(prepared.effect_request(), registration).unwrap(),
+            )
+            .unwrap_or_else(|failure| panic!("register failed: {:?}", failure.error()))
+            .prepare()
+            .unwrap_or_else(|failure| panic!("prepare failed: {:?}", failure.error()))
+            .commit(ReferenceEffectCommitMetadata {
+                result: 0,
+                domain_revision: fixture.effect_config.scope_generation,
+            })
+            .unwrap_or_else(|failure| panic!("commit failed: {:?}", failure.error()))
+    }
+
+    fn outcome_ack_loss_permit<'a>(
+        peer: &'a OutcomeAckLossProvider,
+        fixture: &AdmissionFixture,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> substrate_api::CommittedEffectPermit<'a, OutcomeAckLossProvider> {
         let registration = reference_registration(fixture, prepared);
         EffectAdmissionSession::new(peer)
             .register(
@@ -3660,11 +3815,16 @@ mod tests {
             let permit = reference_permit(&peer, &fixture, &prepared);
             let duplicate = reference_permit(&peer, &fixture, &prepared);
 
+            let admitted = source.start_admitted(&prepared, &peer, permit).unwrap();
             assert!(matches!(
-                source.start_admitted(&prepared, &peer, permit),
+                admitted.call(),
                 Err(LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
                     LogicalRequestFailure::Denied
                 )))
+            ));
+            assert!(matches!(
+                admitted.outcome_recorded().outcome(),
+                EffectOutcome::Indeterminate { .. }
             ));
             assert_eq!(logical_peer.request_count(), 0, "{session}");
             assert_eq!(logical_peer.execution_count(), 0, "{session}");
@@ -3692,7 +3852,12 @@ mod tests {
             let permit = reference_permit(&peer, &fixture, &prepared);
             let duplicate = reference_permit(&peer, &fixture, &prepared);
 
-            assert!(source.start_admitted(&prepared, &peer, permit).is_err());
+            let admitted = source.start_admitted(&prepared, &peer, permit).unwrap();
+            assert!(admitted.call().is_err());
+            assert!(matches!(
+                admitted.outcome_recorded().outcome(),
+                EffectOutcome::Indeterminate { .. }
+            ));
             assert_eq!(logical_peer.request_count(), 0, "{session}");
             assert_eq!(logical_peer.execution_count(), 0, "{session}");
             assert!(matches!(
@@ -3713,9 +3878,43 @@ mod tests {
         let peer = ReferenceEffectPeer::new_admission_required(fixture.effect_config).unwrap();
         let permit = reference_permit(&peer, &fixture, &prepared);
 
-        assert!(source.start_admitted(&prepared, &peer, permit).is_ok());
+        let admitted = source.start_admitted(&prepared, &peer, permit).unwrap();
+        assert!(admitted.call().is_ok());
+        let (call, outcome_recorded) = admitted.into_parts();
+        assert!(call.is_ok());
+        let completed = outcome_recorded
+            .complete(ReferenceEffectCompletionRequest { result: 0 })
+            .unwrap_or_else(|failure| panic!("generic completion failed: {:?}", failure.error()));
+        assert_eq!(
+            completed.outcome(),
+            &source.coordinator().state().operations[0].outcome.clone().unwrap()
+        );
         assert_eq!(logical_peer.request_count(), 1);
         assert_eq!(logical_peer.execution_count(), 1);
+    }
+
+    #[test]
+    fn admitted_start_rejects_provider_binding_mismatch_before_dispatch() {
+        let root = TestRoot::new("provider-binding-mismatch");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_069))
+                .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let committed_provider =
+            ReferenceEffectPeer::new_admission_required(fixture.effect_config).unwrap();
+        let wrong_provider =
+            ReferenceEffectPeer::new_admission_required(fixture.effect_config).unwrap();
+        let permit = reference_permit(&committed_provider, &fixture, &prepared);
+
+        assert!(matches!(
+            source.start_admitted(&prepared, &wrong_provider, permit),
+            Err(AdmittedLogicalRequestError::Adapter(
+                LogicalRequestAdapterError::AdmissionRejected
+            ))
+        ));
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
     }
 
     #[test]
@@ -3731,12 +3930,22 @@ mod tests {
         let permit = reference_permit(&peer, &fixture, &prepared);
         let duplicate = reference_permit(&peer, &fixture, &prepared);
 
+        let admitted = source.start_admitted(&prepared, &peer, permit).unwrap();
         assert!(matches!(
-            source.start_admitted(&prepared, &peer, permit),
+            admitted.call(),
             Err(LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
                 LogicalRequestFailure::Denied
             )))
         ));
+        let exact = source
+            .coordinator()
+            .state()
+            .operations
+            .iter()
+            .find(|record| record.request == *prepared.effect_request())
+            .and_then(|record| record.outcome.as_ref())
+            .expect("the first sink dispatch has an exact canonical outcome");
+        assert_eq!(admitted.outcome_recorded().outcome(), exact);
         assert_eq!(logical_peer.request_count(), 1);
         assert_eq!(logical_peer.execution_count(), 1);
         assert!(matches!(
@@ -3763,8 +3972,9 @@ mod tests {
             let permit = reference_permit(&peer, &fixture, &prepared);
             let duplicate = reference_permit(&peer, &fixture, &prepared);
 
+            let admitted = source.start_admitted(&prepared, &peer, permit).unwrap();
             assert!(matches!(
-                source.start_admitted(&prepared, &peer, permit),
+                admitted.call(),
                 Err(LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
                     LogicalRequestFailure::Denied
                 )))
@@ -3790,10 +4000,50 @@ mod tests {
         let permit = finish_ack_loss_permit(&peer, &fixture, &prepared);
         let duplicate = finish_ack_loss_permit(&peer, &fixture, &prepared);
 
-        assert_eq!(
-            source.start_admitted(&prepared, &peer, permit),
-            Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
-        );
+        let failure = source.start_admitted(&prepared, &peer, permit).unwrap_err();
+        let AdmittedLogicalRequestError::Finish(failure) = failure else {
+            panic!("expected retained finish failure")
+        };
+        assert!(failure.call().is_ok());
+        let queried = failure.query().unwrap().unwrap();
+        assert_eq!(queried.phase(), ReferenceEffectQueryPhase::Committed);
+        assert_eq!(queried.dispatch_outcome(), Some(EffectDispatchOutcome::GuestReturned));
+        assert!(queried.outcome().is_none());
+        let recovered = failure.retry().unwrap();
+        assert!(recovered.call().is_ok());
+        assert_eq!(logical_peer.request_count(), 1);
+        assert_eq!(logical_peer.execution_count(), 1);
+        assert!(matches!(
+            duplicate.consume(&peer, prepared.effect_request()),
+            Err(EffectDispatchAcquireError::Provider(EffectPeerError::StepConflict))
+        ));
+    }
+
+    #[test]
+    fn outcome_ack_loss_retains_exact_dispatched_state_for_query_and_retry() {
+        let root = TestRoot::new("outcome-ack-loss");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_070))
+                .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let peer = OutcomeAckLossProvider::new(fixture.effect_config);
+        let permit = outcome_ack_loss_permit(&peer, &fixture, &prepared);
+        let duplicate = outcome_ack_loss_permit(&peer, &fixture, &prepared);
+
+        let failure = source.start_admitted(&prepared, &peer, permit).unwrap_err();
+        let AdmittedLogicalRequestError::Outcome(failure) = failure else {
+            panic!("expected retained canonical outcome failure")
+        };
+        assert!(failure.call().is_ok());
+        let exact_outcome = failure.outcome().clone();
+        let queried = failure.query().unwrap().unwrap();
+        assert_eq!(queried.phase(), ReferenceEffectQueryPhase::OutcomeRecorded);
+        assert_eq!(queried.dispatch_outcome(), Some(EffectDispatchOutcome::GuestReturned));
+        assert_eq!(queried.outcome(), Some(&exact_outcome));
+        let recovered = failure.retry().unwrap();
+        assert!(recovered.call().is_ok());
+        assert_eq!(recovered.outcome_recorded().outcome(), &exact_outcome);
         assert_eq!(logical_peer.request_count(), 1);
         assert_eq!(logical_peer.execution_count(), 1);
         assert!(matches!(
@@ -3817,11 +4067,16 @@ mod tests {
         let permit = reference_permit(&peer, &fixture, &prepared);
         let duplicate = reference_permit(&peer, &fixture, &prepared);
 
+        let admitted = source.start_admitted(&prepared, &peer, permit).unwrap();
         assert!(matches!(
-            source.start_admitted(&prepared, &peer, permit),
+            admitted.call(),
             Err(LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
                 LogicalRequestFailure::Unavailable
             )))
+        ));
+        assert!(matches!(
+            admitted.outcome_recorded().outcome(),
+            EffectOutcome::Indeterminate { .. }
         ));
         assert_eq!(logical_peer.request_count(), 0);
         assert_eq!(logical_peer.execution_count(), 0);
