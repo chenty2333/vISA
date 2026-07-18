@@ -324,12 +324,17 @@ pub enum ProcessEffectQueryPhase {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessEffectQueryObservation {
     phase: ProcessEffectQueryPhase,
+    dispatch_outcome: Option<EffectDispatchOutcome>,
     outcome: Option<EffectOutcome>,
 }
 
 impl ProcessEffectQueryObservation {
     pub const fn phase(&self) -> ProcessEffectQueryPhase {
         self.phase
+    }
+
+    pub const fn dispatch_outcome(&self) -> Option<EffectDispatchOutcome> {
+        self.dispatch_outcome
     }
 
     pub const fn outcome(&self) -> Option<&EffectOutcome> {
@@ -1398,14 +1403,18 @@ impl ProcessEffectPeerState {
             || live.effect_binding != Some(binding)
             || live.native_effect_generation != fence.native_effect_generation
             || verified.commit_sequence() != fence.commit_sequence
-            || live.dispatch_phase != ProcessLiveDispatchPhase::Consumed
         {
             return Err(EffectPeerError::StepConflict);
         }
-        live.dispatch_phase = match outcome {
+        let terminal = match outcome {
             EffectDispatchOutcome::GuestReturned => ProcessLiveDispatchPhase::GuestReturned,
             EffectDispatchOutcome::GuestFailed => ProcessLiveDispatchPhase::GuestFailed,
         };
+        match live.dispatch_phase {
+            ProcessLiveDispatchPhase::Consumed => live.dispatch_phase = terminal,
+            existing if existing == terminal => {}
+            _ => return Err(EffectPeerError::StepConflict),
+        }
         Ok(())
     }
 
@@ -1430,7 +1439,10 @@ impl ProcessEffectPeerState {
         self.require_live_token(&live, token, &committed.token)?;
         if self.admission_profile == EffectAdmissionProfile::AdmissionRequired
             && live.effect_request.is_some()
-            && live.dispatch_phase != ProcessLiveDispatchPhase::GuestReturned
+            && !matches!(
+                live.dispatch_phase,
+                ProcessLiveDispatchPhase::GuestReturned | ProcessLiveDispatchPhase::GuestFailed
+            )
         {
             return Err(EffectPeerError::StepConflict);
         }
@@ -1563,7 +1575,18 @@ impl ProcessEffectPeerState {
         } else {
             ProcessEffectQueryPhase::Registered
         };
-        Ok(Some(ProcessEffectQueryObservation { phase, outcome: live.outcome_value.clone() }))
+        let dispatch_outcome = match live.dispatch_phase {
+            ProcessLiveDispatchPhase::GuestReturned => Some(EffectDispatchOutcome::GuestReturned),
+            ProcessLiveDispatchPhase::GuestFailed => Some(EffectDispatchOutcome::GuestFailed),
+            ProcessLiveDispatchPhase::Available
+            | ProcessLiveDispatchPhase::Revoked
+            | ProcessLiveDispatchPhase::Consumed => None,
+        };
+        Ok(Some(ProcessEffectQueryObservation {
+            phase,
+            dispatch_outcome,
+            outcome: live.outcome_value.clone(),
+        }))
     }
 
     fn provider_live_effect_id(
