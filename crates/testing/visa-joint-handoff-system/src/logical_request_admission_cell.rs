@@ -1186,11 +1186,13 @@ impl AdmissionPrefix {
         let admission = EffectAdmissionSession::new(&process_peer);
         let required_capabilities = EffectClosureCapabilities {
             effect_admission: true,
+            outcome_recording: true,
+            session_query: true,
             freeze_thaw: true,
             commit_close: true,
             ..EffectClosureCapabilities::default()
         };
-        let requirements = EffectClosureProviderRequirements::v2_preview(
+        let requirements = EffectClosureProviderRequirements::v2_1_preview(
             required_capabilities,
             EffectClosureAuthenticationProfile::IntegrityOnly,
             EffectClosureProviderLimits {
@@ -1205,7 +1207,7 @@ impl AdmissionPrefix {
         let descriptor = admission.descriptor().map_err(debug)?;
         if !descriptor.satisfies(requirements) {
             return Err(
-                "Nexus provider did not advertise the bounded v2-preview profile".to_owned()
+                "Nexus provider did not advertise the bounded protocol-2.1 profile".to_owned()
             );
         }
         let admission_registration =
@@ -3865,6 +3867,36 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_profile_finish_error_irreversibly_clears_the_armed_gate() {
+        let root = TestRoot::new("profile-finish-clears-error");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_074))
+                .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let peer = ReferenceEffectPeer::new_admission_required(fixture.effect_config).unwrap();
+        let permit = reference_permit(&peer, &fixture, &prepared);
+        let mut dispatch = permit.consume(&peer, prepared.effect_request()).unwrap();
+        let authorization = dispatch.take_profile_authorization().unwrap();
+        let exact = EffectRequestBinding::from_effect(prepared.effect_request()).unwrap();
+        let mut wrong = exact;
+        wrong.canonical_digest = Digest::from_bytes([0xa7; 32]);
+
+        source.coordinator_mut().arm_profile_dispatch(authorization).unwrap();
+        assert!(matches!(
+            source.coordinator_mut().finish_profile_dispatch(wrong),
+            Err(error) if error.kind == substrate_api::ProviderErrorKind::Conflict
+        ));
+        assert!(matches!(
+            source.coordinator_mut().finish_profile_dispatch(exact),
+            Err(error) if error.kind == substrate_api::ProviderErrorKind::Denied
+        ));
+        dispatch.finish(EffectDispatchOutcome::GuestFailed).unwrap();
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+    }
+
+    #[test]
     fn profile_sink_consumes_an_armed_gate_on_full_binding_mismatch() {
         let root = TestRoot::new("profile-sink-binding-mismatch");
         let setup =
@@ -4215,6 +4247,41 @@ mod tests {
             duplicate.consume(&peer, prepared.effect_request()),
             Err(EffectDispatchAcquireError::Provider(EffectPeerError::StepConflict))
         ));
+    }
+
+    #[test]
+    fn guest_error_and_outcome_ack_loss_retain_both_call_and_closure_progress() {
+        let root = TestRoot::new("guest-error-outcome-ack-loss");
+        let setup = AdmissionSetup::create_with_source_fault(
+            &root.0,
+            Identity::from_u128(91_075),
+            FaultPoint::BeforeLogicalRequestIo,
+        )
+        .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let peer = OutcomeAckLossProvider::new(fixture.effect_config);
+        let permit = outcome_ack_loss_permit(&peer, &fixture, &prepared);
+
+        let failure = source.start_admitted(&prepared, &peer, permit).unwrap_err();
+        let AdmittedLogicalRequestError::Outcome(failure) = failure else {
+            panic!("expected retained canonical outcome failure")
+        };
+        assert!(matches!(
+            failure.call(),
+            Err(LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
+                LogicalRequestFailure::Unavailable
+            )))
+        ));
+        let exact_outcome = failure.outcome().clone();
+        let queried = failure.query().unwrap().unwrap();
+        assert_eq!(queried.dispatch_outcome(), Some(EffectDispatchOutcome::GuestFailed));
+        assert_eq!(queried.outcome(), Some(&exact_outcome));
+        let recovered = failure.retry().unwrap();
+        assert!(recovered.call().is_err());
+        assert_eq!(recovered.outcome_recorded().outcome(), &exact_outcome);
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
     }
 
     #[test]

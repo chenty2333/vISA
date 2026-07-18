@@ -225,6 +225,12 @@ pub trait ProfilePort {
 
     /// Close or cancel the currently armed gate and report whether the exact
     /// binding was consumed by the profile execution sink.
+    ///
+    /// Before returning either `Ok` or `Err`, an implementation must
+    /// irreversibly discard every armed or consumed gate selected by this
+    /// finish attempt. In particular, a binding mismatch may report an error
+    /// but may not leave the authorization reusable. Providers which cannot
+    /// meet this rule are not safe for admitted execution.
     fn finish_profile_dispatch(
         &mut self,
         _binding: EffectRequestBinding,

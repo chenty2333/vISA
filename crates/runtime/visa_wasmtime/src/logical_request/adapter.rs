@@ -656,6 +656,12 @@ where
     /// Consuming the permit prevents local reuse; canonical
     /// operation/idempotency identity still governs provider replay and
     /// duplicate dispatch recovery.
+    ///
+    /// The fail-closed claim across a mechanism-provider finish error relies
+    /// on [`substrate_api::ProfilePort::finish_profile_dispatch`] irreversibly
+    /// clearing its gate on both `Ok` and `Err`. An arbitrary `ProfilePort`
+    /// implementation is not qualified merely because it implements this
+    /// method.
     pub fn start_admitted<'a, C>(
         &mut self,
         prepared: &PreparedLogicalRequestStart,
