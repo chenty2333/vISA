@@ -275,18 +275,23 @@ Check the frozen vISA 0.1 target separately with:
 
 ```sh
 python3 scripts/check-release-contract.py
-python3 scripts/check-release-contract.py --release-ready
+python3 scripts/check-release-contract.py --release-ready \
+  --evidence-index /archive/visa-0.1.0/index.json
 ```
 
-The first command is part of `fast` and validates the frozen contract and its
-current pending/satisfied partition. The target fixes a six-process product
+The first command is part of `fast` and validates the immutable target plus its
+target-digest-bound mutable development readiness ledger. The target fixes a six-process product
 topology: one short-lived controller, two direct-execution Wasmtime agents, one
 independent ownership service, one Nexus adapter service, and its one native-v1
 peer child. It also keeps controller/agent, agent/ownership, and agent/Nexus
-local UDS schemas independent and bounds every frame at 1 MiB; large artifacts
-remain digest-plus-secure-path or descriptor references. The second command is
-the fail-closed release admission command; it intentionally fails until every
-listed closure item has exact, receipt-backed release evidence.
+local UDS schemas independent. They share a 20-byte fixed header and canonical
+Postcard 1.1.3 payload, use distinct eight-byte magics, and bound the whole
+frame at 1 MiB (payload 1,048,556 bytes); large artifacts remain
+digest-plus-secure-path references. The Nexus child boundary stays native-v1
+JSONL. The second command is the fail-closed release admission command; it
+requires a complete external exact-RC-tag evidence index, including final
+workspace/package/source/license inventory and tagged Cargo.lock/toolchain
+digests. Updating the development ledger never closes that external gate.
 
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,

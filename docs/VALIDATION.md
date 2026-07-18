@@ -195,11 +195,15 @@ linting and focused tests for the active spine, plus strict dependency direction
 and the [vISA 0.1 exact-version target-contract](../specs/release/visa-0.1.md)
 checker/self-tests. The default contract check proves that frozen identifiers,
 versions, digests, the six-process role/authority topology, three independent
-bounded local UDS contracts, and the explicit pending/satisfied partition still
-match. It also validates every attached satisfied-ID evidence path, digest,
-exact revision, and verifier receipt. It does not make the separate
-`--release-ready` admission pass. The tier proves local logic and structural
-direction, not implemented adapter or continuity behavior.
+bounded local UDS contracts, and the target-bound development pending/satisfied
+partition still match. It validates the mutable ledger's repository-relative
+evidence paths, digests, and receipts, but does not treat that progress ledger
+as release closure. The local vISA RPCs use one fixed 20-byte header plus
+canonical Postcard payload, three independent magics/namespaces, and a 1 MiB
+whole-frame bound; the Nexus child protocol remains native-v1 JSONL. `fast`
+does not make the separate external-index `--release-ready` admission pass. The
+tier proves local logic and structural direction, not implemented adapter or
+continuity behavior.
 
 ### Full
 
@@ -863,12 +867,16 @@ The machine-readable [vISA 0.1 exact-version target
 contract](../specs/release/visa-0.1.toml) freezes the intended single-host,
 same-boot Linux x86-64 product cell and its version/digest boundaries. Its
 default checker is implemented in `fast`; release admission is a separate
-fail-closed `python3 scripts/check-release-contract.py --release-ready` command.
-The current contract is explicitly not release-ready and claims no supported
+fail-closed `python3 scripts/check-release-contract.py --release-ready
+--evidence-index PATH` command. The immutable target contains required IDs but
+no mutable closure state. A separate target-digest-bound development ledger is
+explicitly not release evidence, and the current target claims no supported
 product cell. The target topology is one short-lived controller, two long-lived
 agents that directly host Wasmtime and their real profile sinks, one independent
 SQLite ownership authority, and one `visa-nexusd` supervising one native-v1
-peer. Controller/agent/ownership/Nexus RPCs are local UDS only. Agent and
+peer. Controller/agent/ownership/Nexus RPCs are local UDS only, with fixed-header
+Postcard framing on the three vISA boundaries and native-v1 JSONL only on the
+Nexus child boundary. Agent and
 controller crash recovery may reconnect to the surviving Registry; adapter or
 peer crash is terminal fail-closed in 0.1 and cannot be disguised by respawning
 a replacement Registry.
@@ -877,7 +885,12 @@ The release tier reruns system scenarios in declared runtime/ISA/substrate
 cells with pinned inputs and provenance, then adds stress, recovery,
 compatibility, performance, and artifact-integrity checks. Evidence must be
 tied to source, toolchain, component, profile, configuration, and result
-digests.
+digests. The external index must bind an exact RC tag and 40-hex commit, the
+target bytes at that commit, all required-ID artifacts and receipts, the tagged
+Cargo.lock and toolchain, and a complete workspace/resolved package version,
+source, and license inventory. The final `v0.1.0` tag may point to that same
+commit without rewriting it; a post-release claims ledger may advance on main
+without moving the release tag.
 
 ### Claim gates
 
