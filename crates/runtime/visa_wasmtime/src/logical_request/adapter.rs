@@ -4,8 +4,10 @@ use contract_core::{
 };
 use substrate_api::{
     CommittedEffectPermit, DispatchedEffectOutcomeFailure, EffectAdmissionProfile,
-    EffectClosureProvider, EffectDispatchAcquireError, EffectDispatchFinishFailure,
-    EffectDispatchOutcome, EffectRequestBinding, OutcomeRecordedEffect,
+    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProvider,
+    EffectClosureProviderLimits, EffectClosureProviderRequirements, EffectDispatchAcquireError,
+    EffectDispatchFinishFailure, EffectDispatchOutcome, EffectRequestBinding,
+    OutcomeRecordedEffect,
 };
 use visa_component_adapter::{
     AdapterProvider, LogicalRequestComponentState, LogicalRequestWorkloadLifecycle,
@@ -645,10 +647,15 @@ where
         Ok(result)
     }
 
-    /// Dispatch a prepared request only after an effect-closure provider has
-    /// committed the exact canonical effect. Consuming this permit prevents
-    /// local reuse; canonical operation/idempotency identity still governs
-    /// provider replay and duplicate dispatch recovery.
+    /// Dispatch a prepared request only after a protocol-2.1 effect-closure
+    /// provider has committed the exact canonical effect.
+    ///
+    /// An outer `Ok` means that the provider recorded a canonical outcome; it
+    /// does not mean that the guest call succeeded. Callers must inspect
+    /// [`AdmittedLogicalRequestExecution::call`] for the Wasmtime/guest result.
+    /// Consuming the permit prevents local reuse; canonical
+    /// operation/idempotency identity still governs provider replay and
+    /// duplicate dispatch recovery.
     pub fn start_admitted<'a, C>(
         &mut self,
         prepared: &PreparedLogicalRequestStart,
@@ -666,7 +673,24 @@ where
         let descriptor = provider.descriptor().map_err(|_| {
             AdmittedLogicalRequestError::Adapter(LogicalRequestAdapterError::AdmissionRejected)
         })?;
-        if !descriptor.admission_profile.satisfies(EffectAdmissionProfile::AdmissionRequired) {
+        let requirements = EffectClosureProviderRequirements::v2_1_preview(
+            EffectClosureCapabilities {
+                effect_admission: true,
+                outcome_recording: true,
+                session_query: true,
+                ..EffectClosureCapabilities::default()
+            },
+            EffectClosureAuthenticationProfile::None,
+            EffectClosureProviderLimits {
+                max_scopes: 1,
+                max_effects_per_scope: 1,
+                max_inflight_mutations: 1,
+                max_request_bytes: 1,
+                max_receipt_bytes: 1,
+            },
+        )
+        .require_admission();
+        if !descriptor.satisfies(requirements) {
             return Err(AdmittedLogicalRequestError::Adapter(
                 LogicalRequestAdapterError::AdmissionRejected,
             ));
