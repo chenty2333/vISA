@@ -53,7 +53,8 @@ pub struct LogicalRequestCallResult {
 /// `call` describes the Wasmtime/guest result. A guest error does not erase
 /// closure progress: callers still receive the provider-bound
 /// [`OutcomeRecordedEffect`] and may explicitly complete or retain it for
-/// handoff cohort closure.
+/// handoff cohort closure. The value borrows the live provider instance and is
+/// not a claim of restart-persistent recovery.
 pub struct AdmittedLogicalRequestExecution<'a, C>
 where
     C: EffectClosureProvider,
@@ -188,9 +189,11 @@ where
     }
 }
 
-/// Failure of an admitted start. `Adapter` occurs before a provider-consumed
-/// guest attempt. The other variants retain their one-way provider typestate
-/// and can be queried or retried without another sink dispatch.
+/// Failure of an admitted start. `Adapter` means no locally available consumed
+/// typestate was returned (including dispatch-acquisition rejection); provider
+/// recovery after an ambiguous `consume` failure remains out of band. The
+/// other variants retain their one-way provider typestate and can be queried
+/// or retried in the same process without another sink dispatch.
 pub enum AdmittedLogicalRequestError<'a, C>
 where
     C: EffectClosureProvider,
