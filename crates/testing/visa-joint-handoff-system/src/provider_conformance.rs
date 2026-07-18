@@ -5,7 +5,11 @@ use contract_core::{
     Identity, LeaseEpoch, NodeIdentity, ProfileAccess,
 };
 use joint_handoff_core::{JointHandoffKey, ReceiptIssuerIdentity};
-use substrate_api::EffectClosureAuthenticationProfile;
+use substrate_api::{
+    CommittedEffectPermit, EffectAdmissionProfile, EffectAdmissionSession,
+    EffectClosureAuthenticationProfile, EffectClosureProvider, EffectDispatchAcquireError,
+    EffectDispatchOutcome,
+};
 use visa_conformance::{
     EffectClosureCompletionCase, EffectClosureConformanceErrorKind,
     EffectClosureConformanceFixture, EffectClosureObservedState, EffectClosureRegistrationCase,
@@ -16,13 +20,14 @@ use visa_conformance::{
 };
 
 use crate::{
-    EffectPeerConfig, EffectPeerError, EffectPublicationRequest, ProcessEffectCompletionEvidence,
-    ProcessEffectCompletionRequest, ProcessEffectPeer, ProcessEffectPeerLaunch,
-    ProcessEffectQueryObservation, ProcessEffectQueryPhase, ProcessLiveEffectAdvance,
-    ProcessLiveEffectCommitMetadata, ReferenceEffectCommitMetadata,
-    ReferenceEffectCompletionEvidence, ReferenceEffectCompletionRequest,
-    ReferenceEffectOutcomeEvidence, ReferenceEffectPeer, ReferenceEffectQueryObservation,
-    ReferenceEffectQueryPhase, effect_receipt_issuer, ownership_receipt_issuer,
+    EffectAdmissionRegistration, EffectPeer, EffectPeerConfig, EffectPeerError,
+    EffectPublicationRequest, ProcessEffectCompletionEvidence, ProcessEffectCompletionRequest,
+    ProcessEffectPeer, ProcessEffectPeerLaunch, ProcessEffectQueryObservation,
+    ProcessEffectQueryPhase, ProcessLiveEffectAdvance, ProcessLiveEffectCommitMetadata,
+    ReferenceEffectCommitMetadata, ReferenceEffectCompletionEvidence,
+    ReferenceEffectCompletionRequest, ReferenceEffectOutcomeEvidence, ReferenceEffectPeer,
+    ReferenceEffectQueryObservation, ReferenceEffectQueryPhase, effect_receipt_issuer,
+    ownership_receipt_issuer,
 };
 
 struct SharedProviderFixture {
@@ -134,7 +139,9 @@ fn classify_error(error: &EffectPeerError) -> EffectClosureConformanceErrorKind 
         | EffectPeerError::StaleFreezeGeneration => {
             EffectClosureConformanceErrorKind::StaleSelector
         }
-        EffectPeerError::PublicationConflict => EffectClosureConformanceErrorKind::Conflict,
+        EffectPeerError::InvalidRequest | EffectPeerError::PublicationConflict => {
+            EffectClosureConformanceErrorKind::Conflict
+        }
         EffectPeerError::StepConflict => EffectClosureConformanceErrorKind::InvalidTransition,
         _ => EffectClosureConformanceErrorKind::Other,
     }
@@ -147,8 +154,8 @@ impl EffectClosureConformanceFixture<ReferenceEffectPeer> for ReferenceFixture<'
         self.0.effect.clone()
     }
 
-    fn registration(&self, case: EffectClosureRegistrationCase) -> EffectPublicationRequest {
-        registration(self.0, case)
+    fn registration(&self, case: EffectClosureRegistrationCase) -> EffectAdmissionRegistration {
+        EffectAdmissionRegistration::new(&self.0.effect, registration(self.0, case)).unwrap()
     }
 
     fn commit_metadata(&self) -> ReferenceEffectCommitMetadata {
@@ -237,8 +244,8 @@ impl EffectClosureConformanceFixture<ProcessEffectPeer> for ProcessFixture<'_> {
         self.0.effect.clone()
     }
 
-    fn registration(&self, case: EffectClosureRegistrationCase) -> EffectPublicationRequest {
-        registration(self.0, case)
+    fn registration(&self, case: EffectClosureRegistrationCase) -> EffectAdmissionRegistration {
+        EffectAdmissionRegistration::new(&self.0.effect, registration(self.0, case)).unwrap()
     }
 
     fn commit_metadata(&self) -> ProcessLiveEffectCommitMetadata {
@@ -318,6 +325,26 @@ impl EffectClosureConformanceFixture<ProcessEffectPeer> for ProcessFixture<'_> {
     }
 }
 
+fn reference_permit<'a>(
+    peer: &'a ReferenceEffectPeer,
+    fixture: &SharedProviderFixture,
+) -> CommittedEffectPermit<'a, ReferenceEffectPeer> {
+    EffectAdmissionSession::new(peer)
+        .register(
+            fixture.effect.clone(),
+            EffectAdmissionRegistration::new(&fixture.effect, fixture.registration.clone())
+                .unwrap(),
+        )
+        .unwrap_or_else(|failure| panic!("register failed: {:?}", failure.error()))
+        .prepare()
+        .unwrap_or_else(|failure| panic!("prepare failed: {:?}", failure.error()))
+        .commit(ReferenceEffectCommitMetadata {
+            result: 17,
+            domain_revision: fixture.config.scope_generation,
+        })
+        .unwrap_or_else(|failure| panic!("commit failed: {:?}", failure.error()))
+}
+
 #[test]
 fn provider_descriptor_contract_vectors_are_fixed_and_provider_neutral() {
     let vectors = effect_closure_descriptor_contract_vectors();
@@ -329,6 +356,7 @@ fn provider_descriptor_contract_vectors_are_fixed_and_provider_neutral() {
             "wrong-protocol-major",
             "missing-required-capability",
             "authentication-below-minimum",
+            "compatibility-profile-cannot-satisfy-admission-required",
             "malformed-zero-limit",
             "limit-below-minimum",
             "unsupported-future-minor",
@@ -348,10 +376,84 @@ fn provider_descriptor_contract_vectors_are_fixed_and_provider_neutral() {
 }
 
 #[test]
+fn compatibility_publication_remains_available_but_required_profile_rejects_the_bypass() {
+    let fixture = shared_fixture(12_000);
+    let compatibility = ReferenceEffectPeer::new(fixture.config).unwrap();
+    assert_eq!(
+        compatibility.descriptor().unwrap().admission_profile,
+        EffectAdmissionProfile::Compatibility
+    );
+    assert_eq!(
+        EffectPeer::publish(&compatibility, fixture.registration.clone()).unwrap(),
+        crate::EffectPublicationResult::Published
+    );
+
+    let required = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
+    assert_eq!(
+        required.descriptor().unwrap().admission_profile,
+        EffectAdmissionProfile::AdmissionRequired
+    );
+    assert!(matches!(
+        EffectPeer::publish(&required, fixture.registration.clone()),
+        Err(EffectPeerError::Unsupported(_))
+    ));
+}
+
+#[test]
+fn provider_revocation_between_commit_and_dispatch_fails_closed() {
+    let fixture = shared_fixture(13_000);
+    let peer = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
+    let permit = reference_permit(&peer, &fixture);
+    peer.revoke_effect_dispatch(fixture.registration.record.effect).unwrap();
+    assert!(matches!(
+        permit.consume(&peer, &fixture.effect),
+        Err(EffectDispatchAcquireError::Provider(EffectPeerError::Revoked))
+    ));
+}
+
+#[test]
+fn generation_change_and_duplicate_permit_consumption_are_rejected() {
+    let stale_fixture = shared_fixture(14_000);
+    let stale_peer = ReferenceEffectPeer::new_admission_required(stale_fixture.config).unwrap();
+    let stale = reference_permit(&stale_peer, &stale_fixture);
+    EffectPeer::rebind(&stale_peer, Identity::from_u128(14_999)).unwrap();
+    assert!(matches!(
+        stale.consume(&stale_peer, &stale_fixture.effect),
+        Err(EffectDispatchAcquireError::Provider(EffectPeerError::StaleScope))
+    ));
+
+    let fixture = shared_fixture(14_500);
+    let peer = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
+    let first = reference_permit(&peer, &fixture);
+    let duplicate = reference_permit(&peer, &fixture);
+    first
+        .consume(&peer, &fixture.effect)
+        .unwrap()
+        .finish(EffectDispatchOutcome::GuestReturned)
+        .unwrap();
+    assert!(matches!(
+        duplicate.consume(&peer, &fixture.effect),
+        Err(EffectDispatchAcquireError::Provider(EffectPeerError::StepConflict))
+    ));
+}
+
+#[test]
+fn reference_permit_is_bound_to_one_concrete_provider_instance() {
+    let fixture = shared_fixture(15_000);
+    let first = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
+    let second = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
+    let permit = reference_permit(&first, &fixture);
+    assert!(matches!(
+        permit.consume(&second, &fixture.effect),
+        Err(EffectDispatchAcquireError::BindingMismatch)
+    ));
+}
+
+#[test]
 fn reference_effect_peer_passes_the_shared_provider_harness() {
     let fixture = shared_fixture(10_000);
-    let peer = ReferenceEffectPeer::new(fixture.config).unwrap();
-    let other = ReferenceEffectPeer::new(fixture.config).unwrap();
+    let peer = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
+    let other = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
     let report =
         run_effect_closure_provider_contract(&peer, &other, &ReferenceFixture(&fixture)).unwrap();
     assert_eq!(report.observations(), visa_conformance::EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX);
@@ -364,14 +466,25 @@ fn reference_effect_peer_passes_the_shared_provider_harness() {
 #[ignore = "requires an explicitly pinned, separately built nexus-effect-peer binary"]
 fn process_effect_peer_passes_the_shared_provider_harness() {
     let fixture = shared_fixture(20_000);
-    let peer = ProcessEffectPeer::spawn(process_launch(), fixture.config).unwrap();
-    let other = ProcessEffectPeer::spawn(process_launch(), fixture.config).unwrap();
+    let peer =
+        ProcessEffectPeer::spawn_admission_required(process_launch(), fixture.config).unwrap();
+    let other =
+        ProcessEffectPeer::spawn_admission_required(process_launch(), fixture.config).unwrap();
+    assert!(matches!(
+        EffectPeer::publish(&peer, fixture.registration.clone()),
+        Err(EffectPeerError::Unsupported(_))
+    ));
+    assert!(matches!(
+        peer.register_live_effect(fixture.registration.clone()),
+        Err(EffectPeerError::Unsupported(_))
+    ));
     let process_report =
         run_effect_closure_provider_contract(&peer, &other, &ProcessFixture(&fixture)).unwrap();
 
     let reference_fixture = shared_fixture(30_000);
-    let reference = ReferenceEffectPeer::new(reference_fixture.config).unwrap();
-    let other_reference = ReferenceEffectPeer::new(reference_fixture.config).unwrap();
+    let reference = ReferenceEffectPeer::new_admission_required(reference_fixture.config).unwrap();
+    let other_reference =
+        ReferenceEffectPeer::new_admission_required(reference_fixture.config).unwrap();
     let reference_report = run_effect_closure_provider_contract(
         &reference,
         &other_reference,

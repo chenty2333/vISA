@@ -249,6 +249,19 @@ sync -d -- "$execution_nexus_bin"
 [[ "$(sha256sum -- "$execution_nexus_bin" | cut -d ' ' -f1)" == "$nexus_bin_sha256" ]] \
     || fail "private Nexus execution copy differs from the supplied exact bytes"
 
+printf '%s\n' '==> exact Nexus process provider-conformance negatives'
+(
+    CDPATH='' cd -- "$root"
+    env \
+        NEXUS_EFFECT_PEER_BIN="$execution_nexus_bin" \
+        NEXUS_EFFECT_PEER_SHA256="$nexus_bin_sha256" \
+        NEXUS_EFFECT_PEER_REVISION="$qualified_nexus_revision" \
+        cargo test --locked --quiet \
+            -p visa-joint-handoff-system \
+            provider_conformance::process_effect_peer_passes_the_shared_provider_harness -- \
+            --ignored --exact --test-threads=1
+)
+
 run_artifact_command() {
     local mode="$1"
     local location="$2"

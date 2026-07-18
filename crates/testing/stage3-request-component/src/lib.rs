@@ -18,6 +18,40 @@ const MAX_RESPONSE_CHUNK_BYTES: u32 = 64 * 1024;
 struct LiveState {
     portable: ComponentState,
     request: RequestBinding,
+    adversarial: AdversarialBehavior,
+}
+
+/// Reserved conformance behaviors for the Stage 3 test component. Normal
+/// fixture sessions do not select them; adversarial tests use exact IDs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AdversarialBehavior {
+    None,
+    MutateStart,
+    InvalidArgumentsThenStart,
+    DuplicateStart,
+    StartFromObserve,
+    StartThenCancel,
+    StartThenObserve,
+    StartThenReconcile,
+    ReturnWithoutStart,
+    TrapBeforeStart,
+}
+
+impl AdversarialBehavior {
+    fn for_session(session_id: &str) -> Self {
+        match session_id {
+            "adversarial:mutate-start" => Self::MutateStart,
+            "adversarial:invalid-then-start" => Self::InvalidArgumentsThenStart,
+            "adversarial:duplicate-start" => Self::DuplicateStart,
+            "adversarial:start-from-observe" => Self::StartFromObserve,
+            "adversarial:start-then-cancel" => Self::StartThenCancel,
+            "adversarial:start-then-observe" => Self::StartThenObserve,
+            "adversarial:start-then-reconcile" => Self::StartThenReconcile,
+            "adversarial:return-without-start" => Self::ReturnWithoutStart,
+            "adversarial:trap-before-start" => Self::TrapBeforeStart,
+            _ => Self::None,
+        }
+    }
 }
 
 thread_local! {
@@ -47,17 +81,97 @@ impl Guest for RequestWorkload {
             {
                 return Err(WorkloadError::InvalidState);
             }
+            if live.adversarial == AdversarialBehavior::TrapBeforeStart {
+                panic!("adversarial trap before host Start");
+            }
+            if live.adversarial == AdversarialBehavior::ReturnWithoutStart {
+                return Ok(RequestObservation {
+                    operation_id: live.portable.operation_id.clone(),
+                    phase: live.portable.request_phase,
+                    response: live.portable.response.clone(),
+                    rejection: live.portable.rejection,
+                });
+            }
+            if live.adversarial == AdversarialBehavior::InvalidArgumentsThenStart {
+                let invalid_operation = format!("{}-mutated", live.portable.operation_id);
+                if live
+                    .request
+                    .start(
+                        &invalid_operation,
+                        &live.portable.peer_identity,
+                        &live.portable.credential_reference,
+                        &bytes,
+                        live.portable.timeout_ms,
+                    )
+                    .is_ok()
+                {
+                    return Err(WorkloadError::InvalidState);
+                }
+            }
 
+            let mut dispatched = bytes;
+            if live.adversarial == AdversarialBehavior::MutateStart {
+                dispatched.push(0xff);
+                if live
+                    .request
+                    .start(
+                        &live.portable.operation_id,
+                        &live.portable.peer_identity,
+                        &live.portable.credential_reference,
+                        &dispatched,
+                        live.portable.timeout_ms,
+                    )
+                    .is_ok()
+                {
+                    return Err(WorkloadError::InvalidState);
+                }
+                dispatched.pop();
+            }
             let observed = live
                 .request
                 .start(
                     &live.portable.operation_id,
                     &live.portable.peer_identity,
                     &live.portable.credential_reference,
-                    &bytes,
+                    &dispatched,
                     live.portable.timeout_ms,
                 )
                 .map_err(WorkloadError::Request)?;
+            let extra_effect = match live.adversarial {
+                AdversarialBehavior::StartThenCancel => {
+                    live.request.cancel(&live.portable.operation_id).map(|_| ())
+                }
+                AdversarialBehavior::StartThenObserve => {
+                    live.request.observe(&live.portable.operation_id, 1).map(|_| ())
+                }
+                AdversarialBehavior::StartThenReconcile => {
+                    live.request.reconcile(&live.portable.operation_id).map(|_| ())
+                }
+                _ => Ok(()),
+            };
+            if matches!(
+                live.adversarial,
+                AdversarialBehavior::StartThenCancel
+                    | AdversarialBehavior::StartThenObserve
+                    | AdversarialBehavior::StartThenReconcile
+            ) {
+                return match extra_effect {
+                    Ok(()) => Err(WorkloadError::InvalidState),
+                    Err(error) => Err(WorkloadError::Request(error)),
+                };
+            }
+            if live.adversarial == AdversarialBehavior::DuplicateStart {
+                match live.request.start(
+                    &live.portable.operation_id,
+                    &live.portable.peer_identity,
+                    &live.portable.credential_reference,
+                    &dispatched,
+                    live.portable.timeout_ms,
+                ) {
+                    Ok(_) => return Err(WorkloadError::InvalidState),
+                    Err(error) => return Err(WorkloadError::Request(error)),
+                }
+            }
             apply_observation(&mut live.portable, &observed, Operation::Start)?;
             Ok(observed)
         })
@@ -66,6 +180,19 @@ impl Guest for RequestWorkload {
     fn observe(max_bytes: u32) -> Result<ObserveResult, WorkloadError> {
         STATE.with_borrow_mut(|slot| {
             let live = active(slot)?;
+            if live.adversarial == AdversarialBehavior::StartFromObserve {
+                return live
+                    .request
+                    .start(
+                        &live.portable.operation_id,
+                        &live.portable.peer_identity,
+                        &live.portable.credential_reference,
+                        &[0xad],
+                        live.portable.timeout_ms,
+                    )
+                    .map(|_| unreachable!("adversarial Start bypass unexpectedly succeeded"))
+                    .map_err(WorkloadError::Request);
+            }
             if max_bytes == 0
                 || max_bytes > MAX_RESPONSE_CHUNK_BYTES
                 || !matches!(
@@ -210,7 +337,8 @@ fn install(
             return Err(WorkloadError::AlreadyActive);
         }
         state.lifecycle = Lifecycle::Active;
-        *slot = Some(LiveState { portable: state, request });
+        let adversarial = AdversarialBehavior::for_session(&state.session_id);
+        *slot = Some(LiveState { portable: state, request, adversarial });
         Ok(())
     })
 }

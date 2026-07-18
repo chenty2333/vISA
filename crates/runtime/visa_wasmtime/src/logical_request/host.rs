@@ -1,7 +1,8 @@
-use contract_core::{CanonicalState, ProfileAccess};
+use contract_core::{CanonicalState, EffectRequest, ProfileAccess};
+use substrate_api::EffectAdmissionProfile;
 use visa_component_adapter::{
     AdapterProvider, BindingError, ProfileBinding, ProfileCallResult, ProfileFailure,
-    identity_string, profile_execute, profile_observe,
+    identity_string, prepare_profile_effect, profile_execute, profile_observe,
 };
 use visa_profile::{
     LOGICAL_REQUEST_EXTENSION_ID, LogicalRequestOperation, LogicalRequestResult,
@@ -30,11 +31,38 @@ pub(crate) enum CanonicalRequestError {
 pub struct LogicalRequestStoreState<P> {
     coordinator: Coordinator<P>,
     table: ResourceTable,
+    admission_profile: EffectAdmissionProfile,
+    start_gate: StartAdmissionGate,
+}
+
+#[derive(Debug, Default)]
+enum StartAdmissionGate {
+    #[default]
+    Idle,
+    Armed(Box<EffectRequest>),
+    Consumed,
+}
+
+struct StartArguments {
+    expected: Option<Box<EffectRequest>>,
+    operation_id: String,
+    peer_identity: String,
+    credential_reference: String,
+    request: Vec<u8>,
+    timeout_ms: u64,
 }
 
 impl<P> LogicalRequestStoreState<P> {
-    pub(crate) fn new(coordinator: Coordinator<P>) -> Self {
-        Self { coordinator, table: ResourceTable::new() }
+    pub(crate) fn new(
+        coordinator: Coordinator<P>,
+        admission_profile: EffectAdmissionProfile,
+    ) -> Self {
+        Self {
+            coordinator,
+            table: ResourceTable::new(),
+            admission_profile,
+            start_gate: StartAdmissionGate::Idle,
+        }
     }
 
     pub fn coordinator(&self) -> &Coordinator<P> {
@@ -63,6 +91,51 @@ impl<P> LogicalRequestStoreState<P> {
             ProfileBinding::for_state(self.coordinator.state(), LOGICAL_REQUEST_EXTENSION_ID)?;
         self.table.push(binding).map_err(|_| BindingError::ResourceTable)
     }
+
+    pub(crate) fn arm_admitted_start(&mut self, expected: EffectRequest) -> bool {
+        if self.admission_profile != EffectAdmissionProfile::AdmissionRequired
+            || !matches!(self.start_gate, StartAdmissionGate::Idle)
+        {
+            return false;
+        }
+        self.start_gate = StartAdmissionGate::Armed(Box::new(expected));
+        true
+    }
+
+    /// Clear the local gate after the guest call and report whether the exact
+    /// host Start import consumed it. An armed-but-unused gate is never carried
+    /// into another export.
+    pub(crate) fn finish_admitted_start(&mut self) -> bool {
+        matches!(
+            core::mem::replace(&mut self.start_gate, StartAdmissionGate::Idle),
+            StartAdmissionGate::Consumed
+        )
+    }
+
+    fn begin_start_attempt(&mut self) -> Result<Option<Box<EffectRequest>>, RequestError> {
+        if self.admission_profile != EffectAdmissionProfile::AdmissionRequired {
+            return Ok(None);
+        }
+        let previous = core::mem::replace(&mut self.start_gate, StartAdmissionGate::Consumed);
+        match previous {
+            StartAdmissionGate::Armed(expected) => Ok(Some(expected)),
+            StartAdmissionGate::Idle | StartAdmissionGate::Consumed => Err(RequestError::Denied),
+        }
+    }
+
+    fn reject_non_start_during_admitted_start(&mut self) -> Result<(), RequestError> {
+        if self.admission_profile != EffectAdmissionProfile::AdmissionRequired {
+            return Ok(());
+        }
+        match &self.start_gate {
+            StartAdmissionGate::Idle => Ok(()),
+            StartAdmissionGate::Armed(_) => {
+                self.start_gate = StartAdmissionGate::Consumed;
+                Err(RequestError::Denied)
+            }
+            StartAdmissionGate::Consumed => Err(RequestError::Denied),
+        }
+    }
 }
 
 impl<P> Host for LogicalRequestStoreState<P> where P: AdapterProvider {}
@@ -80,15 +153,22 @@ where
         request: Vec<u8>,
         timeout_ms: u64,
     ) -> wasmtime::Result<Result<RequestObservation, RequestError>> {
+        let expected = match self.begin_start_attempt() {
+            Ok(expected) => expected,
+            Err(error) => return Ok(Err(error)),
+        };
         let binding = self.table.get(&resource).map_err(wasmtime::Error::new)?.clone();
         Ok(start(
-            &mut self.coordinator,
+            self,
             &binding,
-            operation_id,
-            peer_identity,
-            credential_reference,
-            request,
-            timeout_ms,
+            StartArguments {
+                expected,
+                operation_id,
+                peer_identity,
+                credential_reference,
+                request,
+                timeout_ms,
+            },
         ))
     }
 
@@ -98,6 +178,9 @@ where
         operation_id: String,
         max_bytes: u32,
     ) -> wasmtime::Result<Result<ObserveResult, RequestError>> {
+        if let Err(error) = self.reject_non_start_during_admitted_start() {
+            return Ok(Err(error));
+        }
         let binding = self.table.get(&resource).map_err(wasmtime::Error::new)?.clone();
         Ok(observe(&mut self.coordinator, &binding, operation_id, max_bytes))
     }
@@ -107,6 +190,9 @@ where
         resource: Resource<ProfileBinding>,
         operation_id: String,
     ) -> wasmtime::Result<Result<RequestObservation, RequestError>> {
+        if let Err(error) = self.reject_non_start_during_admitted_start() {
+            return Ok(Err(error));
+        }
         let binding = self.table.get(&resource).map_err(wasmtime::Error::new)?.clone();
         Ok(control(
             &mut self.coordinator,
@@ -122,6 +208,9 @@ where
         resource: Resource<ProfileBinding>,
         operation_id: String,
     ) -> wasmtime::Result<Result<RequestObservation, RequestError>> {
+        if let Err(error) = self.reject_non_start_during_admitted_start() {
+            return Ok(Err(error));
+        }
         let binding = self.table.get(&resource).map_err(wasmtime::Error::new)?.clone();
         Ok(control(
             &mut self.coordinator,
@@ -138,15 +227,19 @@ where
 }
 
 fn start<P: AdapterProvider>(
-    coordinator: &mut Coordinator<P>,
+    store: &mut LogicalRequestStoreState<P>,
     binding: &ProfileBinding,
-    operation_id: String,
-    peer_identity: String,
-    credential_reference: String,
-    request: Vec<u8>,
-    timeout_ms: u64,
+    arguments: StartArguments,
 ) -> Result<RequestObservation, RequestError> {
-    let before = request_state_for_call(coordinator.state())?;
+    let StartArguments {
+        expected,
+        operation_id,
+        peer_identity,
+        credential_reference,
+        request,
+        timeout_ms,
+    } = arguments;
+    let before = request_state_for_call(store.coordinator.state())?;
     validate_transport(&before)?;
     validate_operation_id(&before, &operation_id)?;
     if before.claim.peer_identity != peer_identity.as_bytes() {
@@ -162,8 +255,19 @@ fn start<P: AdapterProvider>(
     let operation = LogicalRequestOperation::Start { request };
     let payload =
         encode_logical_request_operation(&operation).map_err(|_| RequestError::PolicyDenied)?;
+    let effect = prepare_profile_effect(
+        store.coordinator.state(),
+        binding,
+        ProfileAccess::Write,
+        operation_id.as_bytes(),
+        payload.clone(),
+    )
+    .map_err(|error| request_error(error, FailureContext::Start))?;
+    if expected.is_some_and(|expected| *expected != effect) {
+        return Err(RequestError::Denied);
+    }
     let call = profile_execute(
-        coordinator,
+        &mut store.coordinator,
         binding,
         ProfileAccess::Write,
         operation_id.as_bytes(),
@@ -175,7 +279,7 @@ fn start<P: AdapterProvider>(
     if !matches!(result, LogicalRequestResult::Started { .. }) {
         return Err(RequestError::Unavailable);
     }
-    observation_after(coordinator.state(), &call)
+    observation_after(store.coordinator.state(), &call)
 }
 
 fn observe<P: AdapterProvider>(

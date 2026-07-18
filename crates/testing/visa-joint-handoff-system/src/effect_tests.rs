@@ -1,15 +1,20 @@
 use std::sync::{Arc, Barrier};
 
-use contract_core::{Digest, EntityRef, Identity, LeaseEpoch, NodeIdentity};
+use contract_core::{
+    Digest, EffectKind, EffectRequest, EntityRef, IdempotencyKey, Identity, LeaseEpoch,
+    NodeIdentity, ProfileAccess,
+};
 use joint_handoff_core::{
     JointHandoffKey, PreparedBindings, ReceiptIssuerIdentity, ReceiptKind, ReceiptRef, TypedReceipt,
 };
+use substrate_api::{CommittedEffectPermit, EffectAdmissionSession, EffectDispatchOutcome};
 use visa_conformance::{JointEffectClassification, JointEffectRecord};
 
 use crate::{
-    EffectCloseRequest, EffectCloseResult, EffectFreezeRequest, EffectPeerConfig, EffectPeerError,
-    EffectPublicationRequest, EffectPublicationResult, EffectThawRequest, OwnershipAbortRequest,
-    OwnershipCommitRequest, OwnershipReserveRequest, OwnershipSealRequest, ReferenceEffectPeer,
+    EffectAdmissionRegistration, EffectCloseRequest, EffectCloseResult, EffectFreezeRequest,
+    EffectPeerConfig, EffectPeerError, EffectPublicationRequest, EffectPublicationResult,
+    EffectThawRequest, OwnershipAbortRequest, OwnershipCommitRequest, OwnershipReserveRequest,
+    OwnershipSealRequest, ReferenceEffectCommitMetadata, ReferenceEffectPeer,
     ReferenceOwnershipLog, effect_receipt_issuer, ownership_receipt_issuer,
 };
 
@@ -149,6 +154,42 @@ fn publication(record: JointEffectRecord) -> EffectPublicationRequest {
     }
 }
 
+fn admission_effect(value: u128) -> EffectRequest {
+    EffectRequest {
+        operation: id(value + 1),
+        idempotency_key: IdempotencyKey::from_u128(value + 10),
+        causal_parent: None,
+        node: key().source,
+        subject: EntityRef::initial(id(value + 11)),
+        resource: EntityRef::initial(id(value + 12)),
+        authority: EntityRef::initial(id(value + 13)),
+        lease_epoch: key().expected_epoch,
+        request_digest: digest(7),
+        kind: EffectKind::Profile {
+            profile: id(value + 2),
+            access: ProfileAccess::Write,
+            payload: vec![1, 2, 3],
+        },
+    }
+}
+
+fn admitted_permit<'a>(
+    peer: &'a ReferenceEffectPeer,
+    effect: &EffectRequest,
+    registration: &EffectPublicationRequest,
+) -> CommittedEffectPermit<'a, ReferenceEffectPeer> {
+    EffectAdmissionSession::new(peer)
+        .register(
+            effect.clone(),
+            EffectAdmissionRegistration::new(effect, registration.clone()).unwrap(),
+        )
+        .unwrap_or_else(|failure| panic!("registration failed: {:?}", failure.error()))
+        .prepare()
+        .unwrap_or_else(|failure| panic!("prepare failed: {:?}", failure.error()))
+        .commit(ReferenceEffectCommitMetadata { result: 17, domain_revision: 1 })
+        .unwrap_or_else(|failure| panic!("commit failed: {:?}", failure.error()))
+}
+
 fn seal_and_commit(
     log: &mut ReferenceOwnershipLog,
     intent: &joint_handoff_core::PrepareIntentReceipt,
@@ -199,6 +240,102 @@ fn publication_before_freeze_is_in_cohort_and_exact_retry_survives_closed_gate()
         peer.publish(publication(effect(30, JointEffectClassification::Committed))),
         Err(EffectPeerError::GateClosed)
     );
+}
+
+#[test]
+fn admitted_reference_outcome_makes_the_exact_effect_ready_to_commit() {
+    let peer = ReferenceEffectPeer::new_admission_required(config()).unwrap();
+    let request = admission_effect(20);
+    let registration = publication(effect(20, JointEffectClassification::Registered));
+    let permit = admitted_permit(&peer, &request, &registration);
+    let evidence = *permit.commit_evidence();
+    permit.consume(&peer, &request).unwrap().finish(EffectDispatchOutcome::GuestReturned).unwrap();
+    let outcome = publication(effect(20, JointEffectClassification::Committed));
+    assert_eq!(
+        peer.record_effect_outcome(&request, &evidence, outcome.clone()).unwrap(),
+        EffectPublicationResult::Published
+    );
+    assert_eq!(
+        peer.record_effect_outcome(&request, &evidence, outcome).unwrap(),
+        EffectPublicationResult::Replay
+    );
+
+    let mut ownership = ownership();
+    let frozen = peer.freeze(freeze_request(reserve(&mut ownership))).unwrap();
+    assert_eq!(frozen.receipt.counts.registered, 1);
+    assert_eq!(frozen.receipt.counts.committed, 1);
+    assert_eq!(frozen.receipt.disposition, joint_handoff_core::FreezeDisposition::ReadyToCommit);
+}
+
+#[test]
+fn missing_or_guest_failed_reference_outcome_remains_blocked() {
+    for (value, outcome) in
+        [(30, EffectDispatchOutcome::GuestReturned), (40, EffectDispatchOutcome::GuestFailed)]
+    {
+        let peer = ReferenceEffectPeer::new_admission_required(config()).unwrap();
+        let request = admission_effect(value);
+        let registration = publication(effect(value, JointEffectClassification::Registered));
+        let permit = admitted_permit(&peer, &request, &registration);
+        let evidence = *permit.commit_evidence();
+        permit.consume(&peer, &request).unwrap().finish(outcome).unwrap();
+        if outcome == EffectDispatchOutcome::GuestFailed {
+            assert_eq!(
+                peer.record_effect_outcome(
+                    &request,
+                    &evidence,
+                    publication(effect(value, JointEffectClassification::Committed)),
+                ),
+                Err(EffectPeerError::StepConflict)
+            );
+        }
+        let mut ownership = ownership();
+        let frozen = peer.freeze(freeze_request(reserve(&mut ownership))).unwrap();
+        assert!(matches!(
+            frozen.receipt.disposition,
+            joint_handoff_core::FreezeDisposition::Blocked { .. }
+        ));
+        assert_eq!(frozen.receipt.counts.committed, 0);
+    }
+}
+
+#[test]
+fn reference_outcome_rejects_binding_identity_and_zero_digest_mutations() {
+    let peer = ReferenceEffectPeer::new_admission_required(config()).unwrap();
+    let request = admission_effect(50);
+    let registration = publication(effect(50, JointEffectClassification::Registered));
+    let permit = admitted_permit(&peer, &request, &registration);
+    let evidence = *permit.commit_evidence();
+    permit.consume(&peer, &request).unwrap().finish(EffectDispatchOutcome::GuestReturned).unwrap();
+
+    let mut mutated_request = request.clone();
+    mutated_request.request_digest = digest(99);
+    assert_eq!(
+        peer.record_effect_outcome(
+            &mutated_request,
+            &evidence,
+            publication(effect(50, JointEffectClassification::Committed)),
+        ),
+        Err(EffectPeerError::PublicationConflict)
+    );
+    let mut mutated_identity = publication(effect(50, JointEffectClassification::Committed));
+    mutated_identity.record.operation = id(999);
+    assert_eq!(
+        peer.record_effect_outcome(&request, &evidence, mutated_identity),
+        Err(EffectPeerError::PublicationConflict)
+    );
+    let mut zero_outcome = publication(effect(50, JointEffectClassification::Committed));
+    zero_outcome.record.outcome_digest = Some(Digest::ZERO);
+    assert_eq!(
+        peer.record_effect_outcome(&request, &evidence, zero_outcome),
+        Err(EffectPeerError::InvalidRequest)
+    );
+
+    let mut ownership = ownership();
+    let frozen = peer.freeze(freeze_request(reserve(&mut ownership))).unwrap();
+    assert!(matches!(
+        frozen.receipt.disposition,
+        joint_handoff_core::FreezeDisposition::Blocked { .. }
+    ));
 }
 
 #[test]

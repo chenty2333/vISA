@@ -227,8 +227,10 @@ where
         if let Err(error) = canonical_logical_request(coordinator.state()) {
             return Err(Box::new((canonical_error(error), coordinator)));
         }
-        let mut store =
-            Store::new(prepared.instance_pre.engine(), LogicalRequestStoreState::new(coordinator));
+        let mut store = Store::new(
+            prepared.instance_pre.engine(),
+            LogicalRequestStoreState::new(coordinator, admission_profile),
+        );
         let instance = match prepared.instance_pre.instantiate(&mut store) {
             Ok(instance) => instance,
             Err(error) => {
@@ -451,7 +453,17 @@ where
                     LogicalRequestAdapterError::AdmissionRejected
                 }
             })?;
-        let result = self.dispatch_reviewed_start(prepared);
+        if !self.store.data_mut().arm_admitted_start(prepared.effect_request().clone()) {
+            return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
+                Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
+            } else {
+                Err(LogicalRequestAdapterError::AdmissionRejected)
+            };
+        }
+        let mut result = self.dispatch_reviewed_start(prepared);
+        if !self.store.data_mut().finish_admitted_start() {
+            result = Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
+        }
         let outcome = if result.is_ok() {
             EffectDispatchOutcome::GuestReturned
         } else {

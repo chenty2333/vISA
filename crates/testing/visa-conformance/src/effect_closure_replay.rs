@@ -38,7 +38,8 @@ pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
     case("permit-exact-effect", EffectClosureContractExpectation::Authorized),
     case("permit-other-provider", EffectClosureContractExpectation::Denied),
     case("permit-mutated-effect", EffectClosureContractExpectation::Denied),
-    case("dispatch-gate-consumes-permit", EffectClosureContractExpectation::PermitConsumed),
+    case("dispatch-other-provider", EffectClosureContractExpectation::Denied),
+    case("dispatch-mutated-effect", EffectClosureContractExpectation::Denied),
     case("exact-admission-replay", EffectClosureContractExpectation::ExactReplay),
     case("idempotency-key", EffectClosureContractExpectation::RejectedConflict),
     case("request-digest", EffectClosureContractExpectation::RejectedConflict),
@@ -50,6 +51,9 @@ pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
     case("conflicting-registration", EffectClosureContractExpectation::RejectedConflict),
     case("conflicting-commit", EffectClosureContractExpectation::RejectedInvalidTransition),
     case("complete-before-outcome", EffectClosureContractExpectation::RejectedInvalidTransition),
+    case("outcome-before-dispatch", EffectClosureContractExpectation::RejectedInvalidTransition),
+    case("dispatch-gate-consumes-permit", EffectClosureContractExpectation::PermitConsumed),
+    case("duplicate-dispatch", EffectClosureContractExpectation::RejectedInvalidTransition),
     case("record-outcome", EffectClosureContractExpectation::Applied),
     case("query-outcome-recorded", EffectClosureContractExpectation::ObservedOutcomeRecorded),
     case("replay-outcome", EffectClosureContractExpectation::ExactReplay),
@@ -58,6 +62,12 @@ pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
     case("query-completed", EffectClosureContractExpectation::ObservedCompleted),
     case("replay-complete", EffectClosureContractExpectation::ExactReplay),
     case("conflicting-complete", EffectClosureContractExpectation::RejectedConflict),
+    case("failed-dispatch", EffectClosureContractExpectation::PermitConsumed),
+    case(
+        "failed-dispatch-canonical-outcome",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    ),
+    case("query-failed-dispatch", EffectClosureContractExpectation::ObservedCommitted),
 ];
 
 const fn case(
@@ -292,7 +302,7 @@ mod tests {
 
     #[test]
     fn fixed_fault_matrix_has_stable_unique_case_ids() {
-        assert_eq!(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.len(), 28);
+        assert_eq!(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.len(), 35);
         for (index, case) in EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.iter().enumerate() {
             assert!(!case.case_id.is_empty());
             assert!(

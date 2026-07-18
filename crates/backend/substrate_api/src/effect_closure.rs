@@ -2,8 +2,7 @@ use alloc::boxed::Box;
 use core::ptr;
 
 use contract_core::{
-    Digest, EffectOutcome, EffectRequest, EncodeError, IdempotencyKey, Identity,
-    canonical_digest,
+    Digest, EffectOutcome, EffectRequest, EncodeError, IdempotencyKey, Identity, canonical_digest,
 };
 
 /// Preview protocol family for the provider-neutral effect-closure SPI.
@@ -384,13 +383,63 @@ where
     pub fn finish(
         self,
         outcome: EffectDispatchOutcome,
-    ) -> Result<CommittedEffectPermit<'a, P>, P::Error> {
+    ) -> Result<DispatchedEffectPermit<'a, P>, P::Error> {
         self.provider.finish_effect_dispatch(&self.effect, &self.fence, outcome)?;
-        Ok(CommittedEffectPermit {
+        Ok(DispatchedEffectPermit {
             provider: self.provider,
             effect: self.effect,
             commit_evidence: self.commit_evidence,
         })
+    }
+}
+
+/// Provider-bound state after the local guest dispatch fence was closed.
+///
+/// Unlike [`CommittedEffectPermit`], this value has no `consume` operation, so
+/// the ordinary success path cannot accidentally attempt a second dispatch.
+/// The provider remains the final authority and must also reject any replayed
+/// Commit permit after the one-way dispatch transition.
+pub struct DispatchedEffectPermit<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    provider: &'a P,
+    effect: EffectRequest,
+    commit_evidence: P::CommitEvidence,
+}
+
+impl<'a, P> DispatchedEffectPermit<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn effect(&self) -> &EffectRequest {
+        &self.effect
+    }
+
+    pub const fn commit_evidence(&self) -> &P::CommitEvidence {
+        &self.commit_evidence
+    }
+
+    pub fn record_outcome(
+        self,
+        outcome: EffectOutcome,
+    ) -> Result<OutcomeRecordedEffect<'a, P>, DispatchedEffectOutcomeFailure<'a, P>> {
+        match self.provider.record_effect_outcome(&self.effect, &self.commit_evidence, &outcome) {
+            Ok(outcome_evidence) => Ok(OutcomeRecordedEffect {
+                provider: self.provider,
+                effect: self.effect,
+                commit_evidence: self.commit_evidence,
+                outcome,
+                outcome_evidence,
+            }),
+            Err(error) => Err(DispatchedEffectOutcomeFailure {
+                inner: Box::new(DispatchedEffectOutcomeFailureInner {
+                    error,
+                    dispatched: self,
+                    outcome,
+                }),
+            }),
+        }
     }
 }
 
@@ -604,6 +653,10 @@ where
         &self.commit_evidence
     }
 
+    pub fn authorizes(&self, provider: &P, effect: &EffectRequest) -> bool {
+        ptr::eq(self.provider, provider) && self.effect == *effect
+    }
+
     /// Consume this local permit only after the provider revalidates its live
     /// state and mints a one-way dispatch fence.
     pub fn consume(
@@ -786,6 +839,53 @@ where
     pub fn into_parts(self) -> (P::Error, CommittedEffectPermit<'a, P>, EffectOutcome) {
         let inner = *self.inner;
         (inner.error, inner.committed, inner.outcome)
+    }
+}
+
+/// Failed canonical outcome recording after a successfully closed dispatch.
+///
+/// Retry retains the dispatched typestate and never re-exposes `consume`, even
+/// when the provider lost the outcome acknowledgement.
+pub struct DispatchedEffectOutcomeFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    inner: Box<DispatchedEffectOutcomeFailureInner<'a, P>>,
+}
+
+struct DispatchedEffectOutcomeFailureInner<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    error: P::Error,
+    dispatched: DispatchedEffectPermit<'a, P>,
+    outcome: EffectOutcome,
+}
+
+impl<'a, P> DispatchedEffectOutcomeFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn error(&self) -> &P::Error {
+        &self.inner.error
+    }
+
+    pub const fn dispatched(&self) -> &DispatchedEffectPermit<'a, P> {
+        &self.inner.dispatched
+    }
+
+    pub const fn outcome(&self) -> &EffectOutcome {
+        &self.inner.outcome
+    }
+
+    pub fn retry(self) -> Result<OutcomeRecordedEffect<'a, P>, Self> {
+        let inner = *self.inner;
+        inner.dispatched.record_outcome(inner.outcome)
+    }
+
+    pub fn into_parts(self) -> (P::Error, DispatchedEffectPermit<'a, P>, EffectOutcome) {
+        let inner = *self.inner;
+        (inner.error, inner.dispatched, inner.outcome)
     }
 }
 
@@ -1295,7 +1395,7 @@ mod tests {
             Err(failure) => failure,
         };
         assert_eq!(*outcome_failure.error(), "outcome-acknowledgement-lost");
-        assert!(outcome_failure.committed().authorizes(&provider, &request));
+        assert_eq!(outcome_failure.dispatched().effect(), &request);
         assert_eq!(outcome_failure.outcome(), &outcome);
         let outcome_recorded = outcome_failure
             .retry()

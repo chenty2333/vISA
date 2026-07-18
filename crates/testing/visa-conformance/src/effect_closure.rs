@@ -3,10 +3,10 @@ use contract_core::{
     ProfileAccess,
 };
 use substrate_api::{
-    CommittedEffectPermit, EffectAdmissionSession, EffectClosureAuthenticationProfile,
-    EffectClosureCapabilities, EffectClosureProtocolRange, EffectClosureProvider,
-    EffectClosureProviderDescriptor, EffectClosureProviderLimits,
-    EffectClosureProviderRequirements,
+    CommittedEffectPermit, EffectAdmissionProfile, EffectAdmissionSession,
+    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProtocolRange,
+    EffectClosureProvider, EffectClosureProviderDescriptor, EffectClosureProviderLimits,
+    EffectClosureProviderRequirements, EffectDispatchAcquireError, EffectDispatchOutcome,
 };
 
 use crate::effect_closure_replay::{
@@ -46,6 +46,7 @@ pub struct EffectClosureDescriptorContractVector {
 pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescriptorContractVector> {
     let exact = EffectClosureProviderDescriptor {
         protocol: EffectClosureProtocolRange::v2_preview(),
+        admission_profile: EffectAdmissionProfile::AdmissionRequired,
         capabilities: EFFECT_CLOSURE_CORE_CAPABILITIES,
         authentication: EffectClosureAuthenticationProfile::IntegrityOnly,
         limits: EffectClosureProviderLimits {
@@ -60,7 +61,8 @@ pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescript
         EFFECT_CLOSURE_CORE_CAPABILITIES,
         EffectClosureAuthenticationProfile::IntegrityOnly,
         EFFECT_CLOSURE_MINIMUM_LIMITS,
-    );
+    )
+    .require_admission();
 
     let mut superset = exact;
     superset.capabilities.crash_rebind = true;
@@ -76,6 +78,9 @@ pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescript
     let mut weak_authentication = exact;
     weak_authentication.authentication = EffectClosureAuthenticationProfile::None;
 
+    let mut compatibility_only = exact;
+    compatibility_only.admission_profile = EffectAdmissionProfile::Compatibility;
+
     let mut malformed_limits = exact;
     malformed_limits.limits.max_request_bytes = 0;
 
@@ -85,7 +90,8 @@ pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescript
         EFFECT_CLOSURE_CORE_CAPABILITIES,
         EffectClosureAuthenticationProfile::IntegrityOnly,
         EffectClosureProviderLimits { max_request_bytes: 65, ..EFFECT_CLOSURE_MINIMUM_LIMITS },
-    );
+    )
+    .require_admission();
 
     let future_minor =
         EffectClosureProviderRequirements { protocol_minor: 1, ..exact_requirements };
@@ -93,7 +99,8 @@ pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescript
         EFFECT_CLOSURE_CORE_CAPABILITIES,
         EffectClosureAuthenticationProfile::IntegrityOnly,
         EffectClosureProviderLimits { max_request_bytes: 0, ..EFFECT_CLOSURE_MINIMUM_LIMITS },
-    );
+    )
+    .require_admission();
     let mut completion_without_outcome = exact;
     completion_without_outcome.capabilities.outcome_recording = false;
     let mut persistent_without_session_query = exact;
@@ -128,6 +135,12 @@ pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescript
         EffectClosureDescriptorContractVector {
             case_id: "authentication-below-minimum",
             descriptor: weak_authentication,
+            requirements: exact_requirements,
+            expected_match: false,
+        },
+        EffectClosureDescriptorContractVector {
+            case_id: "compatibility-profile-cannot-satisfy-admission-required",
+            descriptor: compatibility_only,
             requirements: exact_requirements,
             expected_match: false,
         },
@@ -288,7 +301,8 @@ where
         EFFECT_CLOSURE_CORE_CAPABILITIES,
         fixture.minimum_authentication(),
         EFFECT_CLOSURE_MINIMUM_LIMITS,
-    );
+    )
+    .require_admission();
     require(
         "descriptor",
         descriptor.satisfies(requirements),
@@ -384,18 +398,32 @@ where
         "permit-mutated-effect",
         EffectClosureContractExpectation::Denied,
     )?;
-    require(
-        "dispatch-gate-consumes-permit",
-        consume_committed_permit_for_dispatch(provider, &effect, permit),
-        "dispatch gate rejected an exact committed permit",
-    )?;
+    match exact_permit(provider, fixture, &effect, true)?.consume(other_provider, &effect) {
+        Err(EffectDispatchAcquireError::BindingMismatch) => {}
+        Err(EffectDispatchAcquireError::Provider(error)) => {
+            return Err(provider_error("dispatch-other-provider", fixture, &error));
+        }
+        Ok(_) => return fail("dispatch-other-provider", "another provider accepted the permit"),
+    }
     observe_case(
         &mut observations,
-        "dispatch-gate-consumes-permit",
-        EffectClosureContractExpectation::PermitConsumed,
+        "dispatch-other-provider",
+        EffectClosureContractExpectation::Denied,
+    )?;
+    match exact_permit(provider, fixture, &effect, true)?.consume(provider, &different_effect) {
+        Err(EffectDispatchAcquireError::BindingMismatch) => {}
+        Err(EffectDispatchAcquireError::Provider(error)) => {
+            return Err(provider_error("dispatch-mutated-effect", fixture, &error));
+        }
+        Ok(_) => return fail("dispatch-mutated-effect", "a mutated effect consumed the permit"),
+    }
+    observe_case(
+        &mut observations,
+        "dispatch-mutated-effect",
+        EffectClosureContractExpectation::Denied,
     )?;
 
-    let permit = exact_permit(provider, fixture, &effect, true)?;
+    let _replayed_permit = exact_permit(provider, fixture, &effect, true)?;
     observe_case(
         &mut observations,
         "exact-admission-replay",
@@ -473,6 +501,52 @@ where
     )?;
 
     let canonical_outcome = fixture.outcome();
+    match exact_permit(provider, fixture, &effect, true)?.record_outcome(canonical_outcome.clone()) {
+        Err(failure) => require_error(
+            "outcome-before-dispatch",
+            fixture.classify_error(failure.error()),
+            EffectClosureConformanceErrorKind::InvalidTransition,
+        )?,
+        Ok(_) => return fail("outcome-before-dispatch", "outcome succeeded before dispatch"),
+    }
+    observe_case(
+        &mut observations,
+        "outcome-before-dispatch",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    )?;
+
+    let dispatch = permit.consume(provider, &effect).map_err(|error| match error {
+        EffectDispatchAcquireError::BindingMismatch => {
+            failure("dispatch", "exact permit reported a binding mismatch")
+        }
+        EffectDispatchAcquireError::Provider(error) => provider_error("dispatch", fixture, &error),
+    })?;
+    let permit = dispatch
+        .finish(EffectDispatchOutcome::GuestReturned)
+        .map_err(|error| provider_error("finish-dispatch", fixture, &error))?;
+    observe_case(
+        &mut observations,
+        "dispatch-gate-consumes-permit",
+        EffectClosureContractExpectation::PermitConsumed,
+    )?;
+
+    match exact_permit(provider, fixture, &effect, true)?.consume(provider, &effect) {
+        Err(EffectDispatchAcquireError::Provider(error)) => require_error(
+            "duplicate-dispatch",
+            fixture.classify_error(&error),
+            EffectClosureConformanceErrorKind::InvalidTransition,
+        )?,
+        Err(EffectDispatchAcquireError::BindingMismatch) => {
+            return fail("duplicate-dispatch", "duplicate permit reported a binding mismatch");
+        }
+        Ok(_) => return fail("duplicate-dispatch", "duplicate dispatch was accepted"),
+    }
+    observe_case(
+        &mut observations,
+        "duplicate-dispatch",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    )?;
+
     let outcome_recorded = permit
         .record_outcome(canonical_outcome.clone())
         .map_err(|failure| provider_error("record-outcome", fixture, failure.error()))?;
@@ -583,6 +657,55 @@ where
         EffectClosureContractExpectation::RejectedConflict,
     )?;
 
+    let failed_dispatch = exact_permit(other_provider, fixture, &effect, false)?
+        .consume(other_provider, &effect)
+        .map_err(|error| match error {
+            EffectDispatchAcquireError::BindingMismatch => {
+                failure("failed-dispatch", "exact permit reported a binding mismatch")
+            }
+            EffectDispatchAcquireError::Provider(error) => {
+                provider_error("failed-dispatch", fixture, &error)
+            }
+        })?
+        .finish(EffectDispatchOutcome::GuestFailed)
+        .map_err(|error| provider_error("finish-failed-dispatch", fixture, &error))?;
+    observe_case(
+        &mut observations,
+        "failed-dispatch",
+        EffectClosureContractExpectation::PermitConsumed,
+    )?;
+    match failed_dispatch.record_outcome(fixture.outcome()) {
+        Err(failure) => require_error(
+            "failed-dispatch-canonical-outcome",
+            fixture.classify_error(failure.error()),
+            EffectClosureConformanceErrorKind::InvalidTransition,
+        )?,
+        Ok(_) => {
+            return fail(
+                "failed-dispatch-canonical-outcome",
+                "GuestFailed was accepted as a canonical effect outcome",
+            );
+        }
+    }
+    observe_case(
+        &mut observations,
+        "failed-dispatch-canonical-outcome",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    )?;
+    expect_observation(
+        "query-failed-dispatch",
+        other_provider,
+        fixture,
+        &effect,
+        EffectClosureObservedState::Committed,
+        None,
+    )?;
+    observe_case(
+        &mut observations,
+        "query-failed-dispatch",
+        EffectClosureContractExpectation::ObservedCommitted,
+    )?;
+
     EffectClosureProviderContractReport::new(observations)
         .map_err(|detail| failure("fault-matrix", detail))
 }
@@ -645,17 +768,6 @@ where
         fixture.observed_outcome(&observed) == expected_outcome,
         "query returned the wrong canonical outcome",
     )
-}
-
-fn consume_committed_permit_for_dispatch<P>(
-    provider: &P,
-    effect: &EffectRequest,
-    permit: CommittedEffectPermit<'_, P>,
-) -> bool
-where
-    P: EffectClosureProvider,
-{
-    permit.authorizes(provider, effect)
 }
 
 fn observe_case(
@@ -738,9 +850,18 @@ mod tests {
     struct FakeState {
         effect: EffectRequest,
         registration: FakeRegistration,
+        dispatch: FakeDispatchPhase,
         phase: EffectClosureObservedState,
         outcome: Option<EffectOutcome>,
         completion: Option<u64>,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FakeDispatchPhase {
+        Available,
+        Consumed,
+        GuestReturned,
+        GuestFailed,
     }
 
     #[derive(Default)]
@@ -760,6 +881,11 @@ mod tests {
         replay: bool,
     }
 
+    #[derive(Clone, Debug)]
+    struct FakeDispatchFence {
+        effect: EffectRequest,
+    }
+
     #[derive(Clone, Copy, Debug)]
     struct FakeReplayEvidence {
         replay: bool,
@@ -777,6 +903,7 @@ mod tests {
         type Prepared = FakeBoundState;
         type CommitMetadata = u64;
         type CommitEvidence = FakeCommitEvidence;
+        type DispatchFence = FakeDispatchFence;
         type OutcomeEvidence = FakeReplayEvidence;
         type CompletionRequest = u64;
         type CompletionEvidence = FakeReplayEvidence;
@@ -786,6 +913,7 @@ mod tests {
         fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
             Ok(EffectClosureProviderDescriptor {
                 protocol: EffectClosureProtocolRange::v2_preview(),
+                admission_profile: EffectAdmissionProfile::AdmissionRequired,
                 capabilities: EFFECT_CLOSURE_CORE_CAPABILITIES,
                 authentication: EffectClosureAuthenticationProfile::None,
                 limits: EffectClosureProviderLimits {
@@ -818,6 +946,7 @@ mod tests {
                 FakeState {
                     effect: effect.clone(),
                     registration: request.clone(),
+                    dispatch: FakeDispatchPhase::Available,
                     phase: EffectClosureObservedState::Committed,
                     outcome: None,
                     completion: None,
@@ -852,6 +981,50 @@ mod tests {
             Ok(FakeCommitEvidence { effect: effect.clone(), replay: prepared.replay })
         }
 
+        fn consume_committed_effect(
+            &self,
+            effect: &EffectRequest,
+            committed: &Self::CommitEvidence,
+        ) -> Result<Self::DispatchFence, Self::Error> {
+            if committed.effect != *effect {
+                return Err(FakeError::Conflict);
+            }
+            let mut effects = self.effects.lock().unwrap();
+            let state = effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
+            if state.effect != *effect {
+                return Err(FakeError::Conflict);
+            }
+            if state.dispatch != FakeDispatchPhase::Available {
+                return Err(FakeError::InvalidTransition);
+            }
+            state.dispatch = FakeDispatchPhase::Consumed;
+            Ok(FakeDispatchFence { effect: effect.clone() })
+        }
+
+        fn finish_effect_dispatch(
+            &self,
+            effect: &EffectRequest,
+            fence: &Self::DispatchFence,
+            outcome: EffectDispatchOutcome,
+        ) -> Result<(), Self::Error> {
+            if fence.effect != *effect {
+                return Err(FakeError::Conflict);
+            }
+            let mut effects = self.effects.lock().unwrap();
+            let state = effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
+            if state.effect != *effect {
+                return Err(FakeError::Conflict);
+            }
+            if state.dispatch != FakeDispatchPhase::Consumed {
+                return Err(FakeError::InvalidTransition);
+            }
+            state.dispatch = match outcome {
+                EffectDispatchOutcome::GuestReturned => FakeDispatchPhase::GuestReturned,
+                EffectDispatchOutcome::GuestFailed => FakeDispatchPhase::GuestFailed,
+            };
+            Ok(())
+        }
+
         fn record_effect_outcome(
             &self,
             effect: &EffectRequest,
@@ -872,6 +1045,9 @@ mod tests {
                 } else {
                     Err(FakeError::Conflict)
                 };
+            }
+            if state.dispatch != FakeDispatchPhase::GuestReturned {
+                return Err(FakeError::InvalidTransition);
             }
             state.outcome = Some(outcome.clone());
             state.phase = EffectClosureObservedState::OutcomeRecorded;
@@ -1026,6 +1202,7 @@ mod tests {
                 "wrong-protocol-major",
                 "missing-required-capability",
                 "authentication-below-minimum",
+                "compatibility-profile-cannot-satisfy-admission-required",
                 "malformed-zero-limit",
                 "limit-below-minimum",
                 "unsupported-future-minor",
