@@ -431,6 +431,20 @@ where
 /// a lost Commit acknowledgement, so this type establishes exact-effect
 /// commit-before-dispatch, not global exactly-once execution. Dispatchers must
 /// preserve the canonical idempotency identity across such recovery.
+///
+/// A dispatch API must take the permit by value; attempting to execute twice
+/// with one authority value is rejected by the type system:
+///
+/// ```compile_fail
+/// use substrate_api::{CommittedEffectPermit, EffectClosureProvider};
+///
+/// fn execute<P: EffectClosureProvider>(_permit: CommittedEffectPermit<'_, P>) {}
+///
+/// fn execute_twice<P: EffectClosureProvider>(permit: CommittedEffectPermit<'_, P>) {
+///     execute(permit);
+///     execute(permit);
+/// }
+/// ```
 pub struct CommittedEffectPermit<'a, P>
 where
     P: EffectClosureProvider,

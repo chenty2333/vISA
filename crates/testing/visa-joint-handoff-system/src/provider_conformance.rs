@@ -9,8 +9,10 @@ use substrate_api::EffectClosureAuthenticationProfile;
 use visa_conformance::{
     EffectClosureCompletionCase, EffectClosureConformanceErrorKind,
     EffectClosureConformanceFixture, EffectClosureObservedState, EffectClosureRegistrationCase,
-    JointEffectClassification, JointEffectRecord, effect_closure_descriptor_contract_vectors,
-    run_effect_closure_provider_contract,
+    JointEffectClassification, JointEffectRecord, RECORDED_NATIVE_EFFECT_REPLAY_SCHEMA,
+    RecordedNativeEffectExchange, RecordedNativeEffectOperation, RecordedNativeEffectReplay,
+    RecordedNativeExactReplay, effect_closure_descriptor_contract_vectors,
+    run_effect_closure_provider_contract, validate_recorded_native_effect_replay,
 };
 
 use crate::{
@@ -188,6 +190,14 @@ impl EffectClosureConformanceFixture<ReferenceEffectPeer> for ReferenceFixture<'
         classify_error(error)
     }
 
+    fn registration_is_replay(&self, registered: &crate::ReferenceRegisteredEffect) -> bool {
+        registered.is_replay()
+    }
+
+    fn commit_is_replay(&self, evidence: &crate::ReferenceEffectCommitEvidence) -> bool {
+        evidence.replay
+    }
+
     fn outcome_is_replay(&self, evidence: &ReferenceEffectOutcomeEvidence) -> bool {
         evidence.is_replay()
     }
@@ -270,6 +280,14 @@ impl EffectClosureConformanceFixture<ProcessEffectPeer> for ProcessFixture<'_> {
         classify_error(error)
     }
 
+    fn registration_is_replay(&self, registered: &ProcessLiveEffectAdvance) -> bool {
+        registered.is_replay()
+    }
+
+    fn commit_is_replay(&self, evidence: &ProcessLiveEffectAdvance) -> bool {
+        evidence.is_replay()
+    }
+
     fn outcome_is_replay(&self, evidence: &ProcessLiveEffectAdvance) -> bool {
         evidence.is_replay()
     }
@@ -334,7 +352,9 @@ fn reference_effect_peer_passes_the_shared_provider_harness() {
     let fixture = shared_fixture(10_000);
     let peer = ReferenceEffectPeer::new(fixture.config).unwrap();
     let other = ReferenceEffectPeer::new(fixture.config).unwrap();
-    run_effect_closure_provider_contract(&peer, &other, &ReferenceFixture(&fixture)).unwrap();
+    let report =
+        run_effect_closure_provider_contract(&peer, &other, &ReferenceFixture(&fixture)).unwrap();
+    assert_eq!(report.observations(), visa_conformance::EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX);
     let query = crate::EffectPeer::query(&peer).unwrap();
     assert!(query.gate_open);
     assert_eq!(query.effect_count, 1);
@@ -346,12 +366,41 @@ fn process_effect_peer_passes_the_shared_provider_harness() {
     let fixture = shared_fixture(20_000);
     let peer = ProcessEffectPeer::spawn(process_launch(), fixture.config).unwrap();
     let other = ProcessEffectPeer::spawn(process_launch(), fixture.config).unwrap();
-    run_effect_closure_provider_contract(&peer, &other, &ProcessFixture(&fixture)).unwrap();
+    let process_report =
+        run_effect_closure_provider_contract(&peer, &other, &ProcessFixture(&fixture)).unwrap();
 
-    let commands = peer
-        .native_transcript()
-        .unwrap()
-        .into_iter()
+    let reference_fixture = shared_fixture(30_000);
+    let reference = ReferenceEffectPeer::new(reference_fixture.config).unwrap();
+    let other_reference = ReferenceEffectPeer::new(reference_fixture.config).unwrap();
+    let reference_report = run_effect_closure_provider_contract(
+        &reference,
+        &other_reference,
+        &ReferenceFixture(&reference_fixture),
+    )
+    .unwrap();
+    assert_eq!(process_report, reference_report);
+
+    let before_replay = peer.native_transcript().unwrap();
+    let replay_response_jsonl =
+        String::from_utf8(peer.replay_last_native_request().unwrap()).unwrap();
+    let after_replay = peer.native_transcript().unwrap();
+    assert_eq!(before_replay, after_replay);
+    let last = before_replay.last().unwrap();
+    let recorded = RecordedNativeEffectReplay {
+        schema: RECORDED_NATIVE_EFFECT_REPLAY_SCHEMA.to_owned(),
+        exchanges: before_replay.iter().map(recorded_exchange).collect(),
+        exact_replay: RecordedNativeExactReplay {
+            request_id: last.request_id,
+            original_response_jsonl: last.response_jsonl.clone(),
+            replay_response_jsonl,
+            accepted_chain_length_before: before_replay.len(),
+            accepted_chain_length_after: after_replay.len(),
+        },
+    };
+    validate_recorded_native_effect_replay(&recorded).unwrap();
+
+    let commands = before_replay
+        .iter()
         .map(|exchange| {
             serde_json::from_str::<crate::nexus_effect_wire::PeerRequest>(
                 exchange.request_jsonl.strip_suffix('\n').unwrap(),
@@ -372,6 +421,37 @@ fn process_effect_peer_passes_the_shared_provider_harness() {
     ));
     peer.shutdown().unwrap();
     other.shutdown().unwrap();
+}
+
+fn recorded_exchange(exchange: &crate::NativeJsonlExchange) -> RecordedNativeEffectExchange {
+    let request = serde_json::from_str::<crate::nexus_effect_wire::PeerRequest>(
+        exchange.request_jsonl.strip_suffix('\n').unwrap(),
+    )
+    .unwrap();
+    let operation = match request.command {
+        crate::nexus_effect_wire::PeerCommand::Initialize(_) => {
+            RecordedNativeEffectOperation::Initialize
+        }
+        crate::nexus_effect_wire::PeerCommand::Register(_) => {
+            RecordedNativeEffectOperation::Register
+        }
+        crate::nexus_effect_wire::PeerCommand::Prepare(_) => RecordedNativeEffectOperation::Prepare,
+        crate::nexus_effect_wire::PeerCommand::Commit(_) => RecordedNativeEffectOperation::Commit,
+        crate::nexus_effect_wire::PeerCommand::Complete(_) => {
+            RecordedNativeEffectOperation::Complete
+        }
+        _ => panic!("provider lifecycle transcript contained an unrelated native command"),
+    };
+    RecordedNativeEffectExchange {
+        operation,
+        request_id: exchange.request_id,
+        request_jsonl: exchange.request_jsonl.clone(),
+        response_jsonl: exchange.response_jsonl.clone(),
+        receipt_sequence: exchange.receipt_sequence,
+        request_sha256: exchange.request_sha256.clone(),
+        previous_receipt_sha256: exchange.previous_receipt_sha256.clone(),
+        receipt_sha256: exchange.receipt_sha256.clone(),
+    }
 }
 
 fn process_launch() -> ProcessEffectPeerLaunch {

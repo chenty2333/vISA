@@ -1,5 +1,6 @@
 pub mod artifact_io;
 mod effect_closure;
+mod effect_closure_replay;
 mod joint_handoff;
 mod stage1;
 mod stage1_artifacts;
@@ -11,6 +12,7 @@ mod stage4;
 pub const JCO_NODE_EXECUTION_CARRIER: &str = "owned-bytes-stdin-frame-v1";
 
 pub use effect_closure::*;
+pub use effect_closure_replay::*;
 pub use joint_handoff::*;
 pub use stage1::*;
 pub use stage2::*;

@@ -9,6 +9,11 @@ use substrate_api::{
     EffectClosureProviderRequirements,
 };
 
+use crate::effect_closure_replay::{
+    EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX, EffectClosureContractExpectation, EffectClosureFaultCase,
+    EffectClosureProviderContractReport,
+};
+
 pub const EFFECT_CLOSURE_CORE_CAPABILITIES: EffectClosureCapabilities = EffectClosureCapabilities {
     effect_admission: true,
     outcome_recording: true,
@@ -248,6 +253,8 @@ where
     fn completion(&self, case: EffectClosureCompletionCase) -> P::CompletionRequest;
     fn minimum_authentication(&self) -> EffectClosureAuthenticationProfile;
     fn classify_error(&self, error: &P::Error) -> EffectClosureConformanceErrorKind;
+    fn registration_is_replay(&self, registered: &P::Registered) -> bool;
+    fn commit_is_replay(&self, evidence: &P::CommitEvidence) -> bool;
     fn outcome_is_replay(&self, evidence: &P::OutcomeEvidence) -> bool;
     fn completion_is_replay(&self, evidence: &P::CompletionEvidence) -> bool;
     fn observed_state(&self, observation: &P::QueryObservation) -> EffectClosureObservedState;
@@ -267,11 +274,12 @@ pub fn run_effect_closure_provider_contract<P, F>(
     provider: &P,
     other_provider: &P,
     fixture: &F,
-) -> Result<(), EffectClosureConformanceFailure>
+) -> Result<EffectClosureProviderContractReport, EffectClosureConformanceFailure>
 where
     P: EffectClosureProvider,
     F: EffectClosureConformanceFixture<P>,
 {
+    let mut observations = Vec::with_capacity(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.len());
     let effect = fixture.effect();
     let admission = EffectAdmissionSession::new(provider);
     let descriptor =
@@ -291,6 +299,7 @@ where
         !descriptor.capabilities.persistent_query,
         "first-tranche provider must not claim persistent query",
     )?;
+    observe_case(&mut observations, "descriptor", EffectClosureContractExpectation::Accepted)?;
 
     let mut absent = effect.clone();
     absent.operation = Identity::from_u128(95_001);
@@ -303,6 +312,7 @@ where
             .is_none(),
         "absent effect query returned an observation",
     )?;
+    observe_case(&mut observations, "query-absent", EffectClosureContractExpectation::Absent)?;
 
     match admission
         .register(effect.clone(), fixture.registration(EffectClosureRegistrationCase::Stale))
@@ -314,18 +324,50 @@ where
         )?,
         Ok(_) => return fail("stale-selector", "stale registration was accepted"),
     }
+    observe_case(
+        &mut observations,
+        "stale-selector",
+        EffectClosureContractExpectation::RejectedStaleSelector,
+    )?;
 
-    let permit = exact_permit(provider, fixture, &effect)?;
-    expect_observation(provider, fixture, &effect, EffectClosureObservedState::Committed, None)?;
+    let permit = exact_permit(provider, fixture, &effect, false)?;
+    observe_case(
+        &mut observations,
+        "initial-admission",
+        EffectClosureContractExpectation::Applied,
+    )?;
+    expect_observation(
+        "query-committed",
+        provider,
+        fixture,
+        &effect,
+        EffectClosureObservedState::Committed,
+        None,
+    )?;
+    observe_case(
+        &mut observations,
+        "query-committed",
+        EffectClosureContractExpectation::ObservedCommitted,
+    )?;
     require(
         "permit-exact-effect",
         permit.authorizes(provider, &effect),
         "committed permit did not authorize its provider and exact effect",
     )?;
+    observe_case(
+        &mut observations,
+        "permit-exact-effect",
+        EffectClosureContractExpectation::Authorized,
+    )?;
     require(
         "permit-other-provider",
         !permit.authorizes(other_provider, &effect),
         "committed permit authorized another provider instance",
+    )?;
+    observe_case(
+        &mut observations,
+        "permit-other-provider",
+        EffectClosureContractExpectation::Denied,
     )?;
     let different_effect = effect_request_contract_vectors(&effect)
         .into_iter()
@@ -337,8 +379,31 @@ where
         !permit.authorizes(provider, &different_effect),
         "committed permit authorized a mutated effect",
     )?;
+    observe_case(
+        &mut observations,
+        "permit-mutated-effect",
+        EffectClosureContractExpectation::Denied,
+    )?;
+    require(
+        "dispatch-gate-consumes-permit",
+        consume_committed_permit_for_dispatch(provider, &effect, permit),
+        "dispatch gate rejected an exact committed permit",
+    )?;
+    observe_case(
+        &mut observations,
+        "dispatch-gate-consumes-permit",
+        EffectClosureContractExpectation::PermitConsumed,
+    )?;
+
+    let permit = exact_permit(provider, fixture, &effect, true)?;
+    observe_case(
+        &mut observations,
+        "exact-admission-replay",
+        EffectClosureContractExpectation::ExactReplay,
+    )?;
 
     for vector in effect_request_contract_vectors(&effect) {
+        let case_id = vector.case_id;
         match admission
             .register(vector.request, fixture.registration(EffectClosureRegistrationCase::Exact))
         {
@@ -349,6 +414,11 @@ where
             )?,
             Ok(_) => return fail(vector.case_id, "mutated canonical effect was accepted"),
         }
+        observe_case(
+            &mut observations,
+            case_id,
+            EffectClosureContractExpectation::RejectedConflict,
+        )?;
     }
     match admission
         .register(effect.clone(), fixture.registration(EffectClosureRegistrationCase::Conflicting))
@@ -360,6 +430,11 @@ where
         )?,
         Ok(_) => return fail("conflicting-registration", "conflicting registration was accepted"),
     }
+    observe_case(
+        &mut observations,
+        "conflicting-registration",
+        EffectClosureContractExpectation::RejectedConflict,
+    )?;
 
     let conflicting_commit = admission
         .register(effect.clone(), fixture.registration(EffectClosureRegistrationCase::Exact))
@@ -376,6 +451,11 @@ where
         )?,
         Ok(_) => return fail("conflicting-commit", "conflicting Commit replay was accepted"),
     }
+    observe_case(
+        &mut observations,
+        "conflicting-commit",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    )?;
 
     match provider.complete_effect(&effect, &fixture.completion(EffectClosureCompletionCase::Exact))
     {
@@ -386,6 +466,11 @@ where
         )?,
         Ok(_) => return fail("complete-before-outcome", "completion succeeded before outcome"),
     }
+    observe_case(
+        &mut observations,
+        "complete-before-outcome",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    )?;
 
     let canonical_outcome = fixture.outcome();
     let outcome_recorded = permit
@@ -396,15 +481,22 @@ where
         !fixture.outcome_is_replay(outcome_recorded.outcome_evidence()),
         "first outcome recording was marked as replay",
     )?;
+    observe_case(&mut observations, "record-outcome", EffectClosureContractExpectation::Applied)?;
     expect_observation(
+        "query-outcome-recorded",
         provider,
         fixture,
         &effect,
         EffectClosureObservedState::OutcomeRecorded,
         Some(&canonical_outcome),
     )?;
+    observe_case(
+        &mut observations,
+        "query-outcome-recorded",
+        EffectClosureContractExpectation::ObservedOutcomeRecorded,
+    )?;
 
-    let replay_outcome = exact_permit(provider, fixture, &effect)?
+    let replay_outcome = exact_permit(provider, fixture, &effect, true)?
         .record_outcome(fixture.outcome())
         .map_err(|failure| provider_error("replay-outcome", fixture, failure.error()))?;
     require(
@@ -412,8 +504,15 @@ where
         fixture.outcome_is_replay(replay_outcome.outcome_evidence()),
         "exact outcome replay was not reported as replay",
     )?;
+    observe_case(
+        &mut observations,
+        "replay-outcome",
+        EffectClosureContractExpectation::ExactReplay,
+    )?;
 
-    match exact_permit(provider, fixture, &effect)?.record_outcome(fixture.conflicting_outcome()) {
+    match exact_permit(provider, fixture, &effect, true)?
+        .record_outcome(fixture.conflicting_outcome())
+    {
         Err(failure) => require_error(
             "conflicting-outcome",
             fixture.classify_error(failure.error()),
@@ -421,6 +520,11 @@ where
         )?,
         Ok(_) => return fail("conflicting-outcome", "conflicting outcome was accepted"),
     }
+    observe_case(
+        &mut observations,
+        "conflicting-outcome",
+        EffectClosureContractExpectation::RejectedConflict,
+    )?;
 
     let completed = outcome_recorded
         .complete(fixture.completion(EffectClosureCompletionCase::Exact))
@@ -430,12 +534,19 @@ where
         !fixture.completion_is_replay(completed.completion_evidence()),
         "first completion was marked as replay",
     )?;
+    observe_case(&mut observations, "complete", EffectClosureContractExpectation::Applied)?;
     expect_observation(
+        "query-completed",
         provider,
         fixture,
         &effect,
         EffectClosureObservedState::Completed,
         Some(&canonical_outcome),
+    )?;
+    observe_case(
+        &mut observations,
+        "query-completed",
+        EffectClosureContractExpectation::ObservedCompleted,
     )?;
 
     let replay_completed = replay_outcome
@@ -446,9 +557,14 @@ where
         fixture.completion_is_replay(replay_completed.completion_evidence()),
         "exact completion replay was not reported as replay",
     )?;
+    observe_case(
+        &mut observations,
+        "replay-complete",
+        EffectClosureContractExpectation::ExactReplay,
+    )?;
 
     let conflicting_completion =
-        exact_permit(provider, fixture, &effect)?.record_outcome(fixture.outcome()).map_err(
+        exact_permit(provider, fixture, &effect, true)?.record_outcome(fixture.outcome()).map_err(
             |failure| provider_error("prepare-conflicting-complete", fixture, failure.error()),
         )?;
     match conflicting_completion
@@ -461,14 +577,21 @@ where
         )?,
         Ok(_) => return fail("conflicting-complete", "conflicting completion was accepted"),
     }
+    observe_case(
+        &mut observations,
+        "conflicting-complete",
+        EffectClosureContractExpectation::RejectedConflict,
+    )?;
 
-    Ok(())
+    EffectClosureProviderContractReport::new(observations)
+        .map_err(|detail| failure("fault-matrix", detail))
 }
 
 fn exact_permit<'a, P, F>(
     provider: &'a P,
     fixture: &F,
     effect: &EffectRequest,
+    expected_replay: bool,
 ) -> Result<CommittedEffectPermit<'a, P>, EffectClosureConformanceFailure>
 where
     P: EffectClosureProvider,
@@ -477,15 +600,27 @@ where
     let registered = EffectAdmissionSession::new(provider)
         .register(effect.clone(), fixture.registration(EffectClosureRegistrationCase::Exact))
         .map_err(|failure| provider_error("register", fixture, failure.error()))?;
+    require(
+        "register",
+        fixture.registration_is_replay(registered.provider_state()) == expected_replay,
+        "exact registration returned the wrong replay disposition",
+    )?;
     let prepared = registered
         .prepare()
         .map_err(|failure| provider_error("prepare", fixture, failure.error()))?;
-    prepared
+    let permit = prepared
         .commit(fixture.commit_metadata())
-        .map_err(|failure| provider_error("commit", fixture, failure.error()))
+        .map_err(|failure| provider_error("commit", fixture, failure.error()))?;
+    require(
+        "commit",
+        fixture.commit_is_replay(permit.commit_evidence()) == expected_replay,
+        "exact Commit returned the wrong replay disposition",
+    )?;
+    Ok(permit)
 }
 
 fn expect_observation<P, F>(
+    case_id: &'static str,
     provider: &P,
     fixture: &F,
     effect: &EffectRequest,
@@ -498,18 +633,45 @@ where
 {
     let observed = provider
         .query_effect(effect)
-        .map_err(|error| provider_error("query-effect", fixture, &error))?
-        .ok_or_else(|| failure("query-effect", "known effect query returned absent"))?;
+        .map_err(|error| provider_error(case_id, fixture, &error))?
+        .ok_or_else(|| failure(case_id, "known effect query returned absent"))?;
     require(
-        "query-effect",
+        case_id,
         fixture.observed_state(&observed) == expected,
         "query returned the wrong session-local state",
     )?;
     require(
-        "query-effect",
+        case_id,
         fixture.observed_outcome(&observed) == expected_outcome,
         "query returned the wrong canonical outcome",
     )
+}
+
+fn consume_committed_permit_for_dispatch<P>(
+    provider: &P,
+    effect: &EffectRequest,
+    permit: CommittedEffectPermit<'_, P>,
+) -> bool
+where
+    P: EffectClosureProvider,
+{
+    permit.authorizes(provider, effect)
+}
+
+fn observe_case(
+    observations: &mut Vec<EffectClosureFaultCase>,
+    case_id: &'static str,
+    expectation: EffectClosureContractExpectation,
+) -> Result<(), EffectClosureConformanceFailure> {
+    let observed = EffectClosureFaultCase { case_id, expectation };
+    let index = observations.len();
+    require(
+        case_id,
+        EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.get(index) == Some(&observed),
+        format!("fault-matrix order drifted at index {index}"),
+    )?;
+    observations.push(observed);
+    Ok(())
 }
 
 fn require_error(
@@ -595,6 +757,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct FakeCommitEvidence {
         effect: EffectRequest,
+        replay: bool,
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -686,8 +849,7 @@ mod tests {
             if *metadata != 7 {
                 return Err(FakeError::InvalidTransition);
             }
-            let _ = prepared.replay;
-            Ok(FakeCommitEvidence { effect: effect.clone() })
+            Ok(FakeCommitEvidence { effect: effect.clone(), replay: prepared.replay })
         }
 
         fn record_effect_outcome(
@@ -825,6 +987,14 @@ mod tests {
             }
         }
 
+        fn registration_is_replay(&self, registered: &FakeBoundState) -> bool {
+            registered.replay
+        }
+
+        fn commit_is_replay(&self, evidence: &FakeCommitEvidence) -> bool {
+            evidence.replay
+        }
+
         fn outcome_is_replay(&self, evidence: &FakeReplayEvidence) -> bool {
             evidence.replay
         }
@@ -878,6 +1048,8 @@ mod tests {
     fn generic_fake_provider_passes_the_full_lifecycle_contract() {
         let provider = FakeProvider::default();
         let other_provider = FakeProvider::default();
-        run_effect_closure_provider_contract(&provider, &other_provider, &FakeFixture).unwrap();
+        let report =
+            run_effect_closure_provider_contract(&provider, &other_provider, &FakeFixture).unwrap();
+        assert_eq!(report.observations(), EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX);
     }
 }
