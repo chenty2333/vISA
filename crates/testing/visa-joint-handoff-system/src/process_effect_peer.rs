@@ -7,7 +7,7 @@ use std::{
     sync::Mutex,
 };
 
-use contract_core::{Digest, EffectOutcome, EffectRequest, Identity};
+use contract_core::{Digest, EffectOutcome, EffectRequest, IdempotencyKey, Identity};
 use joint_handoff_core::{
     ClassificationCounts, ClosureProgressReceipt, ClosureReceipt, EffectScopeVersion,
     FreezeDisposition, NexusFreezeReceipt, NexusThawReceipt, OwnershipAbortReceipt,
@@ -378,6 +378,8 @@ struct ProcessEffectPeerState {
     native_effects: BTreeMap<Identity, u64>,
     live_token_domain: Digest,
     live_effects: BTreeMap<Identity, ProcessLiveEffect>,
+    live_by_operation: BTreeMap<Identity, Identity>,
+    live_by_idempotency: BTreeMap<IdempotencyKey, Identity>,
     pending_live_registration: Option<PendingLiveRegistration>,
     freeze: Option<ProcessFreeze>,
     thaw_request: Option<EffectThawRequest>,
@@ -516,6 +518,8 @@ impl ProcessEffectPeer {
             native_effects: BTreeMap::new(),
             live_token_domain: Digest::ZERO,
             live_effects: BTreeMap::new(),
+            live_by_operation: BTreeMap::new(),
+            live_by_idempotency: BTreeMap::new(),
             pending_live_registration: None,
             freeze: None,
             thaw_request: None,
@@ -1045,13 +1049,20 @@ impl ProcessEffectPeerState {
             .map_err(|_| EffectPeerError::Integrity)?;
         let request_digest = live_registration_digest(&request)?;
         if let Some(existing) = self.live_effects.get(&request.record.effect) {
-            return if existing.registration == request
+            if existing.registration == request
                 && existing.effect_request.as_ref() == effect_request
             {
-                Ok(existing.registered.replayed())
-            } else {
-                Err(EffectPeerError::PublicationConflict)
-            };
+                if let Some(effect) = effect_request {
+                    let lane = request.record.effect;
+                    if self.live_by_operation.get(&effect.operation) != Some(&lane)
+                        || self.live_by_idempotency.get(&effect.idempotency_key) != Some(&lane)
+                    {
+                        return Err(EffectPeerError::Integrity);
+                    }
+                }
+                return Ok(existing.registered.replayed());
+            }
+            return Err(EffectPeerError::PublicationConflict);
         }
         if self.pending_live_registration.is_none()
             && let Some(pending) = &self.pending_lost_response
@@ -1063,6 +1074,22 @@ impl ProcessEffectPeerState {
         let resuming_staged_registration = self.pending_live_registration.is_some();
         let recovering_lost_registration =
             resuming_staged_registration && self.pending_lost_response.is_some();
+        if let Some(effect) = effect_request {
+            let lane = request.record.effect;
+            let by_operation = self.live_by_operation.get(&effect.operation).copied();
+            let by_idempotency = self.live_by_idempotency.get(&effect.idempotency_key).copied();
+            match (by_operation, by_idempotency) {
+                (Some(operation_lane), Some(idempotency_lane))
+                    if operation_lane == idempotency_lane && operation_lane == lane =>
+                {
+                    if self.pending_live_registration.is_none() {
+                        return Err(EffectPeerError::Integrity);
+                    }
+                }
+                (None, None) if !resuming_staged_registration => {}
+                _ => return Err(EffectPeerError::PublicationConflict),
+            }
+        }
         let client_effect = compact_identity(b"client-effect", request.record.effect);
         let register = if let Some(pending) = &self.pending_live_registration {
             if pending.request != request
@@ -1090,6 +1117,11 @@ impl ProcessEffectPeerState {
                 ));
             }
             let projected = native_register_request(&request, client_effect);
+            if let Some(effect) = effect_request {
+                let lane = request.record.effect;
+                self.live_by_operation.insert(effect.operation, lane);
+                self.live_by_idempotency.insert(effect.idempotency_key, lane);
+            }
             // Store the complete portable request before the native send. If
             // its acknowledgement is lost, only this exact request may drive
             // recovery even when another portable identity has the same v1
@@ -1114,6 +1146,15 @@ impl ProcessEffectPeerState {
                     // post-integrity-failure retries retain the full staged
                     // identity and remain fail closed.
                     self.pending_live_registration = None;
+                    if let Some(effect) = effect_request {
+                        let lane = request.record.effect;
+                        if self.live_by_operation.get(&effect.operation) == Some(&lane) {
+                            self.live_by_operation.remove(&effect.operation);
+                        }
+                        if self.live_by_idempotency.get(&effect.idempotency_key) == Some(&lane) {
+                            self.live_by_idempotency.remove(&effect.idempotency_key);
+                        }
+                    }
                 }
                 return Err(error);
             }
@@ -1387,7 +1428,8 @@ impl ProcessEffectPeerState {
             self.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
         let committed = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
         self.require_live_token(&live, token, &committed.token)?;
-        if live.effect_request.is_some()
+        if self.admission_profile == EffectAdmissionProfile::AdmissionRequired
+            && live.effect_request.is_some()
             && live.dispatch_phase != ProcessLiveDispatchPhase::GuestReturned
         {
             return Err(EffectPeerError::StepConflict);
@@ -1528,21 +1570,22 @@ impl ProcessEffectPeerState {
         &self,
         effect: &EffectRequest,
     ) -> Result<Option<Identity>, EffectPeerError> {
-        let mut matching_operation = self.live_effects.iter().filter(|(_, live)| {
-            live.effect_request
-                .as_ref()
-                .is_some_and(|candidate| candidate.operation == effect.operation)
-        });
-        let Some((effect_id, live)) = matching_operation.next() else {
-            return Ok(None);
+        let by_operation = self.live_by_operation.get(&effect.operation).copied();
+        let by_idempotency = self.live_by_idempotency.get(&effect.idempotency_key).copied();
+        let effect_id = match (by_operation, by_idempotency) {
+            (None, None) => return Ok(None),
+            (Some(operation_lane), Some(idempotency_lane))
+                if operation_lane == idempotency_lane =>
+            {
+                operation_lane
+            }
+            _ => return Err(EffectPeerError::PublicationConflict),
         };
-        if matching_operation.next().is_some() {
-            return Err(EffectPeerError::Integrity);
-        }
+        let live = self.live_effects.get(&effect_id).ok_or(EffectPeerError::Integrity)?;
         if live.effect_request.as_ref() != Some(effect) {
             return Err(EffectPeerError::PublicationConflict);
         }
-        Ok(Some(*effect_id))
+        Ok(Some(effect_id))
     }
 
     fn freeze(

@@ -259,6 +259,11 @@ where
 {
     fn effect(&self) -> EffectRequest;
     fn registration(&self, case: EffectClosureRegistrationCase) -> P::RegistrationRequest;
+    fn alias_registration(
+        &self,
+        effect: &EffectRequest,
+        publication_lane: Identity,
+    ) -> P::RegistrationRequest;
     fn commit_metadata(&self) -> P::CommitMetadata;
     fn conflicting_commit_metadata(&self) -> P::CommitMetadata;
     fn outcome(&self) -> EffectOutcome;
@@ -430,6 +435,69 @@ where
         EffectClosureContractExpectation::ExactReplay,
     )?;
 
+    let alias_lane = Identity::from_u128(96_001);
+    match admission.register(effect.clone(), fixture.alias_registration(&effect, alias_lane)) {
+        Err(failure) => require_error(
+            "alias-publication-id",
+            fixture.classify_error(failure.error()),
+            EffectClosureConformanceErrorKind::Conflict,
+        )?,
+        Ok(_) => return fail("alias-publication-id", "an alias publication lane was accepted"),
+    }
+    observe_case(
+        &mut observations,
+        "alias-publication-id",
+        EffectClosureContractExpectation::RejectedConflict,
+    )?;
+
+    let mut same_operation = different_effect.clone();
+    same_operation.operation = effect.operation;
+    match admission.register(
+        same_operation.clone(),
+        fixture.alias_registration(&same_operation, Identity::from_u128(96_002)),
+    ) {
+        Err(failure) => require_error(
+            "mutated-same-operation-lane",
+            fixture.classify_error(failure.error()),
+            EffectClosureConformanceErrorKind::Conflict,
+        )?,
+        Ok(_) => {
+            return fail(
+                "mutated-same-operation-lane",
+                "a second canonical binding for one operation was accepted",
+            );
+        }
+    }
+    observe_case(
+        &mut observations,
+        "mutated-same-operation-lane",
+        EffectClosureContractExpectation::RejectedConflict,
+    )?;
+
+    let mut same_idempotency = effect.clone();
+    same_idempotency.operation = Identity::from_u128(96_003);
+    match admission.register(
+        same_idempotency.clone(),
+        fixture.alias_registration(&same_idempotency, Identity::from_u128(96_004)),
+    ) {
+        Err(failure) => require_error(
+            "mutated-same-idempotency-lane",
+            fixture.classify_error(failure.error()),
+            EffectClosureConformanceErrorKind::Conflict,
+        )?,
+        Ok(_) => {
+            return fail(
+                "mutated-same-idempotency-lane",
+                "a second canonical binding for one idempotency key was accepted",
+            );
+        }
+    }
+    observe_case(
+        &mut observations,
+        "mutated-same-idempotency-lane",
+        EffectClosureContractExpectation::RejectedConflict,
+    )?;
+
     for vector in effect_request_contract_vectors(&effect) {
         let case_id = vector.case_id;
         match admission
@@ -501,7 +569,8 @@ where
     )?;
 
     let canonical_outcome = fixture.outcome();
-    match exact_permit(provider, fixture, &effect, true)?.record_outcome(canonical_outcome.clone()) {
+    match exact_permit(provider, fixture, &effect, true)?.record_outcome(canonical_outcome.clone())
+    {
         Err(failure) => require_error(
             "outcome-before-dispatch",
             fixture.classify_error(failure.error()),
@@ -866,7 +935,13 @@ mod tests {
 
     #[derive(Default)]
     struct FakeProvider {
-        effects: Mutex<BTreeMap<Identity, FakeState>>,
+        state: Mutex<FakeProviderState>,
+    }
+
+    #[derive(Default)]
+    struct FakeProviderState {
+        effects: BTreeMap<Identity, FakeState>,
+        by_idempotency: BTreeMap<IdempotencyKey, Identity>,
     }
 
     #[derive(Clone, Debug)]
@@ -934,14 +1009,22 @@ mod tests {
             if request.generation != 1 {
                 return Err(FakeError::Stale);
             }
-            let mut effects = self.effects.lock().unwrap();
-            if let Some(existing) = effects.get(&effect.operation) {
+            let mut state = self.state.lock().unwrap();
+            if let Some(existing) = state.effects.get(&effect.operation) {
                 if existing.effect == *effect && existing.registration == *request {
+                    if state.by_idempotency.get(&effect.idempotency_key) != Some(&effect.operation)
+                    {
+                        return Err(FakeError::Conflict);
+                    }
                     return Ok(FakeBoundState { effect: effect.clone(), replay: true });
                 }
                 return Err(FakeError::Conflict);
             }
-            effects.insert(
+            if state.by_idempotency.contains_key(&effect.idempotency_key) {
+                return Err(FakeError::Conflict);
+            }
+            state.by_idempotency.insert(effect.idempotency_key, effect.operation);
+            state.effects.insert(
                 effect.operation,
                 FakeState {
                     effect: effect.clone(),
@@ -989,8 +1072,8 @@ mod tests {
             if committed.effect != *effect {
                 return Err(FakeError::Conflict);
             }
-            let mut effects = self.effects.lock().unwrap();
-            let state = effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
+            let mut provider = self.state.lock().unwrap();
+            let state = provider.effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
             if state.effect != *effect {
                 return Err(FakeError::Conflict);
             }
@@ -1010,8 +1093,8 @@ mod tests {
             if fence.effect != *effect {
                 return Err(FakeError::Conflict);
             }
-            let mut effects = self.effects.lock().unwrap();
-            let state = effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
+            let mut provider = self.state.lock().unwrap();
+            let state = provider.effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
             if state.effect != *effect {
                 return Err(FakeError::Conflict);
             }
@@ -1034,8 +1117,8 @@ mod tests {
             if committed.effect != *effect {
                 return Err(FakeError::Conflict);
             }
-            let mut effects = self.effects.lock().unwrap();
-            let state = effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
+            let mut provider = self.state.lock().unwrap();
+            let state = provider.effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
             if state.effect != *effect {
                 return Err(FakeError::Conflict);
             }
@@ -1059,8 +1142,8 @@ mod tests {
             effect: &EffectRequest,
             request: &Self::CompletionRequest,
         ) -> Result<Self::CompletionEvidence, Self::Error> {
-            let mut effects = self.effects.lock().unwrap();
-            let state = effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
+            let mut provider = self.state.lock().unwrap();
+            let state = provider.effects.get_mut(&effect.operation).ok_or(FakeError::Conflict)?;
             if state.effect != *effect {
                 return Err(FakeError::Conflict);
             }
@@ -1083,8 +1166,8 @@ mod tests {
             &self,
             effect: &EffectRequest,
         ) -> Result<Option<Self::QueryObservation>, Self::Error> {
-            let effects = self.effects.lock().unwrap();
-            Ok(effects.get(&effect.operation).filter(|state| state.effect == *effect).map(
+            let provider = self.state.lock().unwrap();
+            Ok(provider.effects.get(&effect.operation).filter(|state| state.effect == *effect).map(
                 |state| FakeQueryObservation { phase: state.phase, outcome: state.outcome.clone() },
             ))
         }
@@ -1124,6 +1207,14 @@ mod tests {
                     FakeRegistration { generation: 1, selector: 2 }
                 }
             }
+        }
+
+        fn alias_registration(
+            &self,
+            _effect: &EffectRequest,
+            _publication_lane: Identity,
+        ) -> FakeRegistration {
+            FakeRegistration { generation: 1, selector: 3 }
         }
 
         fn commit_metadata(&self) -> u64 {

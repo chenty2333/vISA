@@ -1,11 +1,15 @@
 use contract_core::{
     EffectKind, EffectOutcome, EffectRequest, EffectResult, EntityRef, Extension, Identity,
+    ProfileAccess,
 };
 #[cfg(target_os = "linux")]
 use rusqlite::TransactionBehavior;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use substrate_api::{ProfilePort, ProviderError, ProviderErrorKind};
+use substrate_api::{
+    EffectRequestBinding, ProfileDispatchAuthorization, ProfilePort, ProviderError,
+    ProviderErrorKind,
+};
 use visa_profile::{
     FileAccessMode, FileDurability, FileLockState, LOGICAL_REQUEST_EXTENSION_ID,
     REGULAR_FILE_EXTENSION_ID, RegularFileOperation, RegularFileResult, RegularFileState,
@@ -181,15 +185,76 @@ impl SqliteProvider {
 }
 
 impl ProfilePort for SqliteProvider {
+    fn require_profile_dispatch_authorization(
+        &mut self,
+        profile: Identity,
+    ) -> Result<(), ProviderError> {
+        if profile.is_zero() {
+            return Err(error(ProviderErrorKind::InvalidRequest, false));
+        }
+        self.profile_dispatch.required.insert(profile);
+        Ok(())
+    }
+
+    fn arm_profile_dispatch(
+        &mut self,
+        authorization: ProfileDispatchAuthorization,
+    ) -> Result<(), ProviderError> {
+        let profile = authorization.profile();
+        if !self.profile_dispatch.required.contains(&profile) {
+            return Err(error(ProviderErrorKind::Denied, false));
+        }
+        if self.profile_dispatch.armed.is_some() || self.profile_dispatch.consumed.is_some() {
+            return Err(error(ProviderErrorKind::Conflict, false));
+        }
+        self.profile_dispatch.armed = Some((profile, authorization.binding()));
+        Ok(())
+    }
+
+    fn finish_profile_dispatch(
+        &mut self,
+        binding: EffectRequestBinding,
+    ) -> Result<bool, ProviderError> {
+        if let Some((_, consumed)) = self.profile_dispatch.consumed.take() {
+            self.profile_dispatch.armed = None;
+            return if consumed == binding {
+                Ok(true)
+            } else {
+                Err(error(ProviderErrorKind::Conflict, false))
+            };
+        }
+        if let Some((_, armed)) = self.profile_dispatch.armed.take() {
+            return if armed == binding {
+                Ok(false)
+            } else {
+                Err(error(ProviderErrorKind::Conflict, false))
+            };
+        }
+        Err(error(ProviderErrorKind::Denied, false))
+    }
+
     fn execute_profile(
         &mut self,
         request: &EffectRequest,
         extension: &Extension,
     ) -> Result<EffectOutcome, ProviderError> {
-        let EffectKind::Profile { profile, .. } = request.kind else {
+        let EffectKind::Profile { profile, access, .. } = request.kind else {
             return Err(error(ProviderErrorKind::InvalidRequest, false));
         };
         if profile == LOGICAL_REQUEST_EXTENSION_ID {
+            if access == ProfileAccess::Write && self.profile_dispatch.required.contains(&profile) {
+                let armed = self
+                    .profile_dispatch
+                    .armed
+                    .take()
+                    .ok_or_else(|| error(ProviderErrorKind::Denied, false))?;
+                self.profile_dispatch.consumed = Some(armed);
+                let requested = EffectRequestBinding::from_effect(request)
+                    .map_err(|_| error(ProviderErrorKind::InvalidRequest, false))?;
+                if armed != (profile, requested) {
+                    return Err(error(ProviderErrorKind::Denied, false));
+                }
+            }
             return self.execute_logical_request(request, extension);
         }
         if profile != REGULAR_FILE_EXTENSION_ID {

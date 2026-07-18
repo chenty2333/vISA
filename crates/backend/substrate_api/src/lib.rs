@@ -203,6 +203,35 @@ pub trait KvPort {
 /// request identifies the profile and carries its typed payload; implementations
 /// may not reinterpret an unknown profile.
 pub trait ProfilePort {
+    /// Permanently harden one profile on this provider instance. There is no
+    /// downgrade operation: reopening the legacy path requires a new provider
+    /// instance and therefore a new runtime admission decision.
+    fn require_profile_dispatch_authorization(
+        &mut self,
+        _profile: Identity,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::new(ProviderErrorKind::Unsupported, false))
+    }
+
+    /// Arm the mechanism provider with one authorization minted by a consumed
+    /// closure-provider commit. Implementations must consume the value even on
+    /// a later request-binding mismatch.
+    fn arm_profile_dispatch(
+        &mut self,
+        _authorization: ProfileDispatchAuthorization,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::new(ProviderErrorKind::Unsupported, false))
+    }
+
+    /// Close or cancel the currently armed gate and report whether the exact
+    /// binding was consumed by the profile execution sink.
+    fn finish_profile_dispatch(
+        &mut self,
+        _binding: EffectRequestBinding,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::new(ProviderErrorKind::Unsupported, false))
+    }
+
     fn execute_profile(
         &mut self,
         request: &EffectRequest,

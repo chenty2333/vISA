@@ -41,6 +41,9 @@ pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
     case("dispatch-other-provider", EffectClosureContractExpectation::Denied),
     case("dispatch-mutated-effect", EffectClosureContractExpectation::Denied),
     case("exact-admission-replay", EffectClosureContractExpectation::ExactReplay),
+    case("alias-publication-id", EffectClosureContractExpectation::RejectedConflict),
+    case("mutated-same-operation-lane", EffectClosureContractExpectation::RejectedConflict),
+    case("mutated-same-idempotency-lane", EffectClosureContractExpectation::RejectedConflict),
     case("idempotency-key", EffectClosureContractExpectation::RejectedConflict),
     case("request-digest", EffectClosureContractExpectation::RejectedConflict),
     case("kind", EffectClosureContractExpectation::RejectedConflict),
@@ -302,7 +305,7 @@ mod tests {
 
     #[test]
     fn fixed_fault_matrix_has_stable_unique_case_ids() {
-        assert_eq!(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.len(), 35);
+        assert_eq!(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.len(), 38);
         for (index, case) in EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.iter().enumerate() {
             assert!(!case.case_id.is_empty());
             assert!(

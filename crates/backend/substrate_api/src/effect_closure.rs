@@ -1,8 +1,9 @@
 use alloc::boxed::Box;
-use core::ptr;
+use core::{mem, ptr};
 
 use contract_core::{
-    Digest, EffectOutcome, EffectRequest, EncodeError, IdempotencyKey, Identity, canonical_digest,
+    Digest, EffectKind, EffectOutcome, EffectRequest, EncodeError, IdempotencyKey, Identity,
+    canonical_digest,
 };
 
 /// Preview protocol family for the provider-neutral effect-closure SPI.
@@ -353,6 +354,28 @@ pub enum EffectDispatchAcquireError<E> {
     Provider(E),
 }
 
+/// Non-forgeable, non-cloneable authorization for one exact profile effect at
+/// the mechanism provider which performs the external I/O.
+///
+/// A closure-provider commit is not itself the I/O sink. The admitted runtime
+/// must move this value into its [`crate::ProfilePort`] before invoking guest
+/// code, so a raw coordinator or profile helper still encounters the same
+/// one-shot provider fence.
+pub struct ProfileDispatchAuthorization {
+    profile: Identity,
+    binding: EffectRequestBinding,
+}
+
+impl ProfileDispatchAuthorization {
+    pub const fn profile(&self) -> Identity {
+        self.profile
+    }
+
+    pub const fn binding(&self) -> EffectRequestBinding {
+        self.binding
+    }
+}
+
 /// One provider-side consumed authorization awaiting a guest outcome.
 ///
 /// There is deliberately no retry/clone surface. If this value is dropped or
@@ -366,6 +389,7 @@ where
     effect: EffectRequest,
     commit_evidence: P::CommitEvidence,
     fence: P::DispatchFence,
+    profile_authorization: Option<ProfileDispatchAuthorization>,
 }
 
 impl<'a, P> ConsumedEffectDispatch<'a, P>
@@ -378,6 +402,12 @@ where
 
     pub const fn provider_fence(&self) -> &P::DispatchFence {
         &self.fence
+    }
+
+    /// Move the exact effect binding into the real profile I/O provider.
+    /// This may succeed only once for a profile effect.
+    pub fn take_profile_authorization(&mut self) -> Option<ProfileDispatchAuthorization> {
+        self.profile_authorization.take()
     }
 
     pub fn finish(
@@ -618,6 +648,8 @@ where
 /// a lost Commit acknowledgement, so this type establishes exact-effect
 /// commit-before-dispatch, not global exactly-once execution. Dispatchers must
 /// preserve the canonical idempotency identity across such recovery.
+/// Zero-sized provider implementations are rejected because pointer equality
+/// cannot distinguish their instances.
 ///
 /// A dispatch API must take the permit by value; attempting to execute twice
 /// with one authority value is rejected by the type system:
@@ -654,7 +686,7 @@ where
     }
 
     pub fn authorizes(&self, provider: &P, effect: &EffectRequest) -> bool {
-        ptr::eq(self.provider, provider) && self.effect == *effect
+        mem::size_of::<P>() != 0 && ptr::eq(self.provider, provider) && self.effect == *effect
     }
 
     /// Consume this local permit only after the provider revalidates its live
@@ -664,17 +696,28 @@ where
         provider: &'a P,
         effect: &EffectRequest,
     ) -> Result<ConsumedEffectDispatch<'a, P>, EffectDispatchAcquireError<P::Error>> {
-        if !ptr::eq(self.provider, provider) || self.effect != *effect {
+        // Distinct zero-sized values may share an address, so pointer identity
+        // cannot establish provider-instance identity for a ZST.
+        if mem::size_of::<P>() == 0 || !ptr::eq(self.provider, provider) || self.effect != *effect {
             return Err(EffectDispatchAcquireError::BindingMismatch);
         }
+        let binding = EffectRequestBinding::from_effect(&self.effect)
+            .map_err(|_| EffectDispatchAcquireError::BindingMismatch)?;
         let fence = provider
             .consume_committed_effect(&self.effect, &self.commit_evidence)
             .map_err(EffectDispatchAcquireError::Provider)?;
+        let profile_authorization = match self.effect.kind {
+            EffectKind::Profile { profile, .. } => {
+                Some(ProfileDispatchAuthorization { profile, binding })
+            }
+            _ => None,
+        };
         Ok(ConsumedEffectDispatch {
             provider,
             effect: self.effect,
             commit_evidence: self.commit_evidence,
             fence,
+            profile_authorization,
         })
     }
 

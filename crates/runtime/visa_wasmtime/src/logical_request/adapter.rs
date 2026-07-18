@@ -4,7 +4,7 @@ use contract_core::{
 };
 use substrate_api::{
     CommittedEffectPermit, EffectAdmissionProfile, EffectClosureProvider,
-    EffectDispatchAcquireError, EffectDispatchOutcome,
+    EffectDispatchAcquireError, EffectDispatchOutcome, EffectRequestBinding,
 };
 use visa_component_adapter::{
     AdapterProvider, LogicalRequestComponentState, LogicalRequestWorkloadLifecycle,
@@ -212,7 +212,7 @@ where
 
     pub fn instantiate_prepared_recoverable_with_profile(
         prepared: PreparedLogicalRequestComponent<P>,
-        coordinator: Coordinator<P>,
+        mut coordinator: Coordinator<P>,
         admission_profile: EffectAdmissionProfile,
     ) -> Result<Self, Box<(LogicalRequestAdapterError, Coordinator<P>)>> {
         if coordinator.state().component_digest != prepared.component_digest {
@@ -226,6 +226,13 @@ where
         }
         if let Err(error) = canonical_logical_request(coordinator.state()) {
             return Err(Box::new((canonical_error(error), coordinator)));
+        }
+        if admission_profile == EffectAdmissionProfile::AdmissionRequired
+            && coordinator
+                .require_profile_dispatch_authorization(LOGICAL_REQUEST_EXTENSION_ID)
+                .is_err()
+        {
+            return Err(Box::new((LogicalRequestAdapterError::AdmissionRejected, coordinator)));
         }
         let mut store = Store::new(
             prepared.instance_pre.engine(),
@@ -446,14 +453,31 @@ where
             return Err(LogicalRequestAdapterError::AdmissionRejected);
         }
         self.review_prepared_start(prepared)?;
-        let dispatch =
+        let binding = EffectRequestBinding::from_effect(prepared.effect_request())
+            .map_err(|_| LogicalRequestAdapterError::InvalidCanonicalProfile)?;
+        let mut dispatch =
             permit.consume(provider, prepared.effect_request()).map_err(|error| match error {
                 EffectDispatchAcquireError::BindingMismatch
                 | EffectDispatchAcquireError::Provider(_) => {
                     LogicalRequestAdapterError::AdmissionRejected
                 }
             })?;
+        let Some(authorization) = dispatch.take_profile_authorization() else {
+            return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
+                Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
+            } else {
+                Err(LogicalRequestAdapterError::AdmissionRejected)
+            };
+        };
+        if self.coordinator_mut().arm_profile_dispatch(authorization).is_err() {
+            return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
+                Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
+            } else {
+                Err(LogicalRequestAdapterError::AdmissionRejected)
+            };
+        }
         if !self.store.data_mut().arm_admitted_start(prepared.effect_request().clone()) {
+            let _ = self.coordinator_mut().finish_profile_dispatch(binding);
             return if dispatch.finish(EffectDispatchOutcome::GuestFailed).is_err() {
                 Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown)
             } else {
@@ -461,7 +485,15 @@ where
             };
         }
         let mut result = self.dispatch_reviewed_start(prepared);
-        if !self.store.data_mut().finish_admitted_start() {
+        let host_consumed = self.store.data_mut().finish_admitted_start();
+        let sink_consumed = match self.coordinator_mut().finish_profile_dispatch(binding) {
+            Ok(consumed) => consumed,
+            Err(_) => {
+                let _ = dispatch.finish(EffectDispatchOutcome::GuestFailed);
+                return Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown);
+            }
+        };
+        if (!host_consumed || !sink_consumed) && result.is_ok() {
             result = Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
         }
         let outcome = if result.is_ok() {

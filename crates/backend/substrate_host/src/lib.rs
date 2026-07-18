@@ -17,7 +17,7 @@ mod regular_file;
 mod timer;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     time::{Duration, Instant},
 };
@@ -29,7 +29,9 @@ use contract_core::{
 #[cfg(any(test, feature = "test-control"))]
 pub use logical_request::{LoopbackLogicalPeer, LoopbackLogicalPeerBehavior};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use substrate_api::{JournalScope, OperationObservation, ProviderError, ProviderErrorKind};
+use substrate_api::{
+    EffectRequestBinding, JournalScope, OperationObservation, ProviderError, ProviderErrorKind,
+};
 
 #[cfg(test)]
 mod tests;
@@ -44,6 +46,7 @@ pub struct SqliteProvider {
     pub(crate) timers: BTreeMap<Identity, HostTimer>,
     pub(crate) regular_files: BTreeMap<EntityRef, std::fs::File>,
     pub(crate) logical_credentials: BTreeMap<(contract_core::NodeIdentity, Identity), Vec<u8>>,
+    profile_dispatch: ProfileDispatchControl,
     faults: FaultControl,
 }
 
@@ -70,6 +73,7 @@ impl SqliteProvider {
             timers: BTreeMap::new(),
             regular_files: BTreeMap::new(),
             logical_credentials: BTreeMap::new(),
+            profile_dispatch: ProfileDispatchControl::default(),
             faults: FaultControl::default(),
         })
     }
@@ -105,6 +109,13 @@ impl SqliteProvider {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)
     }
+}
+
+#[derive(Default)]
+struct ProfileDispatchControl {
+    required: BTreeSet<Identity>,
+    armed: Option<(Identity, EffectRequestBinding)>,
+    consumed: Option<(Identity, EffectRequestBinding)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

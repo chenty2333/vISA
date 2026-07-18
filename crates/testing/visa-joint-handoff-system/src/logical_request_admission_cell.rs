@@ -83,13 +83,14 @@ const LOGICAL_PEER_IDENTITY: &[u8] = b"visa-admission-logical-peer-v1";
 const LOGICAL_PEER_CREDENTIAL: &[u8] = b"visa-admission-logical-credential-v1";
 const LOGICAL_REQUEST_BYTES: &[u8] = b"visa-admission-ordered-request-v1";
 const LOGICAL_RESPONSE_BYTES: &[u8] = b"visa-admission-ordered-response-v1";
-pub(crate) const ADMISSION_LIMITATIONS: [&str; 6] = [
+pub(crate) const ADMISSION_LIMITATIONS: [&str; 7] = [
     "same boot and one host only; no host-reboot recovery or cross-host transport is claimed",
     "the Nexus boundary is a real host process backed by the production Registry mapping, not real OSTD execution",
     "IRQ, SMP, device DMA, retained tombstones, and hardware reset paths are outside this cell",
     "the receipt authenticator is a deterministic same-boot evidence key, not a cryptographic freshness or anti-rollback root",
     "the exactly-once observation is bounded to one operation-id-deduplicated logical request and is not a general exactly-once claim",
     "source and destination use independent SQLite stores on the same filesystem and process lifetime",
+    "the ProfilePort dispatch gate is process-local and does not survive provider restart or isolate a separately opened same-UID provider instance",
 ];
 
 type AdmissionJointLog = LostAckProjectionLog<SqliteJointProjectionLog>;
@@ -3061,9 +3062,14 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use contract_core::state_digest;
-    use substrate_api::{EffectClosureProvider, EffectDispatchAcquireError, EffectDispatchOutcome};
-    use visa_profile::LogicalRequestOperation;
+    use contract_core::{ProfileAccess, state_digest};
+    use substrate_api::{
+        EffectClosureProvider, EffectDispatchAcquireError, EffectDispatchOutcome,
+        EffectRequestBinding, ProfilePort,
+    };
+    use visa_component_adapter::{ProfileBinding, identity_string, profile_execute};
+    use visa_profile::{LogicalRequestOperation, encode_logical_request_operation};
+    use visa_runtime::CommandReceipt;
     use visa_wasmtime::{LogicalRequestFailure, LogicalRequestWorkloadFailure};
 
     use super::*;
@@ -3494,6 +3500,127 @@ mod tests {
             source.start_prepared(&prepared),
             Err(LogicalRequestAdapterError::AdmissionRequired)
         );
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn admission_required_profile_sink_rejects_raw_coordinator_and_profile_helpers() {
+        let root = TestRoot::new("raw-coordinator-effect-bypass");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_063))
+                .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let receipt = source
+            .coordinator_mut()
+            .effect(Identity::from_u128(91_064), prepared.effect_request().clone())
+            .unwrap();
+        assert!(matches!(
+            receipt,
+            CommandReceipt::Effect(effect)
+                if matches!(
+                    effect.outcome,
+                    EffectOutcome::Failed(ref failure)
+                        if failure.class == contract_core::FailureClass::Denied
+                )
+        ));
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+
+        let root = TestRoot::new("public-profile-execute-bypass");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_065))
+                .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let extension = source
+            .coordinator()
+            .state()
+            .extensions
+            .iter()
+            .find(|extension| extension.id == LOGICAL_REQUEST_EXTENSION_ID)
+            .unwrap();
+        let canonical = logical_request_state(extension).unwrap();
+        let binding =
+            ProfileBinding::for_state(source.coordinator().state(), LOGICAL_REQUEST_EXTENSION_ID)
+                .unwrap();
+        let idempotency = identity_string(canonical.operation_id);
+        let payload = encode_logical_request_operation(&LogicalRequestOperation::Start {
+            request: fixture.request.clone(),
+        })
+        .unwrap();
+        assert!(matches!(
+            profile_execute(
+                source.coordinator_mut(),
+                &binding,
+                ProfileAccess::Write,
+                idempotency.as_bytes(),
+                payload,
+            ),
+            Err(visa_component_adapter::ProfileFailure::Denied)
+        ));
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+
+        let root = TestRoot::new("owned-coordinator-effect-bypass");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_066))
+                .unwrap();
+        let (fixture, source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let mut coordinator = source.into_coordinator();
+        let receipt = coordinator
+            .effect(Identity::from_u128(91_067), prepared.effect_request().clone())
+            .unwrap();
+        assert!(matches!(
+            receipt,
+            CommandReceipt::Effect(effect)
+                if matches!(
+                    effect.outcome,
+                    EffectOutcome::Failed(ref failure)
+                        if failure.class == contract_core::FailureClass::Denied
+                )
+        ));
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn profile_sink_consumes_an_armed_gate_on_full_binding_mismatch() {
+        let root = TestRoot::new("profile-sink-binding-mismatch");
+        let setup =
+            AdmissionSetup::create_without_source_fault(&root.0, Identity::from_u128(91_068))
+                .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let peer = ReferenceEffectPeer::new_admission_required(fixture.effect_config).unwrap();
+        let permit = reference_permit(&peer, &fixture, &prepared);
+        let mut dispatch = permit.consume(&peer, prepared.effect_request()).unwrap();
+        let authorization = dispatch.take_profile_authorization().unwrap();
+        source.coordinator_mut().arm_profile_dispatch(authorization).unwrap();
+
+        let extension = source
+            .coordinator()
+            .state()
+            .extensions
+            .iter()
+            .find(|extension| extension.id == LOGICAL_REQUEST_EXTENSION_ID)
+            .unwrap()
+            .clone();
+        let binding = EffectRequestBinding::from_effect(prepared.effect_request()).unwrap();
+        let mut provider = source.into_coordinator().into_provider();
+        let mut mutated = prepared.effect_request().clone();
+        mutated.request_digest = Digest::from_bytes([0x91; 32]);
+        assert!(matches!(
+            ProfilePort::execute_profile(&mut provider, &mutated, &extension),
+            Err(error) if error.kind == substrate_api::ProviderErrorKind::Denied
+        ));
+        assert!(matches!(
+            ProfilePort::execute_profile(&mut provider, prepared.effect_request(), &extension),
+            Err(error) if error.kind == substrate_api::ProviderErrorKind::Denied
+        ));
+        assert_eq!(ProfilePort::finish_profile_dispatch(&mut provider, binding), Ok(true));
+        dispatch.finish(EffectDispatchOutcome::GuestFailed).unwrap();
         assert_eq!(logical_peer.request_count(), 0);
         assert_eq!(logical_peer.execution_count(), 0);
     }

@@ -3,7 +3,7 @@ use std::{
     sync::Mutex,
 };
 
-use contract_core::{Digest, EffectOutcome, EffectRequest, Identity, LeaseEpoch};
+use contract_core::{Digest, EffectOutcome, EffectRequest, IdempotencyKey, Identity, LeaseEpoch};
 use joint_handoff_core::{
     ClassificationCounts, ClosureProgressReceipt, ClosureReceipt, EffectScopeVersion,
     FreezeDisposition, JointHandoffKey, NexusFreezeReceipt, NexusThawReceipt,
@@ -363,6 +363,8 @@ struct EffectPeerState {
     next_sequence: u64,
     effects: BTreeMap<Identity, ReferenceEffectRecord>,
     admissions: BTreeMap<Identity, ReferenceAdmission>,
+    admission_by_operation: BTreeMap<Identity, Identity>,
+    admission_by_idempotency: BTreeMap<IdempotencyKey, Identity>,
     session: Option<FreezeSession>,
 }
 
@@ -441,6 +443,8 @@ impl ReferenceEffectPeer {
                 next_sequence: 0,
                 effects: BTreeMap::new(),
                 admissions: BTreeMap::new(),
+                admission_by_operation: BTreeMap::new(),
+                admission_by_idempotency: BTreeMap::new(),
                 session: None,
             }),
         })
@@ -896,22 +900,34 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         if !gate_open(state.session.as_ref()) {
             return Err(EffectPeerError::GateClosed);
         }
-        if let Some(existing) = state.admissions.get(&request.publication.record.effect) {
-            return if existing.registration == *request && existing.effect == *effect {
-                Ok(ReferenceRegisteredEffect {
-                    effect: effect.clone(),
-                    registration: request.clone(),
-                    replay: true,
-                })
-            } else {
-                Err(EffectPeerError::PublicationConflict)
-            };
+        let lane = request.publication.record.effect;
+        let by_operation = state.admission_by_operation.get(&effect.operation).copied();
+        let by_idempotency = state.admission_by_idempotency.get(&effect.idempotency_key).copied();
+        match (by_operation, by_idempotency) {
+            (Some(operation_lane), Some(idempotency_lane))
+                if operation_lane == idempotency_lane && operation_lane == lane =>
+            {
+                let existing = state.admissions.get(&lane).ok_or(EffectPeerError::Integrity)?;
+                return if existing.registration == *request && existing.effect == *effect {
+                    Ok(ReferenceRegisteredEffect {
+                        effect: effect.clone(),
+                        registration: request.clone(),
+                        replay: true,
+                    })
+                } else {
+                    Err(EffectPeerError::PublicationConflict)
+                };
+            }
+            (None, None) => {}
+            _ => return Err(EffectPeerError::PublicationConflict),
         }
-        if state.effects.contains_key(&request.publication.record.effect) {
+        if state.admissions.contains_key(&lane) || state.effects.contains_key(&lane) {
             return Err(EffectPeerError::PublicationConflict);
         }
         let dispatch_generation = state.config.scope_generation;
         state.effects.insert(request.publication.record.effect, request.publication.record.clone());
+        state.admission_by_operation.insert(effect.operation, lane);
+        state.admission_by_idempotency.insert(effect.idempotency_key, lane);
         state.admissions.insert(
             request.publication.record.effect,
             ReferenceAdmission {
@@ -1120,16 +1136,12 @@ impl EffectClosureProvider for ReferenceEffectPeer {
             return Err(EffectPeerError::PublicationConflict);
         }
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
-        if state.admission_profile != EffectAdmissionProfile::AdmissionRequired {
-            return Err(EffectPeerError::Unsupported(
-                "outcome recording requires the admission-required profile",
-            ));
-        }
+        let admission_profile = state.admission_profile;
         if committed.dispatch_generation != state.config.scope_generation {
             return Err(EffectPeerError::StaleScope);
         }
-        let effect_id = reference_admission_key(&state.admissions, effect)?
-            .ok_or(EffectPeerError::StepConflict)?;
+        let effect_id =
+            reference_admission_key(&state, effect)?.ok_or(EffectPeerError::StepConflict)?;
         let outcome_digest = canonical_digest(outcome).map_err(|_| EffectPeerError::Integrity)?;
         let replay = {
             let admission =
@@ -1150,7 +1162,15 @@ impl EffectClosureProvider for ReferenceEffectPeer {
                 Some(existing) if existing == outcome => true,
                 Some(_) => return Err(EffectPeerError::PublicationConflict),
                 None => {
-                    if admission.dispatch_phase != ReferenceDispatchPhase::GuestReturned {
+                    let dispatch_ready = match admission_profile {
+                        EffectAdmissionProfile::AdmissionRequired => {
+                            admission.dispatch_phase == ReferenceDispatchPhase::GuestReturned
+                        }
+                        EffectAdmissionProfile::Compatibility => {
+                            admission.dispatch_phase == ReferenceDispatchPhase::Available
+                        }
+                    };
+                    if !dispatch_ready {
                         return Err(EffectPeerError::StepConflict);
                     }
                     admission.canonical_outcome = Some(outcome.clone());
@@ -1173,8 +1193,8 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         request: &Self::CompletionRequest,
     ) -> Result<Self::CompletionEvidence, Self::Error> {
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
-        let effect_id = reference_admission_key(&state.admissions, effect)?
-            .ok_or(EffectPeerError::StepConflict)?;
+        let effect_id =
+            reference_admission_key(&state, effect)?.ok_or(EffectPeerError::StepConflict)?;
         let admission = state.admissions.get_mut(&effect_id).ok_or(EffectPeerError::Integrity)?;
         if admission.canonical_outcome.is_none() {
             return Err(EffectPeerError::StepConflict);
@@ -1195,7 +1215,7 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         effect: &EffectRequest,
     ) -> Result<Option<Self::QueryObservation>, Self::Error> {
         let state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
-        let Some(effect_id) = reference_admission_key(&state.admissions, effect)? else {
+        let Some(effect_id) = reference_admission_key(&state, effect)? else {
             return Ok(None);
         };
         let admission = state.admissions.get(&effect_id).ok_or(EffectPeerError::Integrity)?;
@@ -1218,21 +1238,23 @@ impl EffectClosureProvider for ReferenceEffectPeer {
 }
 
 fn reference_admission_key(
-    admissions: &BTreeMap<Identity, ReferenceAdmission>,
+    state: &EffectPeerState,
     effect: &EffectRequest,
 ) -> Result<Option<Identity>, EffectPeerError> {
-    let mut matching_operation =
-        admissions.iter().filter(|(_, admission)| admission.effect.operation == effect.operation);
-    let Some((effect_id, admission)) = matching_operation.next() else {
-        return Ok(None);
+    let by_operation = state.admission_by_operation.get(&effect.operation).copied();
+    let by_idempotency = state.admission_by_idempotency.get(&effect.idempotency_key).copied();
+    let effect_id = match (by_operation, by_idempotency) {
+        (None, None) => return Ok(None),
+        (Some(operation_lane), Some(idempotency_lane)) if operation_lane == idempotency_lane => {
+            operation_lane
+        }
+        _ => return Err(EffectPeerError::PublicationConflict),
     };
-    if matching_operation.next().is_some() {
-        return Err(EffectPeerError::Integrity);
-    }
+    let admission = state.admissions.get(&effect_id).ok_or(EffectPeerError::Integrity)?;
     if admission.effect != *effect {
         return Err(EffectPeerError::PublicationConflict);
     }
-    Ok(Some(*effect_id))
+    Ok(Some(effect_id))
 }
 
 fn validate_reference_admission_binding(

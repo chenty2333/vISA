@@ -12,10 +12,11 @@ use contract_core::{
 use semantic_core::{ReplayError, apply, preflight, replay, replay_from, restore};
 use substrate_api::{
     ActivationBundle, AuthorityPort, BindingKind, BindingPort, BindingRequest, CommitBundle,
-    DestinationActivationProjectionRequest, ExternalHandoffProjectionPort,
+    DestinationActivationProjectionRequest, EffectRequestBinding, ExternalHandoffProjectionPort,
     ExternalSourceFenceBundle, JournalPort, KvPort, LeasePort, LeaseRecord, LeaseTransition,
-    ProfilePort, ProviderError, ProviderErrorKind, ReauthorizationRequest,
-    SourceAbortProjectionRequest, TimerObservation, TimerPort, TimerRecovery,
+    ProfileDispatchAuthorization, ProfilePort, ProviderError, ProviderErrorKind,
+    ReauthorizationRequest, SourceAbortProjectionRequest, TimerObservation, TimerPort,
+    TimerRecovery,
 };
 
 use crate::codec::{EncodeError, canonical_digest, snapshot_integrity, state_digest};
@@ -196,6 +197,41 @@ impl<P> Coordinator<P> {
 
     pub fn into_provider(self) -> P {
         self.provider
+    }
+
+    /// Permanently require a closure-provider authorization at one profile's
+    /// actual mechanism sink. This is deliberately one-way.
+    pub fn require_profile_dispatch_authorization(
+        &mut self,
+        profile: Identity,
+    ) -> Result<(), ProviderError>
+    where
+        P: ProfilePort,
+    {
+        self.provider.require_profile_dispatch_authorization(profile)
+    }
+
+    /// Move one unforgeable, consumed admission authorization into the
+    /// mechanism provider immediately before guest dispatch.
+    pub fn arm_profile_dispatch(
+        &mut self,
+        authorization: ProfileDispatchAuthorization,
+    ) -> Result<(), ProviderError>
+    where
+        P: ProfilePort,
+    {
+        self.provider.arm_profile_dispatch(authorization)
+    }
+
+    /// Close or cancel a mechanism-provider gate after the guest call.
+    pub fn finish_profile_dispatch(
+        &mut self,
+        binding: EffectRequestBinding,
+    ) -> Result<bool, ProviderError>
+    where
+        P: ProfilePort,
+    {
+        self.provider.finish_profile_dispatch(binding)
     }
 }
 

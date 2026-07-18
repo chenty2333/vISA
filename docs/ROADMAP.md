@@ -572,11 +572,20 @@ profiles. `Compatibility` preserves the existing Stage 3 `start`,
 is therefore not an admission boundary. `AdmissionRequired` rejects those raw
 Start/publication paths, binds Register through dispatch to the complete
 canonical `EffectRequest` digest and identities, and requires the provider to
-consume a current, unrevoked generation fence before the guest call. The guest
-return/failure closes that consumed fence; a missing outcome acknowledgement
-remains consumed and fails closed rather than authorizing a retry. This is a
-bounded reference/process-adapter contract, not qualification of a production
-Nexus adapter, adversarial same-UID isolation, or general exactly-once effects.
+consume a current, unrevoked generation fence before the guest call. The
+consumed permit mints one non-cloneable profile authorization which the
+underlying `ProfilePort` must arm; the SQLite logical-request sink atomically
+takes and compares the complete canonical request binding before entering the
+profile implementation. The requirement is one-way for that provider instance,
+so public `Coordinator::effect`, `profile_execute`, mutable-coordinator, owned-
+coordinator, and owned-provider paths cannot dispatch Start without the same
+consumed authorization. A mismatch consumes the gate. The guest return/failure
+then closes both sink and closure-provider fences; a missing outcome
+acknowledgement remains consumed and fails closed rather than authorizing a
+retry. This is a same-boot, process-local reference/process-adapter contract:
+the sink gate is not crash-persistent, does not isolate a separately opened
+same-UID provider instance, and does not qualify a production Nexus adapter or
+general exactly-once effects.
 
 The standalone process publisher now owns a strict three-file
 manifest/report/executed-binary artifact; the supplemental logical publisher owns

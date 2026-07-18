@@ -123,6 +123,17 @@ fn registration(
     request
 }
 
+fn alias_registration(
+    fixture: &SharedProviderFixture,
+    effect: &EffectRequest,
+    publication_lane: Identity,
+) -> EffectAdmissionRegistration {
+    let mut publication = registration(fixture, EffectClosureRegistrationCase::Exact);
+    publication.record.effect = publication_lane;
+    publication.record.operation = effect.operation;
+    EffectAdmissionRegistration::new(effect, publication).unwrap()
+}
+
 fn outcome() -> EffectOutcome {
     EffectOutcome::Indeterminate { evidence: None }
 }
@@ -156,6 +167,14 @@ impl EffectClosureConformanceFixture<ReferenceEffectPeer> for ReferenceFixture<'
 
     fn registration(&self, case: EffectClosureRegistrationCase) -> EffectAdmissionRegistration {
         EffectAdmissionRegistration::new(&self.0.effect, registration(self.0, case)).unwrap()
+    }
+
+    fn alias_registration(
+        &self,
+        effect: &EffectRequest,
+        publication_lane: Identity,
+    ) -> EffectAdmissionRegistration {
+        alias_registration(self.0, effect, publication_lane)
     }
 
     fn commit_metadata(&self) -> ReferenceEffectCommitMetadata {
@@ -246,6 +265,14 @@ impl EffectClosureConformanceFixture<ProcessEffectPeer> for ProcessFixture<'_> {
 
     fn registration(&self, case: EffectClosureRegistrationCase) -> EffectAdmissionRegistration {
         EffectAdmissionRegistration::new(&self.0.effect, registration(self.0, case)).unwrap()
+    }
+
+    fn alias_registration(
+        &self,
+        effect: &EffectRequest,
+        publication_lane: Identity,
+    ) -> EffectAdmissionRegistration {
+        alias_registration(self.0, effect, publication_lane)
     }
 
     fn commit_metadata(&self) -> ProcessLiveEffectCommitMetadata {
@@ -397,6 +424,108 @@ fn compatibility_publication_remains_available_but_required_profile_rejects_the_
         EffectPeer::publish(&required, fixture.registration.clone()),
         Err(EffectPeerError::Unsupported(_))
     ));
+}
+
+#[test]
+fn reference_compatibility_preserves_commit_outcome_complete_without_dispatch_consumption() {
+    let fixture = shared_fixture(12_500);
+    let peer = ReferenceEffectPeer::new(fixture.config).unwrap();
+    let completed = reference_permit(&peer, &fixture)
+        .record_outcome(outcome())
+        .unwrap_or_else(|failure| panic!("outcome failed: {:?}", failure.error()))
+        .complete(ReferenceEffectCompletionRequest { result: 17 })
+        .unwrap_or_else(|failure| panic!("completion failed: {:?}", failure.error()));
+    assert!(!completed.outcome_evidence().is_replay());
+    assert!(!completed.completion_evidence().is_replay());
+    let observed =
+        EffectAdmissionSession::new(&peer).query_effect(&fixture.effect).unwrap().unwrap();
+    assert_eq!(observed.phase(), ReferenceEffectQueryPhase::Completed);
+}
+
+#[test]
+#[ignore = "requires an explicitly pinned, separately built nexus-effect-peer binary"]
+fn process_compatibility_preserves_commit_outcome_complete_without_dispatch_consumption() {
+    let fixture = shared_fixture(12_750);
+    let peer = ProcessEffectPeer::spawn(process_launch(), fixture.config).unwrap();
+    let completed = EffectAdmissionSession::new(&peer)
+        .register(
+            fixture.effect.clone(),
+            EffectAdmissionRegistration::new(&fixture.effect, fixture.registration.clone())
+                .unwrap(),
+        )
+        .unwrap_or_else(|failure| panic!("register failed: {:?}", failure.error()))
+        .prepare()
+        .unwrap_or_else(|failure| panic!("prepare failed: {:?}", failure.error()))
+        .commit(ProcessLiveEffectCommitMetadata {
+            result: 17,
+            domain_revision: fixture.config.scope_generation,
+        })
+        .unwrap_or_else(|failure| panic!("commit failed: {:?}", failure.error()))
+        .record_outcome(outcome())
+        .unwrap_or_else(|failure| panic!("outcome failed: {:?}", failure.error()))
+        .complete(ProcessEffectCompletionRequest { result: 17 })
+        .unwrap_or_else(|failure| panic!("completion failed: {:?}", failure.error()));
+    assert!(!completed.outcome_evidence().is_replay());
+    assert!(!completed.completion_evidence().is_replay());
+    peer.shutdown().unwrap();
+}
+
+#[test]
+#[ignore = "requires an explicitly pinned, separately built nexus-effect-peer binary"]
+fn process_pending_registration_reserves_operation_and_idempotency_lanes() {
+    let fixture = shared_fixture(12_900);
+    let peer =
+        ProcessEffectPeer::spawn_admission_required(process_launch(), fixture.config).unwrap();
+    peer.arm_next_response_loss().unwrap();
+    let admission = EffectAdmissionSession::new(&peer);
+    let failure = match admission.register(
+        fixture.effect.clone(),
+        EffectAdmissionRegistration::new(&fixture.effect, fixture.registration.clone()).unwrap(),
+    ) {
+        Ok(_) => panic!("registration response loss unexpectedly returned success"),
+        Err(failure) => failure,
+    };
+    assert!(matches!(failure.error(), EffectPeerError::AcknowledgementLost { .. }));
+
+    let alias = alias_registration(&fixture, &fixture.effect, Identity::from_u128(12_901));
+    assert!(matches!(
+        admission.register(fixture.effect.clone(), alias),
+        Err(failure) if matches!(failure.error(), EffectPeerError::PublicationConflict)
+    ));
+
+    let mut mutated = fixture.effect.clone();
+    mutated.idempotency_key = IdempotencyKey::from_u128(12_902);
+    let alias = alias_registration(&fixture, &mutated, Identity::from_u128(12_903));
+    assert!(matches!(
+        admission.register(mutated, alias),
+        Err(failure) if matches!(failure.error(), EffectPeerError::PublicationConflict)
+    ));
+
+    let mut same_idempotency = fixture.effect.clone();
+    same_idempotency.operation = Identity::from_u128(12_904);
+    let alias = alias_registration(&fixture, &same_idempotency, Identity::from_u128(12_905));
+    assert!(matches!(
+        admission.register(same_idempotency, alias),
+        Err(failure) if matches!(failure.error(), EffectPeerError::PublicationConflict)
+    ));
+
+    let mut independent = fixture.effect.clone();
+    independent.operation = Identity::from_u128(12_906);
+    independent.idempotency_key = IdempotencyKey::from_u128(12_907);
+    let independent_registration =
+        alias_registration(&fixture, &independent, Identity::from_u128(12_908));
+    assert!(matches!(
+        admission.register(independent.clone(), independent_registration.clone()),
+        Err(failure) if matches!(failure.error(), EffectPeerError::PublicationConflict)
+    ));
+
+    failure
+        .retry()
+        .unwrap_or_else(|failure| panic!("exact recovery failed: {:?}", failure.error()));
+    admission.register(independent, independent_registration).unwrap_or_else(|failure| {
+        panic!("rejected independent lane poisoned its indexes: {:?}", failure.error())
+    });
+    peer.shutdown().unwrap();
 }
 
 #[test]
