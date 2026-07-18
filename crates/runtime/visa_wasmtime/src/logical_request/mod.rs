@@ -5,6 +5,8 @@ mod host;
 mod state;
 
 pub use adapter::{
+    AdmittedLogicalRequestError, AdmittedLogicalRequestExecution,
+    AdmittedLogicalRequestFinishFailure, AdmittedLogicalRequestOutcomeFailure,
     LogicalRequestAdapter, LogicalRequestCallResult, PreparedLogicalRequestComponent,
     PreparedLogicalRequestStart,
 };
