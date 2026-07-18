@@ -45,6 +45,9 @@ pub enum LogicalRequestAdapterError {
     ResourceBinding(ResourceBindingError),
     InvalidCanonicalProfile,
     UnsupportedTransport(LogicalRequestTransport),
+    AdmissionRequired,
+    AdmissionRejected,
+    AdmissionOutcomeUnknown,
     InvalidOperation,
     LiveResourcesAtSafePoint { state: PortableLogicalRequestState },
     PortableStateMismatch { expected: Digest, actual: Digest },
@@ -114,6 +117,14 @@ impl fmt::Display for LogicalRequestAdapterError {
             Self::UnsupportedTransport(transport) => {
                 write!(formatter, "logical-request transport is unsupported: {transport:?}")
             }
+            Self::AdmissionRequired => {
+                formatter.write_str("logical-request Start requires provider admission")
+            }
+            Self::AdmissionRejected => {
+                formatter.write_str("provider rejected or revoked the committed dispatch fence")
+            }
+            Self::AdmissionOutcomeUnknown => formatter
+                .write_str("guest dispatch completed but the provider fence outcome is unresolved"),
             Self::InvalidOperation => formatter.write_str("invalid logical-request operation"),
             Self::LiveResourcesAtSafePoint { .. } => {
                 formatter.write_str("component reported a safe point with live request handles")

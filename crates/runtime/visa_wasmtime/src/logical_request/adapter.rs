@@ -2,7 +2,10 @@ use contract_core::{
     ActivationRole, ActivationStatus, Digest, EffectRequest, HandoffPhase, JournalPosition,
     ProfileAccess,
 };
-use substrate_api::{CommittedEffectPermit, EffectClosureProvider};
+use substrate_api::{
+    CommittedEffectPermit, EffectAdmissionProfile, EffectClosureProvider,
+    EffectDispatchAcquireError, EffectDispatchOutcome,
+};
 use visa_component_adapter::{
     AdapterProvider, LogicalRequestComponentState, LogicalRequestWorkloadLifecycle,
     PortableLogicalRequestState, ProfileBinding, ResourceBindingError, RuntimeIdentity,
@@ -107,6 +110,7 @@ pub struct LogicalRequestAdapter<P: 'static> {
     instance: LogicalRequestContinuity,
     component_digest: Digest,
     session_id: Option<String>,
+    admission_profile: EffectAdmissionProfile,
 }
 
 impl<P> LogicalRequestAdapter<P>
@@ -151,24 +155,65 @@ where
         component_bytes: &[u8],
         coordinator: Coordinator<P>,
     ) -> Result<Self, LogicalRequestAdapterError> {
-        Self::instantiate_recoverable(component_bytes, coordinator).map_err(|failure| failure.0)
+        Self::instantiate_with_profile(
+            component_bytes,
+            coordinator,
+            EffectAdmissionProfile::Compatibility,
+        )
+    }
+
+    pub fn instantiate_with_profile(
+        component_bytes: &[u8],
+        coordinator: Coordinator<P>,
+        admission_profile: EffectAdmissionProfile,
+    ) -> Result<Self, LogicalRequestAdapterError> {
+        Self::instantiate_recoverable_with_profile(component_bytes, coordinator, admission_profile)
+            .map_err(|failure| failure.0)
     }
 
     pub fn instantiate_recoverable(
         component_bytes: &[u8],
         coordinator: Coordinator<P>,
     ) -> Result<Self, Box<(LogicalRequestAdapterError, Coordinator<P>)>> {
+        Self::instantiate_recoverable_with_profile(
+            component_bytes,
+            coordinator,
+            EffectAdmissionProfile::Compatibility,
+        )
+    }
+
+    pub fn instantiate_recoverable_with_profile(
+        component_bytes: &[u8],
+        coordinator: Coordinator<P>,
+        admission_profile: EffectAdmissionProfile,
+    ) -> Result<Self, Box<(LogicalRequestAdapterError, Coordinator<P>)>> {
         let expected = coordinator.state().component_digest;
         let prepared = match Self::preflight(component_bytes, expected) {
             Ok(prepared) => prepared,
             Err(error) => return Err(Box::new((error, coordinator))),
         };
-        Self::instantiate_prepared_recoverable(prepared, coordinator)
+        Self::instantiate_prepared_recoverable_with_profile(
+            prepared,
+            coordinator,
+            admission_profile,
+        )
     }
 
     pub fn instantiate_prepared_recoverable(
         prepared: PreparedLogicalRequestComponent<P>,
         coordinator: Coordinator<P>,
+    ) -> Result<Self, Box<(LogicalRequestAdapterError, Coordinator<P>)>> {
+        Self::instantiate_prepared_recoverable_with_profile(
+            prepared,
+            coordinator,
+            EffectAdmissionProfile::Compatibility,
+        )
+    }
+
+    pub fn instantiate_prepared_recoverable_with_profile(
+        prepared: PreparedLogicalRequestComponent<P>,
+        coordinator: Coordinator<P>,
+        admission_profile: EffectAdmissionProfile,
     ) -> Result<Self, Box<(LogicalRequestAdapterError, Coordinator<P>)>> {
         if coordinator.state().component_digest != prepared.component_digest {
             return Err(Box::new((
@@ -194,7 +239,13 @@ where
                 )));
             }
         };
-        Ok(Self { store, instance, component_digest: prepared.component_digest, session_id: None })
+        Ok(Self {
+            store,
+            instance,
+            component_digest: prepared.component_digest,
+            session_id: None,
+            admission_profile,
+        })
     }
 
     pub const fn verified_component_digest(&self) -> Digest {
@@ -203,6 +254,10 @@ where
 
     pub fn runtime_identity(&self) -> RuntimeIdentity {
         Self::runtime_identity_static()
+    }
+
+    pub const fn admission_profile(&self) -> EffectAdmissionProfile {
+        self.admission_profile
     }
 
     pub fn coordinator(&self) -> &Coordinator<P> {
@@ -255,6 +310,7 @@ where
         &mut self,
         request: Vec<u8>,
     ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        self.require_compatibility_dispatch()?;
         self.execute(LogicalRequestOperation::Start { request })
     }
 
@@ -317,6 +373,15 @@ where
         &mut self,
         prepared: &PreparedLogicalRequestStart,
     ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        self.require_compatibility_dispatch()?;
+        self.review_prepared_start(prepared)?;
+        self.dispatch_reviewed_start(prepared)
+    }
+
+    fn review_prepared_start(
+        &self,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> Result<(), LogicalRequestAdapterError> {
         let current_digest = self
             .coordinator()
             .state_digest()
@@ -332,7 +397,15 @@ where
             return Err(LogicalRequestAdapterError::InvalidOperation);
         }
 
-        let result = self.start(prepared.request.clone())?;
+        Ok(())
+    }
+
+    fn dispatch_reviewed_start(
+        &mut self,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        let result = self
+            .execute_inner(LogicalRequestOperation::Start { request: prepared.request.clone() })?;
         if result.effect_operation_id != identity_string(prepared.effect_request.operation) {
             return Err(LogicalRequestAdapterError::InvalidCanonicalProfile);
         }
@@ -362,10 +435,32 @@ where
     where
         C: EffectClosureProvider,
     {
-        if !permit.authorizes(provider, prepared.effect_request()) {
-            return Err(LogicalRequestAdapterError::InvalidOperation);
+        if self.admission_profile != EffectAdmissionProfile::AdmissionRequired {
+            return Err(LogicalRequestAdapterError::AdmissionRequired);
         }
-        self.start_prepared(prepared)
+        let descriptor =
+            provider.descriptor().map_err(|_| LogicalRequestAdapterError::AdmissionRejected)?;
+        if !descriptor.admission_profile.satisfies(EffectAdmissionProfile::AdmissionRequired) {
+            return Err(LogicalRequestAdapterError::AdmissionRejected);
+        }
+        self.review_prepared_start(prepared)?;
+        let dispatch =
+            permit.consume(provider, prepared.effect_request()).map_err(|error| match error {
+                EffectDispatchAcquireError::BindingMismatch
+                | EffectDispatchAcquireError::Provider(_) => {
+                    LogicalRequestAdapterError::AdmissionRejected
+                }
+            })?;
+        let result = self.dispatch_reviewed_start(prepared);
+        let outcome = if result.is_ok() {
+            EffectDispatchOutcome::GuestReturned
+        } else {
+            EffectDispatchOutcome::GuestFailed
+        };
+        if dispatch.finish(outcome).is_err() {
+            return Err(LogicalRequestAdapterError::AdmissionOutcomeUnknown);
+        }
+        result
     }
 
     pub fn observe(
@@ -384,6 +479,16 @@ where
     }
 
     pub fn execute(
+        &mut self,
+        operation: LogicalRequestOperation,
+    ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
+        if matches!(operation, LogicalRequestOperation::Start { .. }) {
+            self.require_compatibility_dispatch()?;
+        }
+        self.execute_inner(operation)
+    }
+
+    fn execute_inner(
         &mut self,
         operation: LogicalRequestOperation,
     ) -> Result<LogicalRequestCallResult, LogicalRequestAdapterError> {
@@ -649,6 +754,14 @@ where
             ));
         }
         Ok(())
+    }
+
+    fn require_compatibility_dispatch(&self) -> Result<(), LogicalRequestAdapterError> {
+        if self.admission_profile == EffectAdmissionProfile::AdmissionRequired {
+            Err(LogicalRequestAdapterError::AdmissionRequired)
+        } else {
+            Ok(())
+        }
     }
 }
 

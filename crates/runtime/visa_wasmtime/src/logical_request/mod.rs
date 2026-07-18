@@ -11,6 +11,7 @@ pub use adapter::{
 pub use contract_core::DeliveryPolicy;
 pub use error::{LogicalRequestAdapterError, LogicalRequestFailure, LogicalRequestWorkloadFailure};
 pub use host::LogicalRequestStoreState;
+pub use substrate_api::EffectAdmissionProfile;
 pub use visa_component_adapter::{
     LOGICAL_REQUEST_COMPONENT_STATE_ENCODING, LogicalRequestComponentState,
     LogicalRequestStateCodecError, LogicalRequestWorkloadLifecycle, PortableLogicalRequestState,

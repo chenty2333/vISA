@@ -13,8 +13,9 @@ use joint_handoff_core::{
 };
 use serde::{Deserialize, Serialize};
 use substrate_api::{
-    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProtocolRange,
-    EffectClosureProvider, EffectClosureProviderDescriptor, EffectClosureProviderLimits,
+    EffectAdmissionProfile, EffectClosureAuthenticationProfile, EffectClosureCapabilities,
+    EffectClosureProtocolRange, EffectClosureProvider, EffectClosureProviderDescriptor,
+    EffectClosureProviderLimits, EffectDispatchOutcome, EffectRequestBinding,
 };
 use visa_conformance::{
     JointEffectClassification, JointEffectRecord, joint_classification_counts,
@@ -48,6 +49,34 @@ pub struct EffectPublicationRequest {
     pub record: ReferenceEffectRecord,
 }
 
+/// Provider-SPI registration envelope binding the frozen publication selector
+/// to the complete canonical effect request. This is deliberately local to the
+/// v2 preview SPI and does not add a field to joint-handoff wire v1.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectAdmissionRegistration {
+    binding: EffectRequestBinding,
+    publication: EffectPublicationRequest,
+}
+
+impl EffectAdmissionRegistration {
+    pub fn new(
+        effect: &EffectRequest,
+        publication: EffectPublicationRequest,
+    ) -> Result<Self, EffectPeerError> {
+        let binding =
+            EffectRequestBinding::from_effect(effect).map_err(|_| EffectPeerError::Integrity)?;
+        Ok(Self { binding, publication })
+    }
+
+    pub const fn binding(&self) -> EffectRequestBinding {
+        self.binding
+    }
+
+    pub const fn publication(&self) -> &EffectPublicationRequest {
+        &self.publication
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EffectPublicationResult {
     Published,
@@ -59,7 +88,7 @@ pub enum EffectPublicationResult {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReferenceRegisteredEffect {
     effect: EffectRequest,
-    registration: EffectPublicationRequest,
+    registration: EffectAdmissionRegistration,
     replay: bool,
 }
 
@@ -74,7 +103,7 @@ impl ReferenceRegisteredEffect {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReferencePreparedEffect {
     effect: EffectRequest,
-    registration: EffectPublicationRequest,
+    registration: EffectAdmissionRegistration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +119,16 @@ pub struct ReferenceEffectCommitEvidence {
     pub result: i64,
     pub domain_revision: u64,
     pub replay: bool,
+    effect: Identity,
+    binding: EffectRequestBinding,
+    dispatch_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectDispatchFence {
+    effect: Identity,
+    binding: EffectRequestBinding,
+    dispatch_generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -241,6 +280,7 @@ pub enum EffectPeerError {
     StaleEpoch,
     StaleFreezeGeneration,
     GateClosed,
+    Revoked,
     PublicationConflict,
     StepConflict,
     TokenMismatch,
@@ -319,6 +359,7 @@ struct FreezeSession {
 #[derive(Debug)]
 struct EffectPeerState {
     config: EffectPeerConfig,
+    admission_profile: EffectAdmissionProfile,
     next_sequence: u64,
     effects: BTreeMap<Identity, ReferenceEffectRecord>,
     admissions: BTreeMap<Identity, ReferenceAdmission>,
@@ -332,12 +373,23 @@ enum ReferenceAdmissionPhase {
     Committed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReferenceDispatchPhase {
+    Available,
+    Consumed,
+    GuestReturned,
+    GuestFailed,
+    Revoked,
+}
+
 #[derive(Clone, Debug)]
 struct ReferenceAdmission {
     effect: EffectRequest,
-    registration: EffectPublicationRequest,
+    registration: EffectAdmissionRegistration,
     phase: ReferenceAdmissionPhase,
     commit: Option<ReferenceEffectCommitMetadata>,
+    dispatch_generation: u64,
+    dispatch_phase: ReferenceDispatchPhase,
     outcome: Option<EffectOutcome>,
     completion: Option<ReferenceEffectCompletionRequest>,
 }
@@ -367,12 +419,24 @@ pub fn effect_receipt_issuer(
 
 impl ReferenceEffectPeer {
     pub fn new(config: EffectPeerConfig) -> Result<Self, EffectPeerError> {
+        Self::new_with_profile(config, EffectAdmissionProfile::Compatibility)
+    }
+
+    pub fn new_admission_required(config: EffectPeerConfig) -> Result<Self, EffectPeerError> {
+        Self::new_with_profile(config, EffectAdmissionProfile::AdmissionRequired)
+    }
+
+    fn new_with_profile(
+        config: EffectPeerConfig,
+        admission_profile: EffectAdmissionProfile,
+    ) -> Result<Self, EffectPeerError> {
         if !well_formed_config(config) {
             return Err(EffectPeerError::InvalidRequest);
         }
         Ok(Self {
             state: Mutex::new(EffectPeerState {
                 config,
+                admission_profile,
                 next_sequence: 0,
                 effects: BTreeMap::new(),
                 admissions: BTreeMap::new(),
@@ -386,6 +450,11 @@ impl ReferenceEffectPeer {
         request: EffectPublicationRequest,
     ) -> Result<EffectPublicationResult, EffectPeerError> {
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        if state.admission_profile == EffectAdmissionProfile::AdmissionRequired {
+            return Err(EffectPeerError::Unsupported(
+                "legacy effect publication is disabled by the admission-required profile",
+            ));
+        }
         validate_publication_request(&state.config, &request)?;
         if let Some(existing) = state.effects.get(&request.record.effect) {
             if existing == &request.record {
@@ -696,14 +765,27 @@ impl ReferenceEffectPeer {
         state.config.registry_instance = new_registry_instance;
         Ok(scope(&state.config))
     }
+
+    pub fn revoke_effect_dispatch(&self, effect: Identity) -> Result<(), EffectPeerError> {
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        let admission = state.admissions.get_mut(&effect).ok_or(EffectPeerError::StepConflict)?;
+        if admission.phase != ReferenceAdmissionPhase::Committed
+            || admission.dispatch_phase != ReferenceDispatchPhase::Available
+        {
+            return Err(EffectPeerError::StepConflict);
+        }
+        admission.dispatch_phase = ReferenceDispatchPhase::Revoked;
+        Ok(())
+    }
 }
 
 impl EffectClosureProvider for ReferenceEffectPeer {
-    type RegistrationRequest = EffectPublicationRequest;
+    type RegistrationRequest = EffectAdmissionRegistration;
     type Registered = ReferenceRegisteredEffect;
     type Prepared = ReferencePreparedEffect;
     type CommitMetadata = ReferenceEffectCommitMetadata;
     type CommitEvidence = ReferenceEffectCommitEvidence;
+    type DispatchFence = ReferenceEffectDispatchFence;
     type OutcomeEvidence = ReferenceEffectOutcomeEvidence;
     type CompletionRequest = ReferenceEffectCompletionRequest;
     type CompletionEvidence = ReferenceEffectCompletionEvidence;
@@ -711,8 +793,11 @@ impl EffectClosureProvider for ReferenceEffectPeer {
     type Error = EffectPeerError;
 
     fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
+        let admission_profile =
+            self.state.lock().map_err(|_| EffectPeerError::Integrity)?.admission_profile;
         Ok(EffectClosureProviderDescriptor {
             protocol: EffectClosureProtocolRange::v2_preview(),
+            admission_profile,
             capabilities: EffectClosureCapabilities {
                 effect_admission: true,
                 outcome_recording: true,
@@ -740,13 +825,16 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         effect: &EffectRequest,
         request: &Self::RegistrationRequest,
     ) -> Result<Self::Registered, Self::Error> {
-        validate_reference_admission_binding(effect, request)?;
+        if !request.binding.matches(effect).map_err(|_| EffectPeerError::Integrity)? {
+            return Err(EffectPeerError::InvalidRequest);
+        }
+        validate_reference_admission_binding(effect, &request.publication)?;
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
-        validate_publication_request(&state.config, request)?;
+        validate_publication_request(&state.config, &request.publication)?;
         if !gate_open(state.session.as_ref()) {
             return Err(EffectPeerError::GateClosed);
         }
-        if let Some(existing) = state.admissions.get(&request.record.effect) {
+        if let Some(existing) = state.admissions.get(&request.publication.record.effect) {
             return if existing.registration == *request && existing.effect == *effect {
                 Ok(ReferenceRegisteredEffect {
                     effect: effect.clone(),
@@ -757,17 +845,20 @@ impl EffectClosureProvider for ReferenceEffectPeer {
                 Err(EffectPeerError::PublicationConflict)
             };
         }
-        if state.effects.contains_key(&request.record.effect) {
+        if state.effects.contains_key(&request.publication.record.effect) {
             return Err(EffectPeerError::PublicationConflict);
         }
-        state.effects.insert(request.record.effect, request.record.clone());
+        let dispatch_generation = state.config.scope_generation;
+        state.effects.insert(request.publication.record.effect, request.publication.record.clone());
         state.admissions.insert(
-            request.record.effect,
+            request.publication.record.effect,
             ReferenceAdmission {
                 effect: effect.clone(),
                 registration: request.clone(),
                 phase: ReferenceAdmissionPhase::Registered,
                 commit: None,
+                dispatch_generation,
+                dispatch_phase: ReferenceDispatchPhase::Available,
                 outcome: None,
                 completion: None,
             },
@@ -784,16 +875,24 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         effect: &EffectRequest,
         registered: &Self::Registered,
     ) -> Result<Self::Prepared, Self::Error> {
-        validate_reference_admission_binding(effect, &registered.registration)?;
+        validate_reference_admission_binding(effect, &registered.registration.publication)?;
+        if !registered
+            .registration
+            .binding
+            .matches(effect)
+            .map_err(|_| EffectPeerError::Integrity)?
+        {
+            return Err(EffectPeerError::PublicationConflict);
+        }
         if registered.effect != *effect {
             return Err(EffectPeerError::PublicationConflict);
         }
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
-        validate_publication_request(&state.config, &registered.registration)?;
+        validate_publication_request(&state.config, &registered.registration.publication)?;
         if !gate_open(state.session.as_ref()) {
             return Err(EffectPeerError::GateClosed);
         }
-        match state.admissions.get_mut(&registered.registration.record.effect) {
+        match state.admissions.get_mut(&registered.registration.publication.record.effect) {
             Some(admission)
                 if admission.registration == registered.registration
                     && admission.effect == *effect =>
@@ -817,7 +916,10 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         prepared: &Self::Prepared,
         metadata: &Self::CommitMetadata,
     ) -> Result<Self::CommitEvidence, Self::Error> {
-        validate_reference_admission_binding(effect, &prepared.registration)?;
+        validate_reference_admission_binding(effect, &prepared.registration.publication)?;
+        if !prepared.registration.binding.matches(effect).map_err(|_| EffectPeerError::Integrity)? {
+            return Err(EffectPeerError::PublicationConflict);
+        }
         if prepared.effect != *effect {
             return Err(EffectPeerError::PublicationConflict);
         }
@@ -826,11 +928,15 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         }
 
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
-        validate_publication_request(&state.config, &prepared.registration)?;
+        validate_publication_request(&state.config, &prepared.registration.publication)?;
+        if metadata.domain_revision != state.config.scope_generation {
+            return Err(EffectPeerError::StaleScope);
+        }
         if !gate_open(state.session.as_ref()) {
             return Err(EffectPeerError::GateClosed);
         }
-        let replay = match state.admissions.get_mut(&prepared.registration.record.effect) {
+        let effect_identity = prepared.registration.publication.record.effect;
+        let replay = match state.admissions.get_mut(&effect_identity) {
             Some(admission)
                 if admission.registration == prepared.registration
                     && admission.effect == *effect =>
@@ -859,7 +965,86 @@ impl EffectClosureProvider for ReferenceEffectPeer {
             result: metadata.result,
             domain_revision: metadata.domain_revision,
             replay,
+            effect: effect_identity,
+            binding: prepared.registration.binding,
+            dispatch_generation: state.config.scope_generation,
         })
+    }
+
+    fn consume_committed_effect(
+        &self,
+        effect: &EffectRequest,
+        evidence: &Self::CommitEvidence,
+    ) -> Result<Self::DispatchFence, Self::Error> {
+        if !evidence.binding.matches(effect).map_err(|_| EffectPeerError::Integrity)? {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        if state.admission_profile != EffectAdmissionProfile::AdmissionRequired {
+            return Err(EffectPeerError::Unsupported(
+                "dispatch consumption requires the admission-required profile",
+            ));
+        }
+        if evidence.dispatch_generation != state.config.scope_generation {
+            return Err(EffectPeerError::StaleScope);
+        }
+        let admission =
+            state.admissions.get_mut(&evidence.effect).ok_or(EffectPeerError::StepConflict)?;
+        if admission.effect != *effect
+            || admission.registration.binding != evidence.binding
+            || admission.phase != ReferenceAdmissionPhase::Committed
+            || admission.commit
+                != Some(ReferenceEffectCommitMetadata {
+                    result: evidence.result,
+                    domain_revision: evidence.domain_revision,
+                })
+            || admission.dispatch_generation != evidence.dispatch_generation
+        {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        match admission.dispatch_phase {
+            ReferenceDispatchPhase::Available => {
+                admission.dispatch_phase = ReferenceDispatchPhase::Consumed;
+            }
+            ReferenceDispatchPhase::Revoked => return Err(EffectPeerError::Revoked),
+            ReferenceDispatchPhase::Consumed
+            | ReferenceDispatchPhase::GuestReturned
+            | ReferenceDispatchPhase::GuestFailed => return Err(EffectPeerError::StepConflict),
+        }
+        Ok(ReferenceEffectDispatchFence {
+            effect: evidence.effect,
+            binding: evidence.binding,
+            dispatch_generation: evidence.dispatch_generation,
+        })
+    }
+
+    fn finish_effect_dispatch(
+        &self,
+        effect: &EffectRequest,
+        fence: &Self::DispatchFence,
+        outcome: EffectDispatchOutcome,
+    ) -> Result<(), Self::Error> {
+        if !fence.binding.matches(effect).map_err(|_| EffectPeerError::Integrity)? {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        if fence.dispatch_generation != state.config.scope_generation {
+            return Err(EffectPeerError::StaleScope);
+        }
+        let admission =
+            state.admissions.get_mut(&fence.effect).ok_or(EffectPeerError::StepConflict)?;
+        if admission.effect != *effect
+            || admission.registration.binding != fence.binding
+            || admission.dispatch_generation != fence.dispatch_generation
+            || admission.dispatch_phase != ReferenceDispatchPhase::Consumed
+        {
+            return Err(EffectPeerError::StepConflict);
+        }
+        admission.dispatch_phase = match outcome {
+            EffectDispatchOutcome::GuestReturned => ReferenceDispatchPhase::GuestReturned,
+            EffectDispatchOutcome::GuestFailed => ReferenceDispatchPhase::GuestFailed,
+        };
+        Ok(())
     }
 
     fn record_effect_outcome(
@@ -868,7 +1053,18 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         committed: &Self::CommitEvidence,
         outcome: &EffectOutcome,
     ) -> Result<Self::OutcomeEvidence, Self::Error> {
+        if !committed.binding.matches(effect).map_err(|_| EffectPeerError::Integrity)? {
+            return Err(EffectPeerError::PublicationConflict);
+        }
         let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        if state.admission_profile != EffectAdmissionProfile::AdmissionRequired {
+            return Err(EffectPeerError::Unsupported(
+                "outcome recording requires the admission-required profile",
+            ));
+        }
+        if committed.dispatch_generation != state.config.scope_generation {
+            return Err(EffectPeerError::StaleScope);
+        }
         let effect_id = reference_admission_key(&state.admissions, effect)?
             .ok_or(EffectPeerError::StepConflict)?;
         let outcome_digest = canonical_digest(outcome).map_err(|_| EffectPeerError::Integrity)?;
@@ -881,6 +1077,9 @@ impl EffectClosureProvider for ReferenceEffectPeer {
             if admission.phase != ReferenceAdmissionPhase::Committed
                 || committed.result != metadata.result
                 || committed.domain_revision != metadata.domain_revision
+                || committed.effect != effect_id
+                || committed.binding != admission.registration.binding
+                || committed.dispatch_generation != admission.dispatch_generation
             {
                 return Err(EffectPeerError::StepConflict);
             }
@@ -888,6 +1087,9 @@ impl EffectClosureProvider for ReferenceEffectPeer {
                 Some(existing) if existing == outcome => true,
                 Some(_) => return Err(EffectPeerError::PublicationConflict),
                 None => {
+                    if admission.dispatch_phase != ReferenceDispatchPhase::GuestReturned {
+                        return Err(EffectPeerError::StepConflict);
+                    }
                     admission.outcome = Some(outcome.clone());
                     false
                 }

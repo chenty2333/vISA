@@ -25,9 +25,9 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use substrate_api::{
-    AuthorityPolicy, AuthorityPort, EffectAdmissionSession, EffectClosureAuthenticationProfile,
-    EffectClosureCapabilities, EffectClosureProviderLimits, EffectClosureProviderRequirements,
-    JournalScope,
+    AuthorityPolicy, AuthorityPort, EffectAdmissionProfile, EffectAdmissionSession,
+    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProviderLimits,
+    EffectClosureProviderRequirements, JournalScope,
 };
 use substrate_host::{
     FaultPoint, LoopbackLogicalPeer, LoopbackLogicalPeerBehavior, SqliteProvider,
@@ -55,13 +55,13 @@ use visa_wasmtime::{
 };
 
 use crate::{
-    EffectCloseRequest, EffectCloseResult, EffectFreezeRequest, EffectFreezeResult, EffectPeer,
-    EffectPeerConfig, EffectPeerError, EffectPublicationRequest, LostAckProjectionLog,
-    NativeJsonlExchange, NativeResponseLossObservation, NexusProcessQualificationInputs,
-    OwnershipCommitRequest, OwnershipLogError, OwnershipQuery, OwnershipReserveRequest,
-    OwnershipSealRequest, ProcessEffectPeer, ProcessEffectPeerIdentity, ProcessLiveEffectAdvance,
-    ProcessLiveEffectCommitMetadata, ProcessLiveEffectPhase, ReferenceOwnershipLog,
-    SqliteJointProjectionLog, admission_component, effect_receipt_issuer,
+    EffectAdmissionRegistration, EffectCloseRequest, EffectCloseResult, EffectFreezeRequest,
+    EffectFreezeResult, EffectPeer, EffectPeerConfig, EffectPeerError, EffectPublicationRequest,
+    LostAckProjectionLog, NativeJsonlExchange, NativeResponseLossObservation,
+    NexusProcessQualificationInputs, OwnershipCommitRequest, OwnershipLogError, OwnershipQuery,
+    OwnershipReserveRequest, OwnershipSealRequest, ProcessEffectPeer, ProcessEffectPeerIdentity,
+    ProcessLiveEffectAdvance, ProcessLiveEffectCommitMetadata, ProcessLiveEffectPhase,
+    ReferenceOwnershipLog, SqliteJointProjectionLog, admission_component, effect_receipt_issuer,
     nexus_effect_wire::{PeerCommand, PeerRequest},
     ownership_receipt_issuer,
     process_effect_peer::validate_native_jsonl_chain,
@@ -460,6 +460,14 @@ struct AdmissionSetup {
 
 impl AdmissionSetup {
     fn create(root: &Path, run: Identity) -> Result<Self, String> {
+        Self::create_with_source_fault(root, run, FaultPoint::AfterLogicalRequestSend)
+    }
+
+    fn create_with_source_fault(
+        root: &Path,
+        run: Identity,
+        source_fault: FaultPoint,
+    ) -> Result<Self, String> {
         if run.is_zero() {
             return Err("admission fixture run identity is zero".to_owned());
         }
@@ -695,7 +703,7 @@ impl AdmissionSetup {
                 LOGICAL_PEER_CREDENTIAL,
             )
             .map_err(debug)?;
-        source_provider.inject_failure_once(FaultPoint::AfterLogicalRequestSend);
+        source_provider.inject_failure_once(source_fault);
 
         let fixture = AdmissionFixture {
             run_identity: run,
@@ -756,9 +764,12 @@ impl AdmissionSetup {
                 INITIAL_EPOCH,
             )
             .map_err(debug)?;
-        let mut source =
-            LogicalRequestAdapter::instantiate(admission_component::bytes(), coordinator)
-                .map_err(debug)?;
+        let mut source = LogicalRequestAdapter::instantiate_with_profile(
+            admission_component::bytes(),
+            coordinator,
+            EffectAdmissionProfile::AdmissionRequired,
+        )
+        .map_err(debug)?;
         source.activate("logical-request-admission:source-session").map_err(debug)?;
         Ok((self.fixture, source, self.destination_provider, self.logical_peer))
     }
@@ -896,9 +907,10 @@ impl VisaDestinationRuntime for AdmissionDestinationRuntime {
             let AdmissionDestinationState::Prepared(coordinator) = state else {
                 return Err(AdmissionDestinationRuntimeError::InvalidState);
             };
-            let mut adapter = match LogicalRequestAdapter::instantiate_recoverable(
+            let mut adapter = match LogicalRequestAdapter::instantiate_recoverable_with_profile(
                 admission_component::bytes(),
                 *coordinator,
+                EffectAdmissionProfile::AdmissionRequired,
             ) {
                 Ok(adapter) => adapter,
                 Err(failure) => {
@@ -1128,9 +1140,11 @@ impl AdmissionPrefix {
             tombstone_digest: None,
         };
         let registration = publication(&fixture, registered_record);
-        let process_peer =
-            ProcessEffectPeer::spawn(inputs.nexus.launch(), fixture.effect_config)
-                .map_err(|error| format!("spawn admission Nexus process peer: {error:?}"))?;
+        let process_peer = ProcessEffectPeer::spawn_admission_required(
+            inputs.nexus.launch(),
+            fixture.effect_config,
+        )
+        .map_err(|error| format!("spawn admission Nexus process peer: {error:?}"))?;
         let process_identity = process_peer.process_identity().map_err(debug)?;
         let admission = EffectAdmissionSession::new(&process_peer);
         let required_capabilities = EffectClosureCapabilities {
@@ -1149,15 +1163,19 @@ impl AdmissionPrefix {
                 max_request_bytes: 1,
                 max_receipt_bytes: 1,
             },
-        );
+        )
+        .require_admission();
         let descriptor = admission.descriptor().map_err(debug)?;
         if !descriptor.satisfies(requirements) {
             return Err(
                 "Nexus provider did not advertise the bounded v2-preview profile".to_owned()
             );
         }
+        let admission_registration =
+            EffectAdmissionRegistration::new(prepared_start.effect_request(), registration.clone())
+                .map_err(debug)?;
         let registered_admission = admission
-            .register(prepared_start.effect_request().clone(), registration.clone())
+            .register(prepared_start.effect_request().clone(), admission_registration)
             .map_err(|failure| format!("register admission effect: {:?}", failure.error()))?;
         let registered = registered_admission.provider_state().clone();
         require_advance(&registered, ProcessLiveEffectPhase::Registered, 1, false)?;
@@ -3009,9 +3027,13 @@ mod tests {
     };
 
     use contract_core::state_digest;
+    use substrate_api::EffectDispatchAcquireError;
+    use visa_profile::LogicalRequestOperation;
+    use visa_wasmtime::{LogicalRequestFailure, LogicalRequestWorkloadFailure};
 
     use super::*;
     use crate::{
+        ReferenceEffectCommitMetadata, ReferenceEffectPeer,
         nexus_effect_wire::{
             AUTHENTICATION_BOUNDARY, NativeHandoffStatus, NativeReceipt, NativeReceiptPayload,
             PeerRequest, PeerResponse, RECEIPT_SCHEMA, RESPONSE_SCHEMA, ReceiptDigestInput,
@@ -3041,6 +3063,45 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn reference_registration(
+        fixture: &AdmissionFixture,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> EffectPublicationRequest {
+        publication(
+            fixture,
+            JointEffectRecord {
+                effect: fixture.logical_request.operation_id,
+                operation: prepared.effect_request().operation,
+                domain: LOGICAL_REQUEST_EXTENSION_ID,
+                binding_generation: fixture.effect_config.scope_generation,
+                classification: JointEffectClassification::Registered,
+                outcome_digest: None,
+                tombstone_digest: None,
+            },
+        )
+    }
+
+    fn reference_permit<'a>(
+        peer: &'a ReferenceEffectPeer,
+        fixture: &AdmissionFixture,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> substrate_api::CommittedEffectPermit<'a, ReferenceEffectPeer> {
+        let registration = reference_registration(fixture, prepared);
+        EffectAdmissionSession::new(peer)
+            .register(
+                prepared.effect_request().clone(),
+                EffectAdmissionRegistration::new(prepared.effect_request(), registration).unwrap(),
+            )
+            .unwrap_or_else(|failure| panic!("register failed: {:?}", failure.error()))
+            .prepare()
+            .unwrap_or_else(|failure| panic!("prepare failed: {:?}", failure.error()))
+            .commit(ReferenceEffectCommitMetadata {
+                result: 0,
+                domain_revision: fixture.effect_config.scope_generation,
+            })
+            .unwrap_or_else(|failure| panic!("commit failed: {:?}", failure.error()))
     }
 
     fn rehashed_native_chain(
@@ -3255,6 +3316,59 @@ mod tests {
         let sidecar = sqlite_sidecars(&path)[0].clone();
         symlink(sidecar_root.0.join("missing-sidecar-target"), &sidecar).unwrap();
         assert!(audit_database(&path, 0, checkpoint).is_err());
+    }
+
+    #[test]
+    fn admission_required_runtime_rejects_all_legacy_start_bypasses() {
+        let root = TestRoot::new("raw-start-bypass");
+        let setup = AdmissionSetup::create(&root.0, Identity::from_u128(91_050)).unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        assert_eq!(source.admission_profile(), EffectAdmissionProfile::AdmissionRequired);
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+
+        assert_eq!(
+            source.start(fixture.request.clone()),
+            Err(LogicalRequestAdapterError::AdmissionRequired)
+        );
+        assert_eq!(
+            source.execute(LogicalRequestOperation::Start { request: fixture.request.clone() }),
+            Err(LogicalRequestAdapterError::AdmissionRequired)
+        );
+        assert_eq!(
+            source.start_prepared(&prepared),
+            Err(LogicalRequestAdapterError::AdmissionRequired)
+        );
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn guest_failure_closes_the_consumed_fence_and_forbids_retry_dispatch() {
+        let root = TestRoot::new("guest-failure-fence");
+        let setup = AdmissionSetup::create_with_source_fault(
+            &root.0,
+            Identity::from_u128(91_051),
+            FaultPoint::BeforeLogicalRequestIo,
+        )
+        .unwrap();
+        let (fixture, mut source, _destination, logical_peer) = setup.into_active_source().unwrap();
+        let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+        let peer = ReferenceEffectPeer::new_admission_required(fixture.effect_config).unwrap();
+        let permit = reference_permit(&peer, &fixture, &prepared);
+        let duplicate = reference_permit(&peer, &fixture, &prepared);
+
+        assert!(matches!(
+            source.start_admitted(&prepared, &peer, permit),
+            Err(LogicalRequestAdapterError::Workload(LogicalRequestWorkloadFailure::Request(
+                LogicalRequestFailure::Unavailable
+            )))
+        ));
+        assert_eq!(logical_peer.request_count(), 0);
+        assert_eq!(logical_peer.execution_count(), 0);
+        assert!(matches!(
+            duplicate.consume(&peer, prepared.effect_request()),
+            Err(EffectDispatchAcquireError::Provider(EffectPeerError::StepConflict))
+        ));
     }
 
     #[test]

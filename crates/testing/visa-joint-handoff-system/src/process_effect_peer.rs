@@ -17,8 +17,9 @@ use joint_handoff_core::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use substrate_api::{
-    EffectClosureAuthenticationProfile, EffectClosureCapabilities, EffectClosureProtocolRange,
-    EffectClosureProvider, EffectClosureProviderDescriptor, EffectClosureProviderLimits,
+    EffectAdmissionProfile, EffectClosureAuthenticationProfile, EffectClosureCapabilities,
+    EffectClosureProtocolRange, EffectClosureProvider, EffectClosureProviderDescriptor,
+    EffectClosureProviderLimits, EffectDispatchOutcome, EffectRequestBinding,
 };
 use visa_conformance::{
     JointEffectClassification, joint_classification_counts, joint_classification_root,
@@ -26,9 +27,10 @@ use visa_conformance::{
 };
 
 use crate::{
-    EffectCloseRequest, EffectCloseResult, EffectFreezeRequest, EffectFreezeResult,
-    EffectFreezeToken, EffectPeer, EffectPeerConfig, EffectPeerError, EffectPeerQuery,
-    EffectPublicationRequest, EffectPublicationResult, EffectThawRequest, ReferenceEffectRecord,
+    EffectAdmissionRegistration, EffectCloseRequest, EffectCloseResult, EffectFreezeRequest,
+    EffectFreezeResult, EffectFreezeToken, EffectPeer, EffectPeerConfig, EffectPeerError,
+    EffectPeerQuery, EffectPublicationRequest, EffectPublicationResult, EffectThawRequest,
+    ReferenceEffectRecord,
     nexus_effect_wire::{
         AUTHENTICATION_BOUNDARY, CommitEffect, CompleteEffect, CrashService, EffectSelector,
         NativeHandoffStatus, NativeOwnershipDecision, NativePrepareIntent, NativeReadiness,
@@ -207,6 +209,15 @@ pub struct ProcessLiveEffectAdvance {
     verified_commit: Option<ProcessLiveEffectVerifiedCommit>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessLiveEffectDispatchFence {
+    effect: Identity,
+    binding: EffectRequestBinding,
+    native_effect_generation: u64,
+    binding_epoch: u64,
+    commit_sequence: u64,
+}
+
 impl ProcessLiveEffectAdvance {
     pub const fn token(&self) -> &ProcessLiveEffectToken {
         &self.token
@@ -351,6 +362,7 @@ struct ProcessEffectPeerState {
     launch: ProcessEffectPeerLaunch,
     identity: Option<ProcessEffectPeerIdentity>,
     config: EffectPeerConfig,
+    admission_profile: EffectAdmissionProfile,
     native_binding_epoch: u64,
     native_supervisor_id: u64,
     native_supervisor_generation: u64,
@@ -403,6 +415,7 @@ struct ProcessFreeze {
 #[derive(Clone)]
 struct ProcessLiveEffect {
     effect_request: Option<EffectRequest>,
+    effect_binding: Option<EffectRequestBinding>,
     registration: EffectPublicationRequest,
     native_client_effect: u64,
     native_effect_id: u64,
@@ -411,11 +424,21 @@ struct ProcessLiveEffect {
     prepared: Option<ProcessLiveEffectAdvance>,
     commit_request: Option<ProcessLiveEffectCommitMetadata>,
     committed: Option<ProcessLiveEffectAdvance>,
+    dispatch_phase: ProcessLiveDispatchPhase,
     outcome_request: Option<EffectPublicationRequest>,
     outcome_value: Option<EffectOutcome>,
     outcome: Option<ProcessLiveEffectAdvance>,
     completion_request: Option<ProcessEffectCompletionRequest>,
     completion: Option<ProcessEffectCompletionEvidence>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcessLiveDispatchPhase {
+    Available,
+    Consumed,
+    GuestReturned,
+    GuestFailed,
+    Revoked,
 }
 
 #[derive(Clone)]
@@ -445,6 +468,21 @@ impl ProcessEffectPeer {
         launch: ProcessEffectPeerLaunch,
         config: EffectPeerConfig,
     ) -> Result<Self, EffectPeerError> {
+        Self::spawn_with_profile(launch, config, EffectAdmissionProfile::Compatibility)
+    }
+
+    pub fn spawn_admission_required(
+        launch: ProcessEffectPeerLaunch,
+        config: EffectPeerConfig,
+    ) -> Result<Self, EffectPeerError> {
+        Self::spawn_with_profile(launch, config, EffectAdmissionProfile::AdmissionRequired)
+    }
+
+    fn spawn_with_profile(
+        launch: ProcessEffectPeerLaunch,
+        config: EffectPeerConfig,
+        admission_profile: EffectAdmissionProfile,
+    ) -> Result<Self, EffectPeerError> {
         validate_launch(&launch)?;
         let native_config = native_config(config)?;
         let mut child = Command::new(&launch.executable)
@@ -462,6 +500,7 @@ impl ProcessEffectPeer {
             launch,
             identity: None,
             config,
+            admission_profile,
             native_binding_epoch: native_config.binding_epoch,
             native_supervisor_id: native_config.supervisor_id,
             native_supervisor_generation: native_config.supervisor_generation,
@@ -662,6 +701,29 @@ impl ProcessEffectPeer {
         state.record_live_effect_outcome(token, request)
     }
 
+    /// Revoke a committed-but-not-consumed dispatch authorization. This is a
+    /// bounded adapter control used to exercise the provider-side TOCTOU fence;
+    /// it does not add a command to the frozen native wire v1.
+    pub fn revoke_live_effect_dispatch(
+        &self,
+        token: &ProcessLiveEffectToken,
+    ) -> Result<(), EffectPeerError> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        let live =
+            state.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
+        let committed = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
+        state.require_live_token(&live, token, committed.token())?;
+        if live.dispatch_phase != ProcessLiveDispatchPhase::Available {
+            return Err(EffectPeerError::StepConflict);
+        }
+        state
+            .live_effects
+            .get_mut(&token.effect)
+            .ok_or(EffectPeerError::Integrity)?
+            .dispatch_phase = ProcessLiveDispatchPhase::Revoked;
+        Ok(())
+    }
+
     pub fn crash_and_rebind_service(
         &self,
         replacement_supervisor: Identity,
@@ -673,11 +735,12 @@ impl ProcessEffectPeer {
 }
 
 impl EffectClosureProvider for ProcessEffectPeer {
-    type RegistrationRequest = EffectPublicationRequest;
+    type RegistrationRequest = EffectAdmissionRegistration;
     type Registered = ProcessLiveEffectAdvance;
     type Prepared = ProcessLiveEffectAdvance;
     type CommitMetadata = ProcessLiveEffectCommitMetadata;
     type CommitEvidence = ProcessLiveEffectAdvance;
+    type DispatchFence = ProcessLiveEffectDispatchFence;
     type OutcomeEvidence = ProcessLiveEffectAdvance;
     type CompletionRequest = ProcessEffectCompletionRequest;
     type CompletionEvidence = ProcessEffectCompletionEvidence;
@@ -685,8 +748,11 @@ impl EffectClosureProvider for ProcessEffectPeer {
     type Error = EffectPeerError;
 
     fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
+        let admission_profile =
+            self.inner.lock().map_err(|_| EffectPeerError::Integrity)?.admission_profile;
         Ok(EffectClosureProviderDescriptor {
             protocol: EffectClosureProtocolRange::v2_preview(),
+            admission_profile,
             capabilities: EffectClosureCapabilities {
                 effect_admission: true,
                 outcome_recording: true,
@@ -716,14 +782,15 @@ impl EffectClosureProvider for ProcessEffectPeer {
         effect: &EffectRequest,
         request: &Self::RegistrationRequest,
     ) -> Result<Self::Registered, Self::Error> {
-        if request.record.operation != effect.operation
-            || request.source_epoch != effect.lease_epoch
-            || request.key.source != effect.node
+        if !request.binding().matches(effect).map_err(|_| EffectPeerError::Integrity)?
+            || request.publication().record.operation != effect.operation
+            || request.publication().source_epoch != effect.lease_epoch
+            || request.publication().key.source != effect.node
         {
             return Err(EffectPeerError::InvalidRequest);
         }
         let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
-        state.register_live_effect(Some(effect), request.clone())
+        state.register_live_effect(Some(effect), request.publication().clone())
     }
 
     fn prepare_effect(
@@ -743,8 +810,30 @@ impl EffectClosureProvider for ProcessEffectPeer {
         metadata: &Self::CommitMetadata,
     ) -> Result<Self::CommitEvidence, Self::Error> {
         let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        if metadata.domain_revision != state.config.scope_generation {
+            return Err(EffectPeerError::StaleScope);
+        }
         state.require_provider_effect(effect, prepared.token())?;
         state.commit_live_effect(prepared.token(), *metadata)
+    }
+
+    fn consume_committed_effect(
+        &self,
+        effect: &EffectRequest,
+        evidence: &Self::CommitEvidence,
+    ) -> Result<Self::DispatchFence, Self::Error> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.consume_committed_effect(effect, evidence)
+    }
+
+    fn finish_effect_dispatch(
+        &self,
+        effect: &EffectRequest,
+        fence: &Self::DispatchFence,
+        outcome: EffectDispatchOutcome,
+    ) -> Result<(), Self::Error> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.finish_effect_dispatch(effect, fence, outcome)
     }
 
     fn record_effect_outcome(
@@ -840,6 +929,11 @@ impl ProcessEffectPeerState {
         &mut self,
         request: EffectPublicationRequest,
     ) -> Result<EffectPublicationResult, EffectPeerError> {
+        if self.admission_profile == EffectAdmissionProfile::AdmissionRequired {
+            return Err(EffectPeerError::Unsupported(
+                "legacy effect publication is disabled by the admission-required profile",
+            ));
+        }
         validate_publication(self.config, &request)?;
         if self.pending_live_registration.is_some()
             || self.live_effects.contains_key(&request.record.effect)
@@ -937,7 +1031,18 @@ impl ProcessEffectPeerState {
         effect_request: Option<&EffectRequest>,
         request: EffectPublicationRequest,
     ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        if self.admission_profile == EffectAdmissionProfile::AdmissionRequired
+            && effect_request.is_none()
+        {
+            return Err(EffectPeerError::Unsupported(
+                "raw staged registration is disabled by the admission-required profile",
+            ));
+        }
         validate_live_registration(self.config, &request)?;
+        let effect_binding = effect_request
+            .map(EffectRequestBinding::from_effect)
+            .transpose()
+            .map_err(|_| EffectPeerError::Integrity)?;
         let request_digest = live_registration_digest(&request)?;
         if let Some(existing) = self.live_effects.get(&request.record.effect) {
             return if existing.registration == request
@@ -1024,7 +1129,7 @@ impl ProcessEffectPeerState {
         )?;
         let token = self.mint_live_token(
             &request,
-            client_effect,
+            effect_binding,
             native_effect_id,
             native_effect_generation,
             ProcessLiveEffectPhase::Registered,
@@ -1040,6 +1145,7 @@ impl ProcessEffectPeerState {
             effect,
             ProcessLiveEffect {
                 effect_request: effect_request.cloned(),
+                effect_binding,
                 registration: request,
                 native_client_effect: client_effect,
                 native_effect_id,
@@ -1048,6 +1154,7 @@ impl ProcessEffectPeerState {
                 prepared: None,
                 commit_request: None,
                 committed: None,
+                dispatch_phase: ProcessLiveDispatchPhase::Available,
                 outcome_request: None,
                 outcome_value: None,
                 outcome: None,
@@ -1095,7 +1202,7 @@ impl ProcessEffectPeerState {
         }
         let next = self.mint_live_token(
             &live.registration,
-            live.native_client_effect,
+            live.effect_binding,
             live.native_effect_id,
             live.native_effect_generation,
             ProcessLiveEffectPhase::Prepared,
@@ -1153,7 +1260,7 @@ impl ProcessEffectPeerState {
         )?;
         let next = self.mint_live_token(
             &live.registration,
-            live.native_client_effect,
+            live.effect_binding,
             live.native_effect_id,
             live.native_effect_generation,
             ProcessLiveEffectPhase::CommittedAwaitingOutcome,
@@ -1170,6 +1277,95 @@ impl ProcessEffectPeerState {
         stored.commit_request = Some(metadata);
         stored.committed = Some(committed.clone());
         Ok(committed)
+    }
+
+    fn consume_committed_effect(
+        &mut self,
+        effect: &EffectRequest,
+        evidence: &ProcessLiveEffectAdvance,
+    ) -> Result<ProcessLiveEffectDispatchFence, EffectPeerError> {
+        if self.admission_profile != EffectAdmissionProfile::AdmissionRequired {
+            return Err(EffectPeerError::Unsupported(
+                "dispatch consumption requires the admission-required profile",
+            ));
+        }
+        let binding =
+            EffectRequestBinding::from_effect(effect).map_err(|_| EffectPeerError::Integrity)?;
+        let live = self
+            .live_effects
+            .get(&evidence.token.effect)
+            .cloned()
+            .ok_or(EffectPeerError::TokenMismatch)?;
+        let committed = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
+        self.require_provider_effect(effect, evidence.token())?;
+        self.require_live_token(&live, evidence.token(), committed.token())?;
+        let verified = committed.verified_commit().ok_or(EffectPeerError::Integrity)?;
+        if live.effect_binding != Some(binding)
+            || evidence.token != committed.token
+            || evidence.native_effect_id != committed.native_effect_id
+            || evidence.native_effect_generation != committed.native_effect_generation
+            || evidence.native_sequence != committed.native_sequence
+            || evidence.native_request_sha256 != committed.native_request_sha256
+            || evidence.native_receipt_sha256 != committed.native_receipt_sha256
+            || evidence.verified_commit != committed.verified_commit
+            || verified.native_effect_generation() != live.native_effect_generation
+            || verified.binding_epoch() != self.native_binding_epoch
+            || verified.commit_sequence() == 0
+        {
+            return Err(EffectPeerError::TokenMismatch);
+        }
+        match live.dispatch_phase {
+            ProcessLiveDispatchPhase::Available => {}
+            ProcessLiveDispatchPhase::Revoked => return Err(EffectPeerError::Revoked),
+            ProcessLiveDispatchPhase::Consumed
+            | ProcessLiveDispatchPhase::GuestReturned
+            | ProcessLiveDispatchPhase::GuestFailed => return Err(EffectPeerError::StepConflict),
+        }
+        let fence = ProcessLiveEffectDispatchFence {
+            effect: evidence.token.effect,
+            binding,
+            native_effect_generation: live.native_effect_generation,
+            binding_epoch: self.native_binding_epoch,
+            commit_sequence: verified.commit_sequence(),
+        };
+        self.live_effects
+            .get_mut(&fence.effect)
+            .ok_or(EffectPeerError::Integrity)?
+            .dispatch_phase = ProcessLiveDispatchPhase::Consumed;
+        Ok(fence)
+    }
+
+    fn finish_effect_dispatch(
+        &mut self,
+        effect: &EffectRequest,
+        fence: &ProcessLiveEffectDispatchFence,
+        outcome: EffectDispatchOutcome,
+    ) -> Result<(), EffectPeerError> {
+        let binding =
+            EffectRequestBinding::from_effect(effect).map_err(|_| EffectPeerError::Integrity)?;
+        if binding != fence.binding || fence.binding_epoch != self.native_binding_epoch {
+            return Err(EffectPeerError::TokenMismatch);
+        }
+        let live =
+            self.live_effects.get_mut(&fence.effect).ok_or(EffectPeerError::TokenMismatch)?;
+        let verified = live
+            .committed
+            .as_ref()
+            .and_then(ProcessLiveEffectAdvance::verified_commit)
+            .ok_or(EffectPeerError::Integrity)?;
+        if live.effect_request.as_ref() != Some(effect)
+            || live.effect_binding != Some(binding)
+            || live.native_effect_generation != fence.native_effect_generation
+            || verified.commit_sequence() != fence.commit_sequence
+            || live.dispatch_phase != ProcessLiveDispatchPhase::Consumed
+        {
+            return Err(EffectPeerError::StepConflict);
+        }
+        live.dispatch_phase = match outcome {
+            EffectDispatchOutcome::GuestReturned => ProcessLiveDispatchPhase::GuestReturned,
+            EffectDispatchOutcome::GuestFailed => ProcessLiveDispatchPhase::GuestFailed,
+        };
+        Ok(())
     }
 
     fn record_live_effect_outcome(
@@ -1191,6 +1387,11 @@ impl ProcessEffectPeerState {
             self.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
         let committed = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
         self.require_live_token(&live, token, &committed.token)?;
+        if live.effect_request.is_some()
+            && live.dispatch_phase != ProcessLiveDispatchPhase::GuestReturned
+        {
+            return Err(EffectPeerError::StepConflict);
+        }
         if let Some(outcome) = live.outcome {
             return if live.outcome_request.as_ref() == Some(&request)
                 && live.outcome_value == outcome_value
@@ -1203,7 +1404,7 @@ impl ProcessEffectPeerState {
         validate_live_outcome_identity(&live.registration, &request)?;
         let next = self.mint_live_token(
             &live.registration,
-            live.native_client_effect,
+            live.effect_binding,
             live.native_effect_id,
             live.native_effect_generation,
             ProcessLiveEffectPhase::OutcomeRecorded,
@@ -1905,12 +2106,13 @@ impl ProcessEffectPeerState {
     fn mint_live_token(
         &self,
         registration: &EffectPublicationRequest,
-        native_client_effect: u64,
+        effect_binding: Option<EffectRequestBinding>,
         native_effect_id: u64,
         native_effect_generation: u64,
         phase: ProcessLiveEffectPhase,
         advance: u64,
     ) -> Result<ProcessLiveEffectToken, EffectPeerError> {
+        let native_client_effect = compact_identity(b"client-effect", registration.record.effect);
         let mut digest = Sha256::new();
         digest.update(b"vISA ProcessEffectPeer live token v1");
         digest.update(self.live_token_domain.0);
@@ -1919,6 +2121,15 @@ impl ProcessEffectPeerState {
         digest.update(native_effect_generation.to_be_bytes());
         digest.update([live_phase_tag(phase)]);
         digest.update(advance.to_be_bytes());
+        match effect_binding {
+            Some(binding) => {
+                digest.update([1]);
+                digest.update(binding.operation.0);
+                digest.update(binding.idempotency_key.0);
+                digest.update(binding.canonical_digest.0);
+            }
+            None => digest.update([0]),
+        }
         digest.update(serde_json::to_vec(registration).map_err(|_| EffectPeerError::Integrity)?);
         Ok(ProcessLiveEffectToken {
             effect: registration.record.effect,
@@ -1936,7 +2147,7 @@ impl ProcessEffectPeerState {
     ) -> Result<(), EffectPeerError> {
         let reminted = self.mint_live_token(
             &live.registration,
-            live.native_client_effect,
+            live.effect_binding,
             live.native_effect_id,
             live.native_effect_generation,
             expected.phase,

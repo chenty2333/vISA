@@ -17,14 +17,15 @@ pub use adapter::{
 };
 pub use host::StoreState;
 pub use logical_request::{
-    ContinuityDisposition, DeliveryPolicy, LOGICAL_REQUEST_COMPONENT_STATE_ENCODING,
-    LogicalRequestAdapter, LogicalRequestAdapterError, LogicalRequestCallResult,
-    LogicalRequestComponentState, LogicalRequestFailure, LogicalRequestIdempotency,
-    LogicalRequestObservation, LogicalRequestOperation, LogicalRequestPhase,
-    LogicalRequestRejection, LogicalRequestReplay, LogicalRequestResult, LogicalRequestState,
-    LogicalRequestStateCodecError, LogicalRequestStoreState, LogicalRequestTransport,
-    LogicalRequestWorkloadFailure, LogicalRequestWorkloadLifecycle, LogicalResponseMetadata,
-    PortableLogicalRequestState, PreparedLogicalRequestComponent, PreparedLogicalRequestStart,
+    ContinuityDisposition, DeliveryPolicy, EffectAdmissionProfile,
+    LOGICAL_REQUEST_COMPONENT_STATE_ENCODING, LogicalRequestAdapter, LogicalRequestAdapterError,
+    LogicalRequestCallResult, LogicalRequestComponentState, LogicalRequestFailure,
+    LogicalRequestIdempotency, LogicalRequestObservation, LogicalRequestOperation,
+    LogicalRequestPhase, LogicalRequestRejection, LogicalRequestReplay, LogicalRequestResult,
+    LogicalRequestState, LogicalRequestStateCodecError, LogicalRequestStoreState,
+    LogicalRequestTransport, LogicalRequestWorkloadFailure, LogicalRequestWorkloadLifecycle,
+    LogicalResponseMetadata, PortableLogicalRequestState, PreparedLogicalRequestComponent,
+    PreparedLogicalRequestStart,
 };
 pub use regular_file::{
     FileDurability, FileLockState, PortableRegularFileState, PreparedRegularFileComponent,

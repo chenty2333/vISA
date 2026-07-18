@@ -1,7 +1,10 @@
 use alloc::boxed::Box;
 use core::ptr;
 
-use contract_core::{EffectOutcome, EffectRequest};
+use contract_core::{
+    Digest, EffectOutcome, EffectRequest, EncodeError, IdempotencyKey, Identity,
+    canonical_digest,
+};
 
 /// Preview protocol family for the provider-neutral effect-closure SPI.
 ///
@@ -10,6 +13,51 @@ use contract_core::{EffectOutcome, EffectRequest};
 /// receipt or state-machine transition.
 pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR: u16 = 2;
 pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR: u16 = 0;
+
+/// Whether one runtime/provider instance permits legacy effect bypasses.
+///
+/// `Compatibility` preserves the pre-admission Stage 3 entrypoints and is not
+/// an enforcement boundary. `AdmissionRequired` is the bounded v0.1 profile:
+/// every externally dispatched Start must consume a provider-validated commit
+/// fence, and legacy raw publication/dispatch entrypoints must reject it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EffectAdmissionProfile {
+    #[default]
+    Compatibility,
+    AdmissionRequired,
+}
+
+impl EffectAdmissionProfile {
+    pub const fn satisfies(self, required: Self) -> bool {
+        matches!(required, Self::Compatibility) || matches!(self, Self::AdmissionRequired)
+    }
+}
+
+/// Stable identity for one complete canonical [`EffectRequest`].
+///
+/// The explicit operation and idempotency identities support provider lookup;
+/// `canonical_digest` binds every remaining request field without extending or
+/// reinterpreting the frozen joint-handoff wire v1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EffectRequestBinding {
+    pub operation: Identity,
+    pub idempotency_key: IdempotencyKey,
+    pub canonical_digest: Digest,
+}
+
+impl EffectRequestBinding {
+    pub fn from_effect(effect: &EffectRequest) -> Result<Self, EncodeError> {
+        Ok(Self {
+            operation: effect.operation,
+            idempotency_key: effect.idempotency_key,
+            canonical_digest: canonical_digest(effect)?,
+        })
+    }
+
+    pub fn matches(self, effect: &EffectRequest) -> Result<bool, EncodeError> {
+        Ok(self == Self::from_effect(effect)?)
+    }
+}
 
 /// Inclusive protocol range implemented by one provider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +173,7 @@ impl EffectClosureProviderLimits {
 pub struct EffectClosureProviderRequirements {
     pub protocol_major: u16,
     pub protocol_minor: u16,
+    pub admission_profile: EffectAdmissionProfile,
     pub capabilities: EffectClosureCapabilities,
     pub minimum_authentication: EffectClosureAuthenticationProfile,
     pub minimum_limits: EffectClosureProviderLimits,
@@ -139,6 +188,7 @@ impl EffectClosureProviderRequirements {
         Self {
             protocol_major: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR,
             protocol_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR,
+            admission_profile: EffectAdmissionProfile::Compatibility,
             capabilities,
             minimum_authentication,
             minimum_limits,
@@ -148,12 +198,18 @@ impl EffectClosureProviderRequirements {
     pub const fn is_well_formed(self) -> bool {
         self.protocol_major != 0 && self.minimum_limits.is_well_formed()
     }
+
+    pub const fn require_admission(mut self) -> Self {
+        self.admission_profile = EffectAdmissionProfile::AdmissionRequired;
+        self
+    }
 }
 
 /// Capability and compatibility description returned by one live provider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectClosureProviderDescriptor {
     pub protocol: EffectClosureProtocolRange,
+    pub admission_profile: EffectAdmissionProfile,
     pub capabilities: EffectClosureCapabilities,
     pub authentication: EffectClosureAuthenticationProfile,
     pub limits: EffectClosureProviderLimits,
@@ -186,6 +242,7 @@ impl EffectClosureProviderDescriptor {
         self.is_well_formed()
             && requirements.is_well_formed()
             && self.protocol.supports(requirements.protocol_major, requirements.protocol_minor)
+            && self.admission_profile.satisfies(requirements.admission_profile)
             && self.capabilities.contains(requirements.capabilities)
             && self.authentication.satisfies(requirements.minimum_authentication)
             && self.limits.contains(requirements.minimum_limits)
@@ -203,6 +260,7 @@ pub trait EffectClosureProvider: Send + Sync {
     type Prepared;
     type CommitMetadata;
     type CommitEvidence;
+    type DispatchFence;
     type OutcomeEvidence;
     type CompletionRequest;
     type CompletionEvidence;
@@ -230,8 +288,34 @@ pub trait EffectClosureProvider: Send + Sync {
         metadata: &Self::CommitMetadata,
     ) -> Result<Self::CommitEvidence, Self::Error>;
 
+    /// Atomically validate and consume one committed dispatch authorization.
+    ///
+    /// Implementations must compare the complete canonical effect binding,
+    /// current provider generation/incarnation, revocation state, and prior
+    /// consumption state before returning a fence. A successful call is a
+    /// one-way transition: dropping the returned fence or losing its outcome
+    /// acknowledgement remains fail closed and must never re-open dispatch.
+    fn consume_committed_effect(
+        &self,
+        effect: &EffectRequest,
+        evidence: &Self::CommitEvidence,
+    ) -> Result<Self::DispatchFence, Self::Error>;
+
+    /// Record the bounded runtime outcome of one already-consumed dispatch.
+    ///
+    /// This closes only the local provider admission fence around the guest
+    /// call. It does not replace the canonical outcome transition below.
+    fn finish_effect_dispatch(
+        &self,
+        effect: &EffectRequest,
+        fence: &Self::DispatchFence,
+        outcome: EffectDispatchOutcome,
+    ) -> Result<(), Self::Error>;
+
     /// Record the canonical provider outcome without implying that the native
-    /// effect has completed or left the closure cohort.
+    /// effect has completed or left the closure cohort. Admission-required
+    /// providers must reject a first outcome until the dispatch fence has been
+    /// consumed and successfully closed.
     fn record_effect_outcome(
         &self,
         effect: &EffectRequest,
@@ -254,6 +338,60 @@ pub trait EffectClosureProvider: Send + Sync {
         &self,
         effect: &EffectRequest,
     ) -> Result<Option<Self::QueryObservation>, Self::Error>;
+}
+
+/// Bounded result of entering the guest after a provider commit was consumed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectDispatchOutcome {
+    GuestReturned,
+    GuestFailed,
+}
+
+/// Failure to turn a committed permit into a provider-consumed dispatch fence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EffectDispatchAcquireError<E> {
+    BindingMismatch,
+    Provider(E),
+}
+
+/// One provider-side consumed authorization awaiting a guest outcome.
+///
+/// There is deliberately no retry/clone surface. If this value is dropped or
+/// `finish` fails, provider state remains consumed and recovery must reconcile
+/// it out of band; a second local dispatch is forbidden.
+pub struct ConsumedEffectDispatch<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    provider: &'a P,
+    effect: EffectRequest,
+    commit_evidence: P::CommitEvidence,
+    fence: P::DispatchFence,
+}
+
+impl<'a, P> ConsumedEffectDispatch<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn effect(&self) -> &EffectRequest {
+        &self.effect
+    }
+
+    pub const fn provider_fence(&self) -> &P::DispatchFence {
+        &self.fence
+    }
+
+    pub fn finish(
+        self,
+        outcome: EffectDispatchOutcome,
+    ) -> Result<CommittedEffectPermit<'a, P>, P::Error> {
+        self.provider.finish_effect_dispatch(&self.effect, &self.fence, outcome)?;
+        Ok(CommittedEffectPermit {
+            provider: self.provider,
+            effect: self.effect,
+            commit_evidence: self.commit_evidence,
+        })
+    }
 }
 
 /// Registered provider state bound to one exact canonical effect request and
@@ -466,8 +604,25 @@ where
         &self.commit_evidence
     }
 
-    pub fn authorizes(&self, provider: &P, effect: &EffectRequest) -> bool {
-        ptr::eq(self.provider, provider) && self.effect == *effect
+    /// Consume this local permit only after the provider revalidates its live
+    /// state and mints a one-way dispatch fence.
+    pub fn consume(
+        self,
+        provider: &'a P,
+        effect: &EffectRequest,
+    ) -> Result<ConsumedEffectDispatch<'a, P>, EffectDispatchAcquireError<P::Error>> {
+        if !ptr::eq(self.provider, provider) || self.effect != *effect {
+            return Err(EffectDispatchAcquireError::BindingMismatch);
+        }
+        let fence = provider
+            .consume_committed_effect(&self.effect, &self.commit_evidence)
+            .map_err(EffectDispatchAcquireError::Provider)?;
+        Ok(ConsumedEffectDispatch {
+            provider,
+            effect: self.effect,
+            commit_evidence: self.commit_evidence,
+            fence,
+        })
     }
 
     pub fn record_outcome(
@@ -784,6 +939,7 @@ mod tests {
     struct FakeProvider {
         registration_attempts: AtomicUsize,
         commit_attempts: AtomicUsize,
+        dispatch_state: AtomicUsize,
         outcome_attempts: AtomicUsize,
         completion_attempts: AtomicUsize,
     }
@@ -793,10 +949,24 @@ mod tests {
             Self {
                 registration_attempts: AtomicUsize::new(0),
                 commit_attempts: AtomicUsize::new(0),
+                dispatch_state: AtomicUsize::new(0),
                 outcome_attempts: AtomicUsize::new(0),
                 completion_attempts: AtomicUsize::new(0),
             }
         }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct FakeCommitEvidence {
+        value: u64,
+        binding: EffectRequestBinding,
+        generation: u64,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct FakeDispatchFence {
+        binding: EffectRequestBinding,
+        generation: u64,
     }
 
     impl EffectClosureProvider for FakeProvider {
@@ -804,7 +974,8 @@ mod tests {
         type Registered = u64;
         type Prepared = u64;
         type CommitMetadata = String;
-        type CommitEvidence = u64;
+        type CommitEvidence = FakeCommitEvidence;
+        type DispatchFence = FakeDispatchFence;
         type OutcomeEvidence = bool;
         type CompletionRequest = u64;
         type CompletionEvidence = bool;
@@ -837,23 +1008,70 @@ mod tests {
 
         fn commit_effect(
             &self,
-            _effect: &EffectRequest,
+            effect: &EffectRequest,
             prepared: &Self::Prepared,
             metadata: &Self::CommitMetadata,
         ) -> Result<Self::CommitEvidence, Self::Error> {
             if self.commit_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
                 Err("acknowledgement-lost")
             } else {
-                Ok(prepared + metadata.parse::<u64>().map_err(|_| "invalid-metadata")?)
+                Ok(FakeCommitEvidence {
+                    value: prepared + metadata.parse::<u64>().map_err(|_| "invalid-metadata")?,
+                    binding: EffectRequestBinding::from_effect(effect)
+                        .map_err(|_| "invalid-effect")?,
+                    generation: 1,
+                })
             }
+        }
+
+        fn consume_committed_effect(
+            &self,
+            effect: &EffectRequest,
+            evidence: &Self::CommitEvidence,
+        ) -> Result<Self::DispatchFence, Self::Error> {
+            if !evidence.binding.matches(effect).map_err(|_| "invalid-effect")?
+                || evidence.generation != 1
+            {
+                return Err("stale-or-mismatched");
+            }
+            self.dispatch_state
+                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                .map_err(|_| "consumed-or-revoked")?;
+            Ok(FakeDispatchFence { binding: evidence.binding, generation: evidence.generation })
+        }
+
+        fn finish_effect_dispatch(
+            &self,
+            effect: &EffectRequest,
+            fence: &Self::DispatchFence,
+            outcome: EffectDispatchOutcome,
+        ) -> Result<(), Self::Error> {
+            if !fence.binding.matches(effect).map_err(|_| "invalid-effect")?
+                || fence.generation != 1
+            {
+                return Err("stale-or-mismatched");
+            }
+            let terminal = match outcome {
+                EffectDispatchOutcome::GuestReturned => 2,
+                EffectDispatchOutcome::GuestFailed => 3,
+            };
+            self.dispatch_state
+                .compare_exchange(1, terminal, Ordering::SeqCst, Ordering::SeqCst)
+                .map_err(|_| "not-consumed")?;
+            Ok(())
         }
 
         fn record_effect_outcome(
             &self,
-            _effect: &EffectRequest,
-            _committed: &Self::CommitEvidence,
+            effect: &EffectRequest,
+            committed: &Self::CommitEvidence,
             _outcome: &EffectOutcome,
         ) -> Result<Self::OutcomeEvidence, Self::Error> {
+            if !committed.binding.matches(effect).map_err(|_| "invalid-effect")?
+                || self.dispatch_state.load(Ordering::SeqCst) != 2
+            {
+                return Err("dispatch-not-successfully-closed");
+            }
             if self.outcome_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
                 Err("outcome-acknowledgement-lost")
             } else {
@@ -884,6 +1102,7 @@ mod tests {
     const fn descriptor() -> EffectClosureProviderDescriptor {
         EffectClosureProviderDescriptor {
             protocol: EffectClosureProtocolRange::v2_preview(),
+            admission_profile: EffectAdmissionProfile::AdmissionRequired,
             capabilities: EffectClosureCapabilities {
                 effect_admission: true,
                 outcome_recording: true,
@@ -1003,10 +1222,14 @@ mod tests {
             Err(_) => panic!("exact commit retry unexpectedly failed"),
         };
 
-        assert_eq!(*permit.commit_evidence(), 32);
-        assert!(permit.authorizes(&provider, &request));
-        assert!(!permit.authorizes(&other_provider, &request));
-        assert!(!permit.authorizes(&provider, &effect(9)));
+        assert_eq!(permit.commit_evidence().value, 32);
+        let dispatch = match permit.consume(&provider, &request) {
+            Ok(dispatch) => dispatch,
+            Err(_) => panic!("provider unexpectedly rejected the committed dispatch"),
+        };
+        assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 1);
+        assert!(dispatch.finish(EffectDispatchOutcome::GuestReturned).is_ok());
+        assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 2);
         assert_eq!(other_provider.commit_attempts.load(Ordering::Relaxed), 0);
     }
 
@@ -1062,6 +1285,11 @@ mod tests {
             .unwrap_or_else(|_| panic!("exact Commit retry unexpectedly failed"));
 
         let outcome = EffectOutcome::Indeterminate { evidence: None };
+        let committed = committed
+            .consume(&provider, &request)
+            .unwrap_or_else(|_| panic!("provider unexpectedly rejected dispatch"))
+            .finish(EffectDispatchOutcome::GuestReturned)
+            .unwrap_or_else(|_| panic!("provider unexpectedly rejected dispatch outcome"));
         let outcome_failure = match committed.record_outcome(outcome.clone()) {
             Ok(_) => panic!("the injected outcome acknowledgement loss unexpectedly succeeded"),
             Err(failure) => failure,

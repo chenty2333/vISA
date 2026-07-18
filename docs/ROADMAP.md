@@ -566,6 +566,18 @@ retained-device recovery, real OSTD/IRQ/SMP, reboot recovery, or cross-host
 execution. Native and neutral wire v1 remain frozen; new provider capabilities
 belong to v2 or an explicitly versioned extension.
 
+The bounded 0.1 implementation target now separates two explicit v2-preview
+profiles. `Compatibility` preserves the existing Stage 3 `start`,
+`execute(Start)`, `start_prepared`, and legacy effect-publication behavior and
+is therefore not an admission boundary. `AdmissionRequired` rejects those raw
+Start/publication paths, binds Register through dispatch to the complete
+canonical `EffectRequest` digest and identities, and requires the provider to
+consume a current, unrevoked generation fence before the guest call. The guest
+return/failure closes that consumed fence; a missing outcome acknowledgement
+remains consumed and fails closed rather than authorizing a retry. This is a
+bounded reference/process-adapter contract, not qualification of a production
+Nexus adapter, adversarial same-UID isolation, or general exactly-once effects.
+
 The standalone process publisher now owns a strict three-file
 manifest/report/executed-binary artifact; the supplemental logical publisher owns
 a strict five-file artifact including two SQLite databases and the same binary
