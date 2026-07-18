@@ -16,7 +16,7 @@ use visa_conformance::{
     JointEffectClassification, JointEffectRecord, RECORDED_NATIVE_EFFECT_REPLAY_SCHEMA,
     RecordedNativeEffectExchange, RecordedNativeEffectOperation, RecordedNativeEffectReplay,
     RecordedNativeExactReplay, effect_closure_descriptor_contract_vectors,
-    run_effect_closure_provider_contract, validate_recorded_native_effect_replay,
+    run_effect_closure_provider_contract_v2, validate_recorded_native_effect_replay,
 };
 
 use crate::{
@@ -150,9 +150,9 @@ fn classify_error(error: &EffectPeerError) -> EffectClosureConformanceErrorKind 
         | EffectPeerError::StaleFreezeGeneration => {
             EffectClosureConformanceErrorKind::StaleSelector
         }
-        EffectPeerError::InvalidRequest | EffectPeerError::PublicationConflict => {
-            EffectClosureConformanceErrorKind::Conflict
-        }
+        EffectPeerError::InvalidRequest
+        | EffectPeerError::PublicationConflict
+        | EffectPeerError::DispatchOutcomeConflict => EffectClosureConformanceErrorKind::Conflict,
         EffectPeerError::StepConflict => EffectClosureConformanceErrorKind::InvalidTransition,
         _ => EffectClosureConformanceErrorKind::Other,
     }
@@ -254,6 +254,13 @@ impl EffectClosureConformanceFixture<ReferenceEffectPeer> for ReferenceFixture<'
     ) -> Option<&'a EffectOutcome> {
         observation.outcome()
     }
+
+    fn observed_dispatch(
+        &self,
+        observation: &ReferenceEffectQueryObservation,
+    ) -> Option<EffectDispatchOutcome> {
+        observation.dispatch_outcome()
+    }
 }
 
 struct ProcessFixture<'a>(&'a SharedProviderFixture);
@@ -349,6 +356,13 @@ impl EffectClosureConformanceFixture<ProcessEffectPeer> for ProcessFixture<'_> {
         observation: &'a ProcessEffectQueryObservation,
     ) -> Option<&'a EffectOutcome> {
         observation.outcome()
+    }
+
+    fn observed_dispatch(
+        &self,
+        observation: &ProcessEffectQueryObservation,
+    ) -> Option<EffectDispatchOutcome> {
+        observation.dispatch_outcome()
     }
 }
 
@@ -584,8 +598,9 @@ fn reference_effect_peer_passes_the_shared_provider_harness() {
     let peer = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
     let other = ReferenceEffectPeer::new_admission_required(fixture.config).unwrap();
     let report =
-        run_effect_closure_provider_contract(&peer, &other, &ReferenceFixture(&fixture)).unwrap();
-    assert_eq!(report.observations(), visa_conformance::EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX);
+        run_effect_closure_provider_contract_v2(&peer, &other, &ReferenceFixture(&fixture))
+            .unwrap();
+    assert_eq!(report.observations(), visa_conformance::EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2);
     let query = crate::EffectPeer::query(&peer).unwrap();
     assert!(query.gate_open);
     assert_eq!(query.effect_count, 1);
@@ -608,13 +623,13 @@ fn process_effect_peer_passes_the_shared_provider_harness() {
         Err(EffectPeerError::Unsupported(_))
     ));
     let process_report =
-        run_effect_closure_provider_contract(&peer, &other, &ProcessFixture(&fixture)).unwrap();
+        run_effect_closure_provider_contract_v2(&peer, &other, &ProcessFixture(&fixture)).unwrap();
 
     let reference_fixture = shared_fixture(30_000);
     let reference = ReferenceEffectPeer::new_admission_required(reference_fixture.config).unwrap();
     let other_reference =
         ReferenceEffectPeer::new_admission_required(reference_fixture.config).unwrap();
-    let reference_report = run_effect_closure_provider_contract(
+    let reference_report = run_effect_closure_provider_contract_v2(
         &reference,
         &other_reference,
         &ReferenceFixture(&reference_fixture),

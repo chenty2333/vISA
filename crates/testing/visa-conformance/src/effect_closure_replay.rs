@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const EFFECT_CLOSURE_FAULT_MATRIX_SCHEMA: &str = "visa.effect-closure-provider-fault-matrix.v1";
+pub const EFFECT_CLOSURE_FAULT_MATRIX_V1_SCHEMA: &str =
+    "visa.effect-closure-provider-fault-matrix.v1";
+pub const EFFECT_CLOSURE_FAULT_MATRIX_V2_SCHEMA: &str =
+    "visa.effect-closure-provider-fault-matrix.v2";
+/// Historical schema alias retained for consumers of the 2.0 contract.
+pub const EFFECT_CLOSURE_FAULT_MATRIX_SCHEMA: &str = EFFECT_CLOSURE_FAULT_MATRIX_V1_SCHEMA;
 pub const RECORDED_NATIVE_EFFECT_REPLAY_SCHEMA: &str = "visa.recorded-native-effect-replay.v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +23,8 @@ pub enum EffectClosureContractExpectation {
     RejectedConflict,
     RejectedInvalidTransition,
     ObservedCommitted,
+    ObservedGuestReturnedDispatch,
+    ObservedGuestFailedDispatch,
     ObservedOutcomeRecorded,
     ObservedCompleted,
 }
@@ -29,7 +36,7 @@ pub struct EffectClosureFaultCase {
     pub expectation: EffectClosureContractExpectation,
 }
 
-pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
+pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V1: &[EffectClosureFaultCase] = &[
     case("descriptor", EffectClosureContractExpectation::Accepted),
     case("query-absent", EffectClosureContractExpectation::Absent),
     case("stale-selector", EffectClosureContractExpectation::RejectedStaleSelector),
@@ -66,7 +73,73 @@ pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
     case("replay-complete", EffectClosureContractExpectation::ExactReplay),
     case("conflicting-complete", EffectClosureContractExpectation::RejectedConflict),
     case("failed-dispatch", EffectClosureContractExpectation::PermitConsumed),
+    case(
+        "failed-dispatch-canonical-outcome",
+        EffectClosureContractExpectation::RejectedInvalidTransition,
+    ),
+    case("query-failed-dispatch", EffectClosureContractExpectation::ObservedCommitted),
+];
+
+/// Historical 2.0 matrix alias. It must never be reinterpreted in place.
+pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] =
+    EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V1;
+
+/// Protocol-2.1 contract, including terminal finish replay and a canonical
+/// outcome after either guest terminal result.
+pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2: &[EffectClosureFaultCase] = &[
+    case("descriptor", EffectClosureContractExpectation::Accepted),
+    case("query-absent", EffectClosureContractExpectation::Absent),
+    case("stale-selector", EffectClosureContractExpectation::RejectedStaleSelector),
+    case("initial-admission", EffectClosureContractExpectation::Applied),
+    case("query-committed", EffectClosureContractExpectation::ObservedCommitted),
+    case("permit-exact-effect", EffectClosureContractExpectation::Authorized),
+    case("permit-other-provider", EffectClosureContractExpectation::Denied),
+    case("permit-mutated-effect", EffectClosureContractExpectation::Denied),
+    case("dispatch-other-provider", EffectClosureContractExpectation::Denied),
+    case("dispatch-mutated-effect", EffectClosureContractExpectation::Denied),
+    case("exact-admission-replay", EffectClosureContractExpectation::ExactReplay),
+    case("alias-publication-id", EffectClosureContractExpectation::RejectedConflict),
+    case("mutated-same-operation-lane", EffectClosureContractExpectation::RejectedConflict),
+    case("mutated-same-idempotency-lane", EffectClosureContractExpectation::RejectedConflict),
+    case("idempotency-key", EffectClosureContractExpectation::RejectedConflict),
+    case("request-digest", EffectClosureContractExpectation::RejectedConflict),
+    case("kind", EffectClosureContractExpectation::RejectedConflict),
+    case("subject", EffectClosureContractExpectation::RejectedConflict),
+    case("resource", EffectClosureContractExpectation::RejectedConflict),
+    case("authority", EffectClosureContractExpectation::RejectedConflict),
+    case("causal-parent", EffectClosureContractExpectation::RejectedConflict),
+    case("conflicting-registration", EffectClosureContractExpectation::RejectedConflict),
+    case("conflicting-commit", EffectClosureContractExpectation::RejectedInvalidTransition),
+    case("complete-before-outcome", EffectClosureContractExpectation::RejectedInvalidTransition),
+    case("outcome-before-dispatch", EffectClosureContractExpectation::RejectedInvalidTransition),
+    case("dispatch-gate-consumes-permit", EffectClosureContractExpectation::PermitConsumed),
+    case("finish-applied-simulated-reply-loss", EffectClosureContractExpectation::Applied),
+    case("finish-conflicting-replay", EffectClosureContractExpectation::RejectedConflict),
+    case("finish-exact-replay", EffectClosureContractExpectation::ExactReplay),
+    case(
+        "query-terminal-dispatch",
+        EffectClosureContractExpectation::ObservedGuestReturnedDispatch,
+    ),
+    case("duplicate-dispatch", EffectClosureContractExpectation::RejectedInvalidTransition),
+    case("record-outcome", EffectClosureContractExpectation::Applied),
+    case("query-outcome-recorded", EffectClosureContractExpectation::ObservedOutcomeRecorded),
+    case("replay-outcome", EffectClosureContractExpectation::ExactReplay),
+    case("conflicting-outcome", EffectClosureContractExpectation::RejectedConflict),
+    case("complete", EffectClosureContractExpectation::Applied),
+    case("query-completed", EffectClosureContractExpectation::ObservedCompleted),
+    case("replay-complete", EffectClosureContractExpectation::ExactReplay),
+    case("conflicting-complete", EffectClosureContractExpectation::RejectedConflict),
+    case("failed-dispatch", EffectClosureContractExpectation::PermitConsumed),
+    case("failed-finish-applied-simulated-reply-loss", EffectClosureContractExpectation::Applied),
+    case("failed-finish-conflicting-replay", EffectClosureContractExpectation::RejectedConflict),
+    case("failed-finish-exact-replay", EffectClosureContractExpectation::ExactReplay),
+    case(
+        "query-failed-terminal-dispatch",
+        EffectClosureContractExpectation::ObservedGuestFailedDispatch,
+    ),
     case("failed-dispatch-canonical-outcome", EffectClosureContractExpectation::Applied),
+    case("failed-dispatch-outcome-replay", EffectClosureContractExpectation::ExactReplay),
+    case("failed-dispatch-outcome-conflict", EffectClosureContractExpectation::RejectedConflict),
     case("query-failed-dispatch", EffectClosureContractExpectation::ObservedOutcomeRecorded),
 ];
 
@@ -80,6 +153,22 @@ const fn case(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectClosureProviderContractReport {
     observations: Vec<EffectClosureFaultCase>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectClosureProviderContractV2Report {
+    observations: Vec<EffectClosureFaultCase>,
+}
+
+impl EffectClosureProviderContractV2Report {
+    pub fn new(observations: Vec<EffectClosureFaultCase>) -> Result<Self, String> {
+        validate_effect_closure_contract_v2_observations(&observations)?;
+        Ok(Self { observations })
+    }
+
+    pub fn observations(&self) -> &[EffectClosureFaultCase] {
+        &self.observations
+    }
 }
 
 impl EffectClosureProviderContractReport {
@@ -107,6 +196,36 @@ pub fn validate_effect_closure_contract_observations(
     Err(format!(
         "effect-closure fault matrix drifted at index {mismatch}: expected {:?}, observed {:?}",
         EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.get(mismatch),
+        observations.get(mismatch)
+    ))
+}
+
+pub fn validate_effect_closure_contract_v2_observations(
+    observations: &[EffectClosureFaultCase],
+) -> Result<(), String> {
+    validate_effect_closure_contract_observations_against(
+        observations,
+        EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2,
+        "effect-closure v2 fault matrix",
+    )
+}
+
+fn validate_effect_closure_contract_observations_against(
+    observations: &[EffectClosureFaultCase],
+    expected: &[EffectClosureFaultCase],
+    label: &str,
+) -> Result<(), String> {
+    if observations == expected {
+        return Ok(());
+    }
+    let mismatch = observations
+        .iter()
+        .zip(expected)
+        .position(|(actual, expected)| actual != expected)
+        .unwrap_or_else(|| observations.len().min(expected.len()));
+    Err(format!(
+        "{label} drifted at index {mismatch}: expected {:?}, observed {:?}",
+        expected.get(mismatch),
         observations.get(mismatch)
     ))
 }
@@ -313,6 +432,26 @@ mod tests {
         }
         validate_effect_closure_contract_observations(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX)
             .unwrap();
+
+        assert_eq!(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2.len(), 48);
+        for (index, case) in EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2.iter().enumerate() {
+            assert!(!case.case_id.is_empty());
+            assert!(
+                !EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2[..index]
+                    .iter()
+                    .any(|earlier| earlier.case_id == case.case_id)
+            );
+        }
+        validate_effect_closure_contract_v2_observations(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2)
+            .unwrap();
+        assert_eq!(
+            EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX[36].expectation,
+            EffectClosureContractExpectation::RejectedInvalidTransition
+        );
+        assert_eq!(
+            EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2[44].expectation,
+            EffectClosureContractExpectation::Applied
+        );
     }
 
     #[test]
