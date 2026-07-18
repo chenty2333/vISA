@@ -287,6 +287,7 @@ pub enum EffectPeerError {
     GateClosed,
     Revoked,
     PublicationConflict,
+    DispatchOutcomeConflict,
     StepConflict,
     TokenMismatch,
     NotFrozen,
@@ -1130,7 +1131,12 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         match admission.dispatch_phase {
             ReferenceDispatchPhase::Consumed => admission.dispatch_phase = terminal,
             existing if existing == terminal => {}
-            _ => return Err(EffectPeerError::StepConflict),
+            ReferenceDispatchPhase::GuestReturned | ReferenceDispatchPhase::GuestFailed => {
+                return Err(EffectPeerError::DispatchOutcomeConflict);
+            }
+            ReferenceDispatchPhase::Available | ReferenceDispatchPhase::Revoked => {
+                return Err(EffectPeerError::StepConflict);
+            }
         }
         Ok(())
     }

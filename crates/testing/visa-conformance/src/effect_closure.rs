@@ -10,8 +10,9 @@ use substrate_api::{
 };
 
 use crate::effect_closure_replay::{
-    EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX, EffectClosureContractExpectation, EffectClosureFaultCase,
-    EffectClosureProviderContractReport,
+    EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX, EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2,
+    EffectClosureContractExpectation, EffectClosureFaultCase, EffectClosureProviderContractReport,
+    EffectClosureProviderContractV2Report,
 };
 
 pub const EFFECT_CLOSURE_CORE_CAPABILITIES: EffectClosureCapabilities = EffectClosureCapabilities {
@@ -280,12 +281,20 @@ where
         &self,
         observation: &'a P::QueryObservation,
     ) -> Option<&'a EffectOutcome>;
+    fn observed_dispatch(&self, observation: &P::QueryObservation)
+    -> Option<EffectDispatchOutcome>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectClosureConformanceFailure {
     pub case_id: &'static str,
     pub detail: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EffectClosureContractVersion {
+    V1,
+    V2,
 }
 
 pub fn run_effect_closure_provider_contract<P, F>(
@@ -297,16 +306,66 @@ where
     P: EffectClosureProvider,
     F: EffectClosureConformanceFixture<P>,
 {
-    let mut observations = Vec::with_capacity(EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.len());
+    let observations = run_effect_closure_provider_contract_inner(
+        provider,
+        other_provider,
+        fixture,
+        EffectClosureContractVersion::V1,
+    )?;
+    EffectClosureProviderContractReport::new(observations)
+        .map_err(|detail| failure("fault-matrix", detail))
+}
+
+pub fn run_effect_closure_provider_contract_v2<P, F>(
+    provider: &P,
+    other_provider: &P,
+    fixture: &F,
+) -> Result<EffectClosureProviderContractV2Report, EffectClosureConformanceFailure>
+where
+    P: EffectClosureProvider,
+    F: EffectClosureConformanceFixture<P>,
+{
+    let observations = run_effect_closure_provider_contract_inner(
+        provider,
+        other_provider,
+        fixture,
+        EffectClosureContractVersion::V2,
+    )?;
+    EffectClosureProviderContractV2Report::new(observations)
+        .map_err(|detail| failure("fault-matrix-v2", detail))
+}
+
+fn run_effect_closure_provider_contract_inner<P, F>(
+    provider: &P,
+    other_provider: &P,
+    fixture: &F,
+    version: EffectClosureContractVersion,
+) -> Result<Vec<EffectClosureFaultCase>, EffectClosureConformanceFailure>
+where
+    P: EffectClosureProvider,
+    F: EffectClosureConformanceFixture<P>,
+{
+    let matrix = match version {
+        EffectClosureContractVersion::V1 => EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX,
+        EffectClosureContractVersion::V2 => EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2,
+    };
+    let mut observations = Vec::with_capacity(matrix.len());
     let effect = fixture.effect();
     let admission = EffectAdmissionSession::new(provider);
     let descriptor =
         admission.descriptor().map_err(|error| provider_error("descriptor", fixture, &error))?;
-    let requirements = EffectClosureProviderRequirements::v2_preview(
-        EFFECT_CLOSURE_CORE_CAPABILITIES,
-        fixture.minimum_authentication(),
-        EFFECT_CLOSURE_MINIMUM_LIMITS,
-    )
+    let requirements = match version {
+        EffectClosureContractVersion::V1 => EffectClosureProviderRequirements::v2_0_preview(
+            EFFECT_CLOSURE_CORE_CAPABILITIES,
+            fixture.minimum_authentication(),
+            EFFECT_CLOSURE_MINIMUM_LIMITS,
+        ),
+        EffectClosureContractVersion::V2 => EffectClosureProviderRequirements::v2_1_preview(
+            EFFECT_CLOSURE_CORE_CAPABILITIES,
+            fixture.minimum_authentication(),
+            EFFECT_CLOSURE_MINIMUM_LIMITS,
+        ),
+    }
     .require_admission();
     require(
         "descriptor",
@@ -590,14 +649,72 @@ where
         }
         EffectDispatchAcquireError::Provider(error) => provider_error("dispatch", fixture, &error),
     })?;
-    let permit = dispatch
-        .finish(EffectDispatchOutcome::GuestReturned)
-        .map_err(|error| provider_error("finish-dispatch", fixture, error.error()))?;
     observe_case(
         &mut observations,
         "dispatch-gate-consumes-permit",
         EffectClosureContractExpectation::PermitConsumed,
     )?;
+    let permit = if version == EffectClosureContractVersion::V2 {
+        // Apply through the provider while retaining the local dispatch value.
+        // This deterministically simulates an applied transition whose reply
+        // was lost; it is not itself an observed transport fault.
+        provider
+            .finish_effect_dispatch(
+                &effect,
+                dispatch.provider_fence(),
+                EffectDispatchOutcome::GuestReturned,
+            )
+            .map_err(|error| {
+                provider_error("finish-applied-simulated-reply-loss", fixture, &error)
+            })?;
+        observe_case(
+            &mut observations,
+            "finish-applied-simulated-reply-loss",
+            EffectClosureContractExpectation::Applied,
+        )?;
+        match provider.finish_effect_dispatch(
+            &effect,
+            dispatch.provider_fence(),
+            EffectDispatchOutcome::GuestFailed,
+        ) {
+            Err(error) => require_error(
+                "finish-conflicting-replay",
+                fixture.classify_error(&error),
+                EffectClosureConformanceErrorKind::Conflict,
+            )?,
+            Ok(()) => return fail("finish-conflicting-replay", "conflicting finish was accepted"),
+        }
+        observe_case(
+            &mut observations,
+            "finish-conflicting-replay",
+            EffectClosureContractExpectation::RejectedConflict,
+        )?;
+        let permit = dispatch
+            .finish(EffectDispatchOutcome::GuestReturned)
+            .map_err(|error| provider_error("finish-exact-replay", fixture, error.error()))?;
+        observe_case(
+            &mut observations,
+            "finish-exact-replay",
+            EffectClosureContractExpectation::ExactReplay,
+        )?;
+        expect_dispatch_observation(
+            "query-terminal-dispatch",
+            provider,
+            fixture,
+            &effect,
+            EffectDispatchOutcome::GuestReturned,
+        )?;
+        observe_case(
+            &mut observations,
+            "query-terminal-dispatch",
+            EffectClosureContractExpectation::ObservedGuestReturnedDispatch,
+        )?;
+        permit
+    } else {
+        dispatch
+            .finish(EffectDispatchOutcome::GuestReturned)
+            .map_err(|error| provider_error("finish-dispatch", fixture, error.error()))?
+    };
 
     match exact_permit(provider, fixture, &effect, true)?.consume(provider, &effect) {
         Err(EffectDispatchAcquireError::Provider(error)) => require_error(
@@ -735,39 +852,176 @@ where
             EffectDispatchAcquireError::Provider(error) => {
                 provider_error("failed-dispatch", fixture, &error)
             }
-        })?
-        .finish(EffectDispatchOutcome::GuestFailed)
-        .map_err(|error| provider_error("finish-failed-dispatch", fixture, error.error()))?;
+        })?;
     observe_case(
         &mut observations,
         "failed-dispatch",
         EffectClosureContractExpectation::PermitConsumed,
     )?;
+    let failed_dispatch = if version == EffectClosureContractVersion::V2 {
+        // Repeat the same applied/reply-lost simulation for GuestFailed.
+        other_provider
+            .finish_effect_dispatch(
+                &effect,
+                failed_dispatch.provider_fence(),
+                EffectDispatchOutcome::GuestFailed,
+            )
+            .map_err(|error| {
+                provider_error("failed-finish-applied-simulated-reply-loss", fixture, &error)
+            })?;
+        observe_case(
+            &mut observations,
+            "failed-finish-applied-simulated-reply-loss",
+            EffectClosureContractExpectation::Applied,
+        )?;
+        match other_provider.finish_effect_dispatch(
+            &effect,
+            failed_dispatch.provider_fence(),
+            EffectDispatchOutcome::GuestReturned,
+        ) {
+            Err(error) => require_error(
+                "failed-finish-conflicting-replay",
+                fixture.classify_error(&error),
+                EffectClosureConformanceErrorKind::Conflict,
+            )?,
+            Ok(()) => {
+                return fail(
+                    "failed-finish-conflicting-replay",
+                    "conflicting failed finish was accepted",
+                );
+            }
+        }
+        observe_case(
+            &mut observations,
+            "failed-finish-conflicting-replay",
+            EffectClosureContractExpectation::RejectedConflict,
+        )?;
+        let dispatched =
+            failed_dispatch.finish(EffectDispatchOutcome::GuestFailed).map_err(|error| {
+                provider_error("failed-finish-exact-replay", fixture, error.error())
+            })?;
+        observe_case(
+            &mut observations,
+            "failed-finish-exact-replay",
+            EffectClosureContractExpectation::ExactReplay,
+        )?;
+        expect_dispatch_observation(
+            "query-failed-terminal-dispatch",
+            other_provider,
+            fixture,
+            &effect,
+            EffectDispatchOutcome::GuestFailed,
+        )?;
+        observe_case(
+            &mut observations,
+            "query-failed-terminal-dispatch",
+            EffectClosureContractExpectation::ObservedGuestFailedDispatch,
+        )?;
+        dispatched
+    } else {
+        failed_dispatch
+            .finish(EffectDispatchOutcome::GuestFailed)
+            .map_err(|error| provider_error("finish-failed-dispatch", fixture, error.error()))?
+    };
     let failed_dispatch_outcome = fixture.outcome();
-    failed_dispatch.record_outcome(failed_dispatch_outcome.clone()).map_err(|failure| {
-        provider_error("failed-dispatch-canonical-outcome", fixture, failure.error())
-    })?;
-    observe_case(
-        &mut observations,
-        "failed-dispatch-canonical-outcome",
-        EffectClosureContractExpectation::Applied,
-    )?;
-    expect_observation(
-        "query-failed-dispatch",
-        other_provider,
-        fixture,
-        &effect,
-        EffectClosureObservedState::OutcomeRecorded,
-        Some(&failed_dispatch_outcome),
-    )?;
-    observe_case(
-        &mut observations,
-        "query-failed-dispatch",
-        EffectClosureContractExpectation::ObservedOutcomeRecorded,
-    )?;
+    if version == EffectClosureContractVersion::V2 {
+        let recorded =
+            failed_dispatch.record_outcome(failed_dispatch_outcome.clone()).map_err(|failure| {
+                provider_error("failed-dispatch-canonical-outcome", fixture, failure.error())
+            })?;
+        require(
+            "failed-dispatch-canonical-outcome",
+            !fixture.outcome_is_replay(recorded.outcome_evidence()),
+            "first failed-dispatch outcome was marked as replay",
+        )?;
+        observe_case(
+            &mut observations,
+            "failed-dispatch-canonical-outcome",
+            EffectClosureContractExpectation::Applied,
+        )?;
+        let replayed = exact_permit(other_provider, fixture, &effect, true)?
+            .record_outcome(fixture.outcome())
+            .map_err(|failure| {
+                provider_error("failed-dispatch-outcome-replay", fixture, failure.error())
+            })?;
+        require(
+            "failed-dispatch-outcome-replay",
+            fixture.outcome_is_replay(replayed.outcome_evidence()),
+            "exact failed-dispatch outcome replay was not marked as replay",
+        )?;
+        observe_case(
+            &mut observations,
+            "failed-dispatch-outcome-replay",
+            EffectClosureContractExpectation::ExactReplay,
+        )?;
+        match exact_permit(other_provider, fixture, &effect, true)?
+            .record_outcome(fixture.conflicting_outcome())
+        {
+            Err(failure) => require_error(
+                "failed-dispatch-outcome-conflict",
+                fixture.classify_error(failure.error()),
+                EffectClosureConformanceErrorKind::Conflict,
+            )?,
+            Ok(_) => {
+                return fail(
+                    "failed-dispatch-outcome-conflict",
+                    "conflicting failed-dispatch outcome was accepted",
+                );
+            }
+        }
+        observe_case(
+            &mut observations,
+            "failed-dispatch-outcome-conflict",
+            EffectClosureContractExpectation::RejectedConflict,
+        )?;
+        expect_observation(
+            "query-failed-dispatch",
+            other_provider,
+            fixture,
+            &effect,
+            EffectClosureObservedState::OutcomeRecorded,
+            Some(&failed_dispatch_outcome),
+        )?;
+        observe_case(
+            &mut observations,
+            "query-failed-dispatch",
+            EffectClosureContractExpectation::ObservedOutcomeRecorded,
+        )?;
+    } else {
+        match failed_dispatch.record_outcome(failed_dispatch_outcome) {
+            Err(failure) => require_error(
+                "failed-dispatch-canonical-outcome",
+                fixture.classify_error(failure.error()),
+                EffectClosureConformanceErrorKind::InvalidTransition,
+            )?,
+            Ok(_) => {
+                return fail(
+                    "failed-dispatch-canonical-outcome",
+                    "protocol 2.0 accepted an outcome after GuestFailed",
+                );
+            }
+        }
+        observe_case(
+            &mut observations,
+            "failed-dispatch-canonical-outcome",
+            EffectClosureContractExpectation::RejectedInvalidTransition,
+        )?;
+        expect_observation(
+            "query-failed-dispatch",
+            other_provider,
+            fixture,
+            &effect,
+            EffectClosureObservedState::Committed,
+            None,
+        )?;
+        observe_case(
+            &mut observations,
+            "query-failed-dispatch",
+            EffectClosureContractExpectation::ObservedCommitted,
+        )?;
+    }
 
-    EffectClosureProviderContractReport::new(observations)
-        .map_err(|detail| failure("fault-matrix", detail))
+    Ok(observations)
 }
 
 fn exact_permit<'a, P, F>(
@@ -830,6 +1084,28 @@ where
     )
 }
 
+fn expect_dispatch_observation<P, F>(
+    case_id: &'static str,
+    provider: &P,
+    fixture: &F,
+    effect: &EffectRequest,
+    expected: EffectDispatchOutcome,
+) -> Result<(), EffectClosureConformanceFailure>
+where
+    P: EffectClosureProvider,
+    F: EffectClosureConformanceFixture<P>,
+{
+    let observed = provider
+        .query_effect(effect)
+        .map_err(|error| provider_error(case_id, fixture, &error))?
+        .ok_or_else(|| failure(case_id, "known effect query returned absent"))?;
+    require(
+        case_id,
+        fixture.observed_dispatch(&observed) == Some(expected),
+        "query returned the wrong terminal dispatch outcome",
+    )
+}
+
 fn observe_case(
     observations: &mut Vec<EffectClosureFaultCase>,
     case_id: &'static str,
@@ -839,7 +1115,8 @@ fn observe_case(
     let index = observations.len();
     require(
         case_id,
-        EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.get(index) == Some(&observed),
+        EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX.get(index) == Some(&observed)
+            || EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2.get(index) == Some(&observed),
         format!("fault-matrix order drifted at index {index}"),
     )?;
     observations.push(observed);
@@ -960,6 +1237,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct FakeQueryObservation {
         phase: EffectClosureObservedState,
+        dispatch: Option<EffectDispatchOutcome>,
         outcome: Option<EffectOutcome>,
     }
 
@@ -1089,14 +1367,21 @@ mod tests {
             if state.effect != *effect {
                 return Err(FakeError::Conflict);
             }
-            if state.dispatch != FakeDispatchPhase::Consumed {
-                return Err(FakeError::InvalidTransition);
-            }
-            state.dispatch = match outcome {
+            let terminal = match outcome {
                 EffectDispatchOutcome::GuestReturned => FakeDispatchPhase::GuestReturned,
                 EffectDispatchOutcome::GuestFailed => FakeDispatchPhase::GuestFailed,
             };
-            Ok(())
+            match state.dispatch {
+                FakeDispatchPhase::Consumed => {
+                    state.dispatch = terminal;
+                    Ok(())
+                }
+                existing if existing == terminal => Ok(()),
+                FakeDispatchPhase::GuestReturned | FakeDispatchPhase::GuestFailed => {
+                    Err(FakeError::Conflict)
+                }
+                FakeDispatchPhase::Available => Err(FakeError::InvalidTransition),
+            }
         }
 
         fn record_effect_outcome(
@@ -1162,7 +1447,17 @@ mod tests {
         ) -> Result<Option<Self::QueryObservation>, Self::Error> {
             let provider = self.state.lock().unwrap();
             Ok(provider.effects.get(&effect.operation).filter(|state| state.effect == *effect).map(
-                |state| FakeQueryObservation { phase: state.phase, outcome: state.outcome.clone() },
+                |state| FakeQueryObservation {
+                    phase: state.phase,
+                    dispatch: match state.dispatch {
+                        FakeDispatchPhase::GuestReturned => {
+                            Some(EffectDispatchOutcome::GuestReturned)
+                        }
+                        FakeDispatchPhase::GuestFailed => Some(EffectDispatchOutcome::GuestFailed),
+                        FakeDispatchPhase::Available | FakeDispatchPhase::Consumed => None,
+                    },
+                    outcome: state.outcome.clone(),
+                },
             ))
         }
     }
@@ -1274,6 +1569,13 @@ mod tests {
         ) -> Option<&'a EffectOutcome> {
             observation.outcome.as_ref()
         }
+
+        fn observed_dispatch(
+            &self,
+            observation: &FakeQueryObservation,
+        ) -> Option<EffectDispatchOutcome> {
+            observation.dispatch
+        }
     }
 
     #[test]
@@ -1311,7 +1613,8 @@ mod tests {
         let provider = FakeProvider::default();
         let other_provider = FakeProvider::default();
         let report =
-            run_effect_closure_provider_contract(&provider, &other_provider, &FakeFixture).unwrap();
-        assert_eq!(report.observations(), EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX);
+            run_effect_closure_provider_contract_v2(&provider, &other_provider, &FakeFixture)
+                .unwrap();
+        assert_eq!(report.observations(), EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX_V2);
     }
 }

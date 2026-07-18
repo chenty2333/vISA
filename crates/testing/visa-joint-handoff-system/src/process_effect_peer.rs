@@ -1413,7 +1413,12 @@ impl ProcessEffectPeerState {
         match live.dispatch_phase {
             ProcessLiveDispatchPhase::Consumed => live.dispatch_phase = terminal,
             existing if existing == terminal => {}
-            _ => return Err(EffectPeerError::StepConflict),
+            ProcessLiveDispatchPhase::GuestReturned | ProcessLiveDispatchPhase::GuestFailed => {
+                return Err(EffectPeerError::DispatchOutcomeConflict);
+            }
+            ProcessLiveDispatchPhase::Available | ProcessLiveDispatchPhase::Revoked => {
+                return Err(EffectPeerError::StepConflict);
+            }
         }
         Ok(())
     }
