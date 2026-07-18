@@ -66,11 +66,8 @@ pub const EFFECT_CLOSURE_PROVIDER_FAULT_MATRIX: &[EffectClosureFaultCase] = &[
     case("replay-complete", EffectClosureContractExpectation::ExactReplay),
     case("conflicting-complete", EffectClosureContractExpectation::RejectedConflict),
     case("failed-dispatch", EffectClosureContractExpectation::PermitConsumed),
-    case(
-        "failed-dispatch-canonical-outcome",
-        EffectClosureContractExpectation::RejectedInvalidTransition,
-    ),
-    case("query-failed-dispatch", EffectClosureContractExpectation::ObservedCommitted),
+    case("failed-dispatch-canonical-outcome", EffectClosureContractExpectation::Applied),
+    case("query-failed-dispatch", EffectClosureContractExpectation::ObservedOutcomeRecorded),
 ];
 
 const fn case(

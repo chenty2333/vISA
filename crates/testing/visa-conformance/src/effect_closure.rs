@@ -743,36 +743,27 @@ where
         "failed-dispatch",
         EffectClosureContractExpectation::PermitConsumed,
     )?;
-    match failed_dispatch.record_outcome(fixture.outcome()) {
-        Err(failure) => require_error(
-            "failed-dispatch-canonical-outcome",
-            fixture.classify_error(failure.error()),
-            EffectClosureConformanceErrorKind::InvalidTransition,
-        )?,
-        Ok(_) => {
-            return fail(
-                "failed-dispatch-canonical-outcome",
-                "GuestFailed was accepted as a canonical effect outcome",
-            );
-        }
-    }
+    let failed_dispatch_outcome = fixture.outcome();
+    failed_dispatch.record_outcome(failed_dispatch_outcome.clone()).map_err(|failure| {
+        provider_error("failed-dispatch-canonical-outcome", fixture, failure.error())
+    })?;
     observe_case(
         &mut observations,
         "failed-dispatch-canonical-outcome",
-        EffectClosureContractExpectation::RejectedInvalidTransition,
+        EffectClosureContractExpectation::Applied,
     )?;
     expect_observation(
         "query-failed-dispatch",
         other_provider,
         fixture,
         &effect,
-        EffectClosureObservedState::Committed,
-        None,
+        EffectClosureObservedState::OutcomeRecorded,
+        Some(&failed_dispatch_outcome),
     )?;
     observe_case(
         &mut observations,
         "query-failed-dispatch",
-        EffectClosureContractExpectation::ObservedCommitted,
+        EffectClosureContractExpectation::ObservedOutcomeRecorded,
     )?;
 
     EffectClosureProviderContractReport::new(observations)
@@ -1129,7 +1120,10 @@ mod tests {
                     Err(FakeError::Conflict)
                 };
             }
-            if state.dispatch != FakeDispatchPhase::GuestReturned {
+            if !matches!(
+                state.dispatch,
+                FakeDispatchPhase::GuestReturned | FakeDispatchPhase::GuestFailed
+            ) {
                 return Err(FakeError::InvalidTransition);
             }
             state.outcome = Some(outcome.clone());
