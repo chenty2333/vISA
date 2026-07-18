@@ -505,6 +505,12 @@ def check_checkouts(jobs: dict[str, Any]) -> None:
             checkouts[0].get("with", {}).get("persist-credentials") == "false",
             f"{job_name}: checkout credentials must not persist",
         )
+        if job_name == "docker-quality-gate":
+            require(
+                checkouts[0].get("with", {}).get("fetch-depth") == "0",
+                "docker-quality-gate: full history is required to prove "
+                "capability-checkpoint ancestry",
+            )
 
 
 def check_exact_sha_images(jobs: dict[str, Any]) -> None:

@@ -26,6 +26,10 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          # The full gate proves that the recorded capability checkpoint is an
+          # ancestor of this exact workflow SHA. A depth-1 checkout cannot make
+          # that evidence claim because the checkpoint object is absent.
+          fetch-depth: 0
 
       - name: Set Docker user ids
         run: |
