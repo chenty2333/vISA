@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use core::ptr;
 
-use contract_core::EffectRequest;
+use contract_core::{EffectOutcome, EffectRequest};
 
 /// Preview protocol family for the provider-neutral effect-closure SPI.
 ///
@@ -44,6 +44,9 @@ impl EffectClosureProtocolRange {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EffectClosureCapabilities {
     pub effect_admission: bool,
+    pub outcome_recording: bool,
+    pub effect_completion: bool,
+    pub session_query: bool,
     pub freeze_thaw: bool,
     pub commit_close: bool,
     pub crash_rebind: bool,
@@ -54,6 +57,9 @@ pub struct EffectClosureCapabilities {
 impl EffectClosureCapabilities {
     pub const fn contains(self, required: Self) -> bool {
         (!required.effect_admission || self.effect_admission)
+            && (!required.outcome_recording || self.outcome_recording)
+            && (!required.effect_completion || self.effect_completion)
+            && (!required.session_query || self.session_query)
             && (!required.freeze_thaw || self.freeze_thaw)
             && (!required.commit_close || self.commit_close)
             && (!required.crash_rebind || self.crash_rebind)
@@ -158,6 +164,8 @@ impl EffectClosureProviderDescriptor {
         self.protocol.is_well_formed()
             && self.limits.is_well_formed()
             && self.capabilities.effect_admission
+            && (!self.capabilities.effect_completion || self.capabilities.outcome_recording)
+            && (!self.capabilities.persistent_query || self.capabilities.session_query)
     }
 
     pub const fn supports_v2_preview(self, required: EffectClosureCapabilities) -> bool {
@@ -195,6 +203,10 @@ pub trait EffectClosureProvider: Send + Sync {
     type Prepared;
     type CommitMetadata;
     type CommitEvidence;
+    type OutcomeEvidence;
+    type CompletionRequest;
+    type CompletionEvidence;
+    type QueryObservation;
     type Error;
 
     fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error>;
@@ -217,6 +229,31 @@ pub trait EffectClosureProvider: Send + Sync {
         prepared: &Self::Prepared,
         metadata: &Self::CommitMetadata,
     ) -> Result<Self::CommitEvidence, Self::Error>;
+
+    /// Record the canonical provider outcome without implying that the native
+    /// effect has completed or left the closure cohort.
+    fn record_effect_outcome(
+        &self,
+        effect: &EffectRequest,
+        committed: &Self::CommitEvidence,
+        outcome: &EffectOutcome,
+    ) -> Result<Self::OutcomeEvidence, Self::Error>;
+
+    /// Explicitly advance provider-local completion after an outcome exists.
+    /// Handoff profiles may defer this transition to cohort closure.
+    fn complete_effect(
+        &self,
+        effect: &EffectRequest,
+        request: &Self::CompletionRequest,
+    ) -> Result<Self::CompletionEvidence, Self::Error>;
+
+    /// Query only the live provider session selected by this object. A result
+    /// is not crash-stable recovery evidence unless `persistent_query` was
+    /// independently advertised and qualified.
+    fn query_effect(
+        &self,
+        effect: &EffectRequest,
+    ) -> Result<Option<Self::QueryObservation>, Self::Error>;
 }
 
 /// Registered provider state bound to one exact canonical effect request and
@@ -418,6 +455,214 @@ where
     pub fn authorizes(&self, provider: &P, effect: &EffectRequest) -> bool {
         ptr::eq(self.provider, provider) && self.effect == *effect
     }
+
+    pub fn record_outcome(
+        self,
+        outcome: EffectOutcome,
+    ) -> Result<OutcomeRecordedEffect<'a, P>, EffectOutcomeFailure<'a, P>> {
+        match self.provider.record_effect_outcome(&self.effect, &self.commit_evidence, &outcome) {
+            Ok(outcome_evidence) => Ok(OutcomeRecordedEffect {
+                provider: self.provider,
+                effect: self.effect,
+                commit_evidence: self.commit_evidence,
+                outcome,
+                outcome_evidence,
+            }),
+            Err(error) => Err(EffectOutcomeFailure {
+                inner: Box::new(EffectOutcomeFailureInner { error, committed: self, outcome }),
+            }),
+        }
+    }
+}
+
+/// Provider state after the canonical outcome has been recorded. Completion
+/// remains explicit because a handoff may retain the committed effect for
+/// cohort closure instead of completing it before freeze.
+pub struct OutcomeRecordedEffect<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    provider: &'a P,
+    effect: EffectRequest,
+    commit_evidence: P::CommitEvidence,
+    outcome: EffectOutcome,
+    outcome_evidence: P::OutcomeEvidence,
+}
+
+impl<'a, P> OutcomeRecordedEffect<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn effect(&self) -> &EffectRequest {
+        &self.effect
+    }
+
+    pub const fn commit_evidence(&self) -> &P::CommitEvidence {
+        &self.commit_evidence
+    }
+
+    pub const fn outcome(&self) -> &EffectOutcome {
+        &self.outcome
+    }
+
+    pub const fn outcome_evidence(&self) -> &P::OutcomeEvidence {
+        &self.outcome_evidence
+    }
+
+    pub fn complete(
+        self,
+        request: P::CompletionRequest,
+    ) -> Result<CompletedEffect<'a, P>, EffectCompletionFailure<'a, P>> {
+        match self.provider.complete_effect(&self.effect, &request) {
+            Ok(completion_evidence) => Ok(CompletedEffect {
+                provider: self.provider,
+                effect: self.effect,
+                commit_evidence: self.commit_evidence,
+                outcome: self.outcome,
+                outcome_evidence: self.outcome_evidence,
+                completion_evidence,
+            }),
+            Err(error) => Err(EffectCompletionFailure {
+                inner: Box::new(EffectCompletionFailureInner {
+                    error,
+                    outcome_recorded: self,
+                    request,
+                }),
+            }),
+        }
+    }
+}
+
+/// Terminal provider evidence after an explicit effect completion.
+pub struct CompletedEffect<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    provider: &'a P,
+    effect: EffectRequest,
+    commit_evidence: P::CommitEvidence,
+    outcome: EffectOutcome,
+    outcome_evidence: P::OutcomeEvidence,
+    completion_evidence: P::CompletionEvidence,
+}
+
+impl<'a, P> CompletedEffect<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn provider(&self) -> &'a P {
+        self.provider
+    }
+
+    pub const fn effect(&self) -> &EffectRequest {
+        &self.effect
+    }
+
+    pub const fn commit_evidence(&self) -> &P::CommitEvidence {
+        &self.commit_evidence
+    }
+
+    pub const fn outcome(&self) -> &EffectOutcome {
+        &self.outcome
+    }
+
+    pub const fn outcome_evidence(&self) -> &P::OutcomeEvidence {
+        &self.outcome_evidence
+    }
+
+    pub const fn completion_evidence(&self) -> &P::CompletionEvidence {
+        &self.completion_evidence
+    }
+}
+
+/// Failed canonical outcome recording with the committed permit and exact
+/// outcome returned for retry or fail-closed retention.
+pub struct EffectOutcomeFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    inner: Box<EffectOutcomeFailureInner<'a, P>>,
+}
+
+struct EffectOutcomeFailureInner<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    error: P::Error,
+    committed: CommittedEffectPermit<'a, P>,
+    outcome: EffectOutcome,
+}
+
+impl<'a, P> EffectOutcomeFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn error(&self) -> &P::Error {
+        &self.inner.error
+    }
+
+    pub const fn committed(&self) -> &CommittedEffectPermit<'a, P> {
+        &self.inner.committed
+    }
+
+    pub const fn outcome(&self) -> &EffectOutcome {
+        &self.inner.outcome
+    }
+
+    pub fn retry(self) -> Result<OutcomeRecordedEffect<'a, P>, Self> {
+        let inner = *self.inner;
+        inner.committed.record_outcome(inner.outcome)
+    }
+
+    pub fn into_parts(self) -> (P::Error, CommittedEffectPermit<'a, P>, EffectOutcome) {
+        let inner = *self.inner;
+        (inner.error, inner.committed, inner.outcome)
+    }
+}
+
+/// Failed explicit completion with the outcome-recorded state and exact
+/// completion request retained for retry.
+pub struct EffectCompletionFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    inner: Box<EffectCompletionFailureInner<'a, P>>,
+}
+
+struct EffectCompletionFailureInner<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    error: P::Error,
+    outcome_recorded: OutcomeRecordedEffect<'a, P>,
+    request: P::CompletionRequest,
+}
+
+impl<'a, P> EffectCompletionFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn error(&self) -> &P::Error {
+        &self.inner.error
+    }
+
+    pub const fn outcome_recorded(&self) -> &OutcomeRecordedEffect<'a, P> {
+        &self.inner.outcome_recorded
+    }
+
+    pub const fn request(&self) -> &P::CompletionRequest {
+        &self.inner.request
+    }
+
+    pub fn retry(self) -> Result<CompletedEffect<'a, P>, Self> {
+        let inner = *self.inner;
+        inner.outcome_recorded.complete(inner.request)
+    }
+
+    pub fn into_parts(self) -> (P::Error, OutcomeRecordedEffect<'a, P>, P::CompletionRequest) {
+        let inner = *self.inner;
+        (inner.error, inner.outcome_recorded, inner.request)
+    }
 }
 
 /// Failed Commit transition with the still-owned Prepared state returned for
@@ -501,6 +746,13 @@ where
             }),
         }
     }
+
+    pub fn query_effect(
+        &self,
+        effect: &EffectRequest,
+    ) -> Result<Option<P::QueryObservation>, P::Error> {
+        self.provider.query_effect(effect)
+    }
 }
 
 #[cfg(test)]
@@ -518,6 +770,8 @@ mod tests {
     struct FakeProvider {
         registration_attempts: AtomicUsize,
         commit_attempts: AtomicUsize,
+        outcome_attempts: AtomicUsize,
+        completion_attempts: AtomicUsize,
     }
 
     impl FakeProvider {
@@ -525,6 +779,8 @@ mod tests {
             Self {
                 registration_attempts: AtomicUsize::new(0),
                 commit_attempts: AtomicUsize::new(0),
+                outcome_attempts: AtomicUsize::new(0),
+                completion_attempts: AtomicUsize::new(0),
             }
         }
     }
@@ -535,6 +791,10 @@ mod tests {
         type Prepared = u64;
         type CommitMetadata = String;
         type CommitEvidence = u64;
+        type OutcomeEvidence = bool;
+        type CompletionRequest = u64;
+        type CompletionEvidence = bool;
+        type QueryObservation = u64;
         type Error = &'static str;
 
         fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
@@ -573,6 +833,38 @@ mod tests {
                 Ok(prepared + metadata.parse::<u64>().map_err(|_| "invalid-metadata")?)
             }
         }
+
+        fn record_effect_outcome(
+            &self,
+            _effect: &EffectRequest,
+            _committed: &Self::CommitEvidence,
+            _outcome: &EffectOutcome,
+        ) -> Result<Self::OutcomeEvidence, Self::Error> {
+            if self.outcome_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err("outcome-acknowledgement-lost")
+            } else {
+                Ok(false)
+            }
+        }
+
+        fn complete_effect(
+            &self,
+            _effect: &EffectRequest,
+            _request: &Self::CompletionRequest,
+        ) -> Result<Self::CompletionEvidence, Self::Error> {
+            if self.completion_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err("completion-acknowledgement-lost")
+            } else {
+                Ok(false)
+            }
+        }
+
+        fn query_effect(
+            &self,
+            _effect: &EffectRequest,
+        ) -> Result<Option<Self::QueryObservation>, Self::Error> {
+            Ok(None)
+        }
     }
 
     const fn descriptor() -> EffectClosureProviderDescriptor {
@@ -580,6 +872,9 @@ mod tests {
             protocol: EffectClosureProtocolRange::v2_preview(),
             capabilities: EffectClosureCapabilities {
                 effect_admission: true,
+                outcome_recording: true,
+                effect_completion: true,
+                session_query: true,
                 freeze_thaw: true,
                 commit_close: true,
                 crash_rebind: false,
@@ -621,6 +916,9 @@ mod tests {
         let descriptor = descriptor();
         let capabilities = EffectClosureCapabilities {
             effect_admission: true,
+            outcome_recording: true,
+            effect_completion: true,
+            session_query: true,
             freeze_thaw: true,
             commit_close: true,
             ..EffectClosureCapabilities::default()
@@ -729,5 +1027,56 @@ mod tests {
         };
         assert_eq!(registered.effect(), &effect);
         assert_eq!(*registered.provider_state(), 1);
+    }
+
+    #[test]
+    fn outcome_and_completion_failures_retain_exact_type_state_for_retry() {
+        let provider = FakeProvider::new();
+        let request = effect(21);
+        let registered = EffectAdmissionSession::new(&provider)
+            .register(request.clone(), 10)
+            .unwrap_or_else(|_| panic!("register unexpectedly failed"));
+        let prepared =
+            registered.prepare().unwrap_or_else(|_| panic!("prepare unexpectedly failed"));
+        let commit_failure = match prepared.commit(String::from("20")) {
+            Ok(_) => panic!("the injected Commit acknowledgement loss unexpectedly succeeded"),
+            Err(failure) => failure,
+        };
+        let (_, prepared, metadata) = commit_failure.into_parts();
+        let committed = prepared
+            .commit(metadata)
+            .unwrap_or_else(|_| panic!("exact Commit retry unexpectedly failed"));
+
+        let outcome = EffectOutcome::Indeterminate { evidence: None };
+        let outcome_failure = match committed.record_outcome(outcome.clone()) {
+            Ok(_) => panic!("the injected outcome acknowledgement loss unexpectedly succeeded"),
+            Err(failure) => failure,
+        };
+        assert_eq!(*outcome_failure.error(), "outcome-acknowledgement-lost");
+        assert!(outcome_failure.committed().authorizes(&provider, &request));
+        assert_eq!(outcome_failure.outcome(), &outcome);
+        let outcome_recorded = outcome_failure
+            .retry()
+            .unwrap_or_else(|_| panic!("exact outcome retry unexpectedly failed"));
+        assert_eq!(outcome_recorded.effect(), &request);
+        assert_eq!(outcome_recorded.outcome(), &outcome);
+
+        let completion_failure = match outcome_recorded.complete(44) {
+            Ok(_) => {
+                panic!("the injected completion acknowledgement loss unexpectedly succeeded")
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(*completion_failure.error(), "completion-acknowledgement-lost");
+        assert_eq!(*completion_failure.request(), 44);
+        assert_eq!(completion_failure.outcome_recorded().effect(), &request);
+        assert_eq!(completion_failure.outcome_recorded().outcome(), &outcome);
+        let completed = completion_failure
+            .retry()
+            .unwrap_or_else(|_| panic!("exact completion retry unexpectedly failed"));
+        assert!(core::ptr::eq(completed.provider(), &provider));
+        assert_eq!(completed.effect(), &request);
+        assert_eq!(completed.outcome(), &outcome);
+        assert!(!completed.completion_evidence());
     }
 }

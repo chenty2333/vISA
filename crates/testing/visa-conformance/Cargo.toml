@@ -16,6 +16,7 @@ serde.workspace = true
 serde_ignored.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+substrate_api.workspace = true
 visa_profile = { path = "../../core/visa_profile" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

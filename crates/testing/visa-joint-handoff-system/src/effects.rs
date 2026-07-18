@@ -3,7 +3,7 @@ use std::{
     sync::Mutex,
 };
 
-use contract_core::{Digest, EffectRequest, Identity, LeaseEpoch};
+use contract_core::{Digest, EffectOutcome, EffectRequest, Identity, LeaseEpoch};
 use joint_handoff_core::{
     ClassificationCounts, ClosureProgressReceipt, ClosureReceipt, EffectScopeVersion,
     FreezeDisposition, JointHandoffKey, NexusFreezeReceipt, NexusThawReceipt,
@@ -90,6 +90,64 @@ pub struct ReferenceEffectCommitEvidence {
     pub result: i64,
     pub domain_revision: u64,
     pub replay: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectOutcomeEvidence {
+    outcome: EffectOutcome,
+    replay: bool,
+}
+
+impl ReferenceEffectOutcomeEvidence {
+    pub const fn outcome(&self) -> &EffectOutcome {
+        &self.outcome
+    }
+
+    pub const fn is_replay(&self) -> bool {
+        self.replay
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectCompletionRequest {
+    pub result: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectCompletionEvidence {
+    pub result: i64,
+    replay: bool,
+}
+
+impl ReferenceEffectCompletionEvidence {
+    pub const fn is_replay(&self) -> bool {
+        self.replay
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceEffectQueryPhase {
+    Registered,
+    Prepared,
+    Committed,
+    OutcomeRecorded,
+    Completed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferenceEffectQueryObservation {
+    phase: ReferenceEffectQueryPhase,
+    outcome: Option<EffectOutcome>,
+}
+
+impl ReferenceEffectQueryObservation {
+    pub const fn phase(&self) -> ReferenceEffectQueryPhase {
+        self.phase
+    }
+
+    pub const fn outcome(&self) -> Option<&EffectOutcome> {
+        self.outcome.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +338,8 @@ struct ReferenceAdmission {
     registration: EffectPublicationRequest,
     phase: ReferenceAdmissionPhase,
     commit: Option<ReferenceEffectCommitMetadata>,
+    outcome: Option<EffectOutcome>,
+    completion: Option<ReferenceEffectCompletionRequest>,
 }
 
 pub struct ReferenceEffectPeer {
@@ -644,6 +704,10 @@ impl EffectClosureProvider for ReferenceEffectPeer {
     type Prepared = ReferencePreparedEffect;
     type CommitMetadata = ReferenceEffectCommitMetadata;
     type CommitEvidence = ReferenceEffectCommitEvidence;
+    type OutcomeEvidence = ReferenceEffectOutcomeEvidence;
+    type CompletionRequest = ReferenceEffectCompletionRequest;
+    type CompletionEvidence = ReferenceEffectCompletionEvidence;
+    type QueryObservation = ReferenceEffectQueryObservation;
     type Error = EffectPeerError;
 
     fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
@@ -651,6 +715,9 @@ impl EffectClosureProvider for ReferenceEffectPeer {
             protocol: EffectClosureProtocolRange::v2_preview(),
             capabilities: EffectClosureCapabilities {
                 effect_admission: true,
+                outcome_recording: true,
+                effect_completion: true,
+                session_query: true,
                 freeze_thaw: true,
                 commit_close: true,
                 crash_rebind: false,
@@ -701,6 +768,8 @@ impl EffectClosureProvider for ReferenceEffectPeer {
                 registration: request.clone(),
                 phase: ReferenceAdmissionPhase::Registered,
                 commit: None,
+                outcome: None,
+                completion: None,
             },
         );
         Ok(ReferenceRegisteredEffect {
@@ -792,6 +861,110 @@ impl EffectClosureProvider for ReferenceEffectPeer {
             replay,
         })
     }
+
+    fn record_effect_outcome(
+        &self,
+        effect: &EffectRequest,
+        committed: &Self::CommitEvidence,
+        outcome: &EffectOutcome,
+    ) -> Result<Self::OutcomeEvidence, Self::Error> {
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        let effect_id = reference_admission_key(&state.admissions, effect)?
+            .ok_or(EffectPeerError::StepConflict)?;
+        let outcome_digest = canonical_digest(outcome).map_err(|_| EffectPeerError::Integrity)?;
+        let replay = {
+            let admission =
+                state.admissions.get_mut(&effect_id).ok_or(EffectPeerError::Integrity)?;
+            let Some(metadata) = admission.commit else {
+                return Err(EffectPeerError::StepConflict);
+            };
+            if admission.phase != ReferenceAdmissionPhase::Committed
+                || committed.result != metadata.result
+                || committed.domain_revision != metadata.domain_revision
+            {
+                return Err(EffectPeerError::StepConflict);
+            }
+            match admission.outcome.as_ref() {
+                Some(existing) if existing == outcome => true,
+                Some(_) => return Err(EffectPeerError::PublicationConflict),
+                None => {
+                    admission.outcome = Some(outcome.clone());
+                    false
+                }
+            }
+        };
+        if !replay {
+            let record = state.effects.get_mut(&effect_id).ok_or(EffectPeerError::Integrity)?;
+            record.classification = JointEffectClassification::Committed;
+            record.outcome_digest = Some(outcome_digest);
+            record.tombstone_digest = None;
+        }
+        Ok(ReferenceEffectOutcomeEvidence { outcome: outcome.clone(), replay })
+    }
+
+    fn complete_effect(
+        &self,
+        effect: &EffectRequest,
+        request: &Self::CompletionRequest,
+    ) -> Result<Self::CompletionEvidence, Self::Error> {
+        let mut state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        let effect_id = reference_admission_key(&state.admissions, effect)?
+            .ok_or(EffectPeerError::StepConflict)?;
+        let admission = state.admissions.get_mut(&effect_id).ok_or(EffectPeerError::Integrity)?;
+        if admission.outcome.is_none() {
+            return Err(EffectPeerError::StepConflict);
+        }
+        let replay = match admission.completion {
+            Some(existing) if existing == *request => true,
+            Some(_) => return Err(EffectPeerError::PublicationConflict),
+            None => {
+                admission.completion = Some(*request);
+                false
+            }
+        };
+        Ok(ReferenceEffectCompletionEvidence { result: request.result, replay })
+    }
+
+    fn query_effect(
+        &self,
+        effect: &EffectRequest,
+    ) -> Result<Option<Self::QueryObservation>, Self::Error> {
+        let state = self.state.lock().map_err(|_| EffectPeerError::Integrity)?;
+        let Some(effect_id) = reference_admission_key(&state.admissions, effect)? else {
+            return Ok(None);
+        };
+        let admission = state.admissions.get(&effect_id).ok_or(EffectPeerError::Integrity)?;
+        let phase = if admission.completion.is_some() {
+            ReferenceEffectQueryPhase::Completed
+        } else if admission.outcome.is_some() {
+            ReferenceEffectQueryPhase::OutcomeRecorded
+        } else {
+            match admission.phase {
+                ReferenceAdmissionPhase::Registered => ReferenceEffectQueryPhase::Registered,
+                ReferenceAdmissionPhase::Prepared => ReferenceEffectQueryPhase::Prepared,
+                ReferenceAdmissionPhase::Committed => ReferenceEffectQueryPhase::Committed,
+            }
+        };
+        Ok(Some(ReferenceEffectQueryObservation { phase, outcome: admission.outcome.clone() }))
+    }
+}
+
+fn reference_admission_key(
+    admissions: &BTreeMap<Identity, ReferenceAdmission>,
+    effect: &EffectRequest,
+) -> Result<Option<Identity>, EffectPeerError> {
+    let mut matching_operation =
+        admissions.iter().filter(|(_, admission)| admission.effect.operation == effect.operation);
+    let Some((effect_id, admission)) = matching_operation.next() else {
+        return Ok(None);
+    };
+    if matching_operation.next().is_some() {
+        return Err(EffectPeerError::Integrity);
+    }
+    if admission.effect != *effect {
+        return Err(EffectPeerError::PublicationConflict);
+    }
+    Ok(Some(*effect_id))
 }
 
 fn validate_reference_admission_binding(

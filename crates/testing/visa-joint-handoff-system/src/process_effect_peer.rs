@@ -7,12 +7,12 @@ use std::{
     sync::Mutex,
 };
 
-use contract_core::{Digest, EffectRequest, Identity};
+use contract_core::{Digest, EffectOutcome, EffectRequest, Identity};
 use joint_handoff_core::{
     ClassificationCounts, ClosureProgressReceipt, ClosureReceipt, EffectScopeVersion,
     FreezeDisposition, NexusFreezeReceipt, NexusThawReceipt, OwnershipAbortReceipt,
     OwnershipCommitReceipt, PrepareIntentReceipt, ReceiptHeader, ReceiptKind, ReceiptRef,
-    TypedReceipt,
+    TypedReceipt, canonical_digest,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -30,11 +30,11 @@ use crate::{
     EffectFreezeToken, EffectPeer, EffectPeerConfig, EffectPeerError, EffectPeerQuery,
     EffectPublicationRequest, EffectPublicationResult, EffectThawRequest, ReferenceEffectRecord,
     nexus_effect_wire::{
-        AUTHENTICATION_BOUNDARY, CommitEffect, CrashService, EffectSelector, NativeHandoffStatus,
-        NativeOwnershipDecision, NativePrepareIntent, NativeReadiness, NativeReceipt,
-        NativeReceiptKind, NativeReceiptPayload, PeerCommand, PeerConfig as NativePeerConfig,
-        PeerRequest, PeerResponse, RECEIPT_SCHEMA, REQUEST_SCHEMA, RESPONSE_SCHEMA, RebindService,
-        ReceiptDigestInput, RegisterEffect, ResponseStatus,
+        AUTHENTICATION_BOUNDARY, CommitEffect, CompleteEffect, CrashService, EffectSelector,
+        NativeHandoffStatus, NativeOwnershipDecision, NativePrepareIntent, NativeReadiness,
+        NativeReceipt, NativeReceiptKind, NativeReceiptPayload, PeerCommand,
+        PeerConfig as NativePeerConfig, PeerRequest, PeerResponse, RECEIPT_SCHEMA, REQUEST_SCHEMA,
+        RESPONSE_SCHEMA, RebindService, ReceiptDigestInput, RegisterEffect, ResponseStatus,
     },
 };
 
@@ -259,6 +259,73 @@ impl ProcessLiveEffectAdvance {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessEffectCompletionRequest {
+    pub result: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessEffectCompletionEvidence {
+    result: i64,
+    replay: bool,
+    native_sequence: u64,
+    native_request_sha256: String,
+    native_receipt_sha256: String,
+}
+
+impl ProcessEffectCompletionEvidence {
+    pub const fn result(&self) -> i64 {
+        self.result
+    }
+
+    pub const fn is_replay(&self) -> bool {
+        self.replay
+    }
+
+    pub const fn native_sequence(&self) -> u64 {
+        self.native_sequence
+    }
+
+    pub fn native_request_sha256(&self) -> &str {
+        &self.native_request_sha256
+    }
+
+    pub fn native_receipt_sha256(&self) -> &str {
+        &self.native_receipt_sha256
+    }
+
+    fn replayed(&self) -> Self {
+        let mut replay = self.clone();
+        replay.replay = true;
+        replay
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessEffectQueryPhase {
+    Registered,
+    Prepared,
+    Committed,
+    OutcomeRecorded,
+    Completed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessEffectQueryObservation {
+    phase: ProcessEffectQueryPhase,
+    outcome: Option<EffectOutcome>,
+}
+
+impl ProcessEffectQueryObservation {
+    pub const fn phase(&self) -> ProcessEffectQueryPhase {
+        self.phase
+    }
+
+    pub const fn outcome(&self) -> Option<&EffectOutcome> {
+        self.outcome.as_ref()
+    }
+}
+
 impl ProcessEffectPeerLaunch {
     pub fn new(
         executable: impl Into<PathBuf>,
@@ -345,7 +412,10 @@ struct ProcessLiveEffect {
     commit_request: Option<ProcessLiveEffectCommitMetadata>,
     committed: Option<ProcessLiveEffectAdvance>,
     outcome_request: Option<EffectPublicationRequest>,
+    outcome_value: Option<EffectOutcome>,
     outcome: Option<ProcessLiveEffectAdvance>,
+    completion_request: Option<ProcessEffectCompletionRequest>,
+    completion: Option<ProcessEffectCompletionEvidence>,
 }
 
 #[derive(Clone)]
@@ -608,6 +678,10 @@ impl EffectClosureProvider for ProcessEffectPeer {
     type Prepared = ProcessLiveEffectAdvance;
     type CommitMetadata = ProcessLiveEffectCommitMetadata;
     type CommitEvidence = ProcessLiveEffectAdvance;
+    type OutcomeEvidence = ProcessLiveEffectAdvance;
+    type CompletionRequest = ProcessEffectCompletionRequest;
+    type CompletionEvidence = ProcessEffectCompletionEvidence;
+    type QueryObservation = ProcessEffectQueryObservation;
     type Error = EffectPeerError;
 
     fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
@@ -615,6 +689,9 @@ impl EffectClosureProvider for ProcessEffectPeer {
             protocol: EffectClosureProtocolRange::v2_preview(),
             capabilities: EffectClosureCapabilities {
                 effect_admission: true,
+                outcome_recording: true,
+                effect_completion: true,
+                session_query: true,
                 freeze_thaw: true,
                 commit_close: true,
                 // The native v1 test slice has a same-Registry scripted
@@ -668,6 +745,33 @@ impl EffectClosureProvider for ProcessEffectPeer {
         let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
         state.require_provider_effect(effect, prepared.token())?;
         state.commit_live_effect(prepared.token(), *metadata)
+    }
+
+    fn record_effect_outcome(
+        &self,
+        effect: &EffectRequest,
+        committed: &Self::CommitEvidence,
+        outcome: &EffectOutcome,
+    ) -> Result<Self::OutcomeEvidence, Self::Error> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.record_provider_effect_outcome(effect, committed, outcome)
+    }
+
+    fn complete_effect(
+        &self,
+        effect: &EffectRequest,
+        request: &Self::CompletionRequest,
+    ) -> Result<Self::CompletionEvidence, Self::Error> {
+        let mut state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.complete_provider_effect(effect, *request)
+    }
+
+    fn query_effect(
+        &self,
+        effect: &EffectRequest,
+    ) -> Result<Option<Self::QueryObservation>, Self::Error> {
+        let state = self.inner.lock().map_err(|_| EffectPeerError::Integrity)?;
+        state.query_provider_effect(effect)
     }
 }
 
@@ -945,7 +1049,10 @@ impl ProcessEffectPeerState {
                 commit_request: None,
                 committed: None,
                 outcome_request: None,
+                outcome_value: None,
                 outcome: None,
+                completion_request: None,
+                completion: None,
             },
         );
         self.pending_live_registration = None;
@@ -1070,13 +1177,24 @@ impl ProcessEffectPeerState {
         token: &ProcessLiveEffectToken,
         request: EffectPublicationRequest,
     ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        self.record_live_effect_outcome_with_value(token, request, None)
+    }
+
+    fn record_live_effect_outcome_with_value(
+        &mut self,
+        token: &ProcessLiveEffectToken,
+        request: EffectPublicationRequest,
+        outcome_value: Option<EffectOutcome>,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
         validate_live_outcome(self.config, &request)?;
         let live =
             self.live_effects.get(&token.effect).cloned().ok_or(EffectPeerError::TokenMismatch)?;
         let committed = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
         self.require_live_token(&live, token, &committed.token)?;
         if let Some(outcome) = live.outcome {
-            return if live.outcome_request.as_ref() == Some(&request) {
+            return if live.outcome_request.as_ref() == Some(&request)
+                && live.outcome_value == outcome_value
+            {
                 Ok(outcome.replayed())
             } else {
                 Err(EffectPeerError::PublicationConflict)
@@ -1105,8 +1223,125 @@ impl ProcessEffectPeerState {
         self.effects.insert(effect, request.record.clone());
         let stored = self.live_effects.get_mut(&effect).ok_or(EffectPeerError::Integrity)?;
         stored.outcome_request = Some(request);
+        stored.outcome_value = outcome_value;
         stored.outcome = Some(outcome.clone());
         Ok(outcome)
+    }
+
+    fn record_provider_effect_outcome(
+        &mut self,
+        effect: &EffectRequest,
+        committed: &ProcessLiveEffectAdvance,
+        outcome: &EffectOutcome,
+    ) -> Result<ProcessLiveEffectAdvance, EffectPeerError> {
+        let effect_id =
+            self.provider_live_effect_id(effect)?.ok_or(EffectPeerError::StepConflict)?;
+        let live = self.live_effects.get(&effect_id).cloned().ok_or(EffectPeerError::Integrity)?;
+        let stored_commit = live.committed.as_ref().ok_or(EffectPeerError::StepConflict)?;
+        self.require_live_token(&live, committed.token(), stored_commit.token())?;
+        if committed.verified_commit() != stored_commit.verified_commit() {
+            return Err(EffectPeerError::StepConflict);
+        }
+        let mut request = live.registration.clone();
+        request.record.classification = JointEffectClassification::Committed;
+        request.record.outcome_digest =
+            Some(canonical_digest(outcome).map_err(|_| EffectPeerError::Integrity)?);
+        request.record.tombstone_digest = None;
+        self.record_live_effect_outcome_with_value(
+            committed.token(),
+            request,
+            Some(outcome.clone()),
+        )
+    }
+
+    fn complete_provider_effect(
+        &mut self,
+        effect: &EffectRequest,
+        request: ProcessEffectCompletionRequest,
+    ) -> Result<ProcessEffectCompletionEvidence, EffectPeerError> {
+        let effect_id =
+            self.provider_live_effect_id(effect)?.ok_or(EffectPeerError::StepConflict)?;
+        let live = self.live_effects.get(&effect_id).cloned().ok_or(EffectPeerError::Integrity)?;
+        if live.outcome.is_none() || live.outcome_value.is_none() {
+            return Err(EffectPeerError::StepConflict);
+        }
+        if let Some(completion) = live.completion {
+            return if live.completion_request == Some(request) {
+                Ok(completion.replayed())
+            } else {
+                Err(EffectPeerError::PublicationConflict)
+            };
+        }
+        let native = CompleteEffect {
+            client_effect: live.native_client_effect,
+            binding_epoch: self.native_binding_epoch,
+            result: request.result,
+        };
+        let receipt = self.send(PeerCommand::Complete(native))?;
+        let NativeReceiptPayload::EffectCompleted(payload) = receipt.payload else {
+            return Err(rejected("complete returned the wrong native payload"));
+        };
+        if payload.client_effect != native.client_effect
+            || payload.binding_epoch != native.binding_epoch
+            || payload.terminal_sequence == 0
+            || !payload.publication_pending
+        {
+            return Err(rejected("completed payload did not bind the staged effect identity"));
+        }
+        let completion = ProcessEffectCompletionEvidence {
+            result: request.result,
+            replay: false,
+            native_sequence: receipt.sequence,
+            native_request_sha256: receipt.request_sha256,
+            native_receipt_sha256: receipt.receipt_sha256,
+        };
+        let stored = self.live_effects.get_mut(&effect_id).ok_or(EffectPeerError::Integrity)?;
+        stored.completion_request = Some(request);
+        stored.completion = Some(completion.clone());
+        Ok(completion)
+    }
+
+    fn query_provider_effect(
+        &self,
+        effect: &EffectRequest,
+    ) -> Result<Option<ProcessEffectQueryObservation>, EffectPeerError> {
+        let Some(effect_id) = self.provider_live_effect_id(effect)? else {
+            return Ok(None);
+        };
+        let live = self.live_effects.get(&effect_id).ok_or(EffectPeerError::Integrity)?;
+        let phase = if live.completion.is_some() {
+            ProcessEffectQueryPhase::Completed
+        } else if live.outcome.is_some() {
+            ProcessEffectQueryPhase::OutcomeRecorded
+        } else if live.committed.is_some() {
+            ProcessEffectQueryPhase::Committed
+        } else if live.prepared.is_some() {
+            ProcessEffectQueryPhase::Prepared
+        } else {
+            ProcessEffectQueryPhase::Registered
+        };
+        Ok(Some(ProcessEffectQueryObservation { phase, outcome: live.outcome_value.clone() }))
+    }
+
+    fn provider_live_effect_id(
+        &self,
+        effect: &EffectRequest,
+    ) -> Result<Option<Identity>, EffectPeerError> {
+        let mut matching_operation = self.live_effects.iter().filter(|(_, live)| {
+            live.effect_request
+                .as_ref()
+                .is_some_and(|candidate| candidate.operation == effect.operation)
+        });
+        let Some((effect_id, live)) = matching_operation.next() else {
+            return Ok(None);
+        };
+        if matching_operation.next().is_some() {
+            return Err(EffectPeerError::Integrity);
+        }
+        if live.effect_request.as_ref() != Some(effect) {
+            return Err(EffectPeerError::PublicationConflict);
+        }
+        Ok(Some(*effect_id))
     }
 
     fn freeze(
