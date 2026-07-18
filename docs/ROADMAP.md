@@ -566,8 +566,16 @@ retained-device recovery, real OSTD/IRQ/SMP, reboot recovery, or cross-host
 execution. Native and neutral wire v1 remain frozen; new provider capabilities
 belong to v2 or an explicitly versioned extension.
 
-The bounded 0.1 implementation target now separates two explicit v2-preview
-profiles. `Compatibility` preserves the existing Stage 3 `start`,
+The bounded 0.1 implementation target now separates two explicit profiles on
+effect-closure provider protocol 2.1. Protocol 2.0 remains a historical
+contract: its immutable fault-matrix v1 rejects a canonical outcome after
+`GuestFailed` and does not promise exact terminal-finish replay. Fault-matrix
+v2 is the current 2.1 conformance contract and adds exact same-fence/same-
+outcome finish replay, conflicting-finish rejection, terminal dispatch query,
+and canonical outcome replay/conflict after either guest result. This provider
+SPI versioning does not alter the frozen neutral or native wire v1.
+
+`Compatibility` preserves the existing Stage 3 `start`,
 `execute(Start)`, `start_prepared`, and legacy effect-publication behavior and
 is therefore not an admission boundary. `AdmissionRequired` rejects those raw
 Start/publication paths, binds Register through dispatch to the complete
@@ -582,7 +590,12 @@ coordinator, and owned-provider paths cannot dispatch Start without the same
 consumed authorization. A mismatch consumes the gate. The guest return/failure
 then closes both sink and closure-provider fences; a missing outcome
 acknowledgement remains consumed and fails closed rather than authorizing a
-retry. This is a same-boot, process-local reference/process-adapter contract:
+retry. An outer `Ok` from `start_admitted` means that the canonical outcome was
+recorded, not that the guest succeeded; callers must inspect `execution.call()`.
+The mechanism-side fail-closed claim also requires `ProfilePort` to discard its
+armed or consumed gate before any `finish_profile_dispatch` return, including
+an error. An arbitrary unqualified `ProfilePort` implementation is outside that
+claim. This is a same-boot, process-local reference/process-adapter contract:
 the sink gate is not crash-persistent, does not isolate a separately opened
 same-UID provider instance, and does not qualify a production Nexus adapter or
 general exactly-once effects.
