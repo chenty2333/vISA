@@ -1,6 +1,6 @@
 # vISA 0.1 exact-version release contract
 
-Status: frozen target contract; not release-ready.
+Status: immutable release target; the development ledger is not release-ready.
 
 The machine authority is [`visa-0.1.toml`](visa-0.1.toml). It defines one exact
 product cell: vISA `0.1.0`, same host and same boot, Linux x86-64, with at most

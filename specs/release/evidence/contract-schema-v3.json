@@ -1,7 +1,0 @@
-{
-  "schema": "visa.development-readiness-evidence.v1",
-  "readiness_id": "contract-schema-frozen",
-  "target_path": "specs/release/visa-0.1.toml",
-  "target_sha256": "4561ea97d87bb885ba397982a2b377ddbdda926d3d0285e7a79cc997d46bd612",
-  "claim": "visa.release-contract.v1 revision 3 separates immutable target, mutable development readiness, and exact-tag external release closure"
-}

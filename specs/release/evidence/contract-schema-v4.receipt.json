@@ -2,11 +2,11 @@
   "schema": "visa.development-readiness-verifier-receipt.v1",
   "readiness_id": "contract-schema-frozen",
   "target_path": "specs/release/visa-0.1.toml",
-  "target_sha256": "4561ea97d87bb885ba397982a2b377ddbdda926d3d0285e7a79cc997d46bd612",
+  "target_sha256": "1b485224c93791513509631d0c2da8c10712a008c0d5dafae989fdb13379633d",
   "verifier_command": "python3 scripts/check-release-contract.py && python3 scripts/test-check-release-contract.py -q",
   "result": "passed",
   "input_sha256": {
-    "specs/release/visa-0.1.toml": "4561ea97d87bb885ba397982a2b377ddbdda926d3d0285e7a79cc997d46bd612",
-    "specs/release/evidence/contract-schema-v3.json": "4ebe8db8b2cb4d320f41424d155d789057b2e411bc5d78bac0edff8112118282"
+    "specs/release/visa-0.1.toml": "1b485224c93791513509631d0c2da8c10712a008c0d5dafae989fdb13379633d",
+    "specs/release/evidence/contract-schema-v4.json": "71a9132515a404fd8820afdddaca62bcbc3eabc8af0a8cb092bb6c87ef1a06a2"
   }
 }

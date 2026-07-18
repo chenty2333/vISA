@@ -291,8 +291,8 @@ def check_header(document: dict[str, Any]) -> None:
     expected = {
         "schema": "visa.release-contract.v1",
         "contract_id": "visa-product-0.1",
-        "contract_revision": 3,
-        "status": "frozen-target-not-release-ready",
+        "contract_revision": 4,
+        "status": "immutable-release-target",
         "product_name": "vISA",
         "product_version": "0.1.0",
         "compatibility_policy": "exact-version-only",
@@ -410,18 +410,13 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
         r"^pub\(crate\) const MAX_JSONL_MESSAGE_BYTES: usize = 1024 \* 1024;$",
         "existing product JSONL bound",
     )
-    common_pending = {
-        "status": "required-but-unsatisfied",
+    common_contract = {
         "protocol_major": 1,
         "protocol_minor": 0,
         "framing_profile": "visa.local-uds-postcard.v1",
-        "schema_path": "",
-        "schema_sha256": "",
-        "golden_corpus_path": "",
-        "golden_corpus_sha256": "",
     }
     cli_agent = {
-        **common_pending,
+        **common_contract,
         "schema": "visa.agent.control.v1",
         "magic": "VISACTL1",
         "request_enum_namespace": "visa.agent.control.request.v1",
@@ -437,7 +432,7 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
         "timeout_disposition": "unknown-query-or-exact-replay-never-inferred-abort",
     }
     ownership = {
-        **common_pending,
+        **common_contract,
         "schema": "visa.ownership.local.v1",
         "magic": "VISAOWN1",
         "request_enum_namespace": "visa.ownership.local.request.v1",
@@ -458,7 +453,7 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
         "timeout_disposition": "unknown-query-or-exact-replay-never-inferred-abort",
     }
     nexus = {
-        **common_pending,
+        **common_contract,
         "schema": "visa.nexus-adapter.local.v1",
         "magic": "VISANEX1",
         "request_enum_namespace": "visa.nexus-adapter.local.request.v1",
@@ -519,7 +514,6 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
     require_exact_value(
         document["ownership_service"],
         {
-            "status": "required-but-unsatisfied",
             "binary": "visa-ownershipd",
             "decision_authority": "sole-reserve-seal-abort-commit-authority",
             "storage": "single-sqlite-wal-full",
@@ -535,8 +529,6 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
             "controller_store_access": "none",
             "agent_store_access": "none-rpc-only",
             "nexus_store_access": "none",
-            "release_source_revision": "",
-            "release_executable_sha256": "",
         },
         "ownership service",
     )
@@ -546,8 +538,6 @@ def check_core_namespaces(document: dict[str, Any], root: Path) -> None:
     require_exact_value(
         document["portable_contract"],
         {
-            "crate": "contract_core",
-            "crate_version": "0.3.0",
             "schema_major": 1,
             "schema_minor": 0,
             "canonical_encoding": "postcard-1.1.3",
@@ -558,8 +548,6 @@ def check_core_namespaces(document: dict[str, Any], root: Path) -> None:
     require_exact_value(
         document["joint_protocol"],
         {
-            "crate": "joint_handoff_core",
-            "crate_version": "0.1.0",
             "protocol_major": 1,
             "protocol_minor": 0,
             "canonical_encoding": "postcard-1.1.3",
@@ -569,7 +557,7 @@ def check_core_namespaces(document: dict[str, Any], root: Path) -> None:
     )
     require_exact_value(
         document["cooperative_profile"],
-        {"crate": "visa_profile", "crate_version": "0.2.0", "profile_major": 1, "profile_minor": 0},
+        {"profile_major": 1, "profile_minor": 0},
         "cooperative profile",
     )
 
@@ -763,15 +751,15 @@ def check_wits(document: dict[str, Any], root: Path) -> None:
 def check_golden_vectors(document: dict[str, Any], root: Path) -> None:
     entries = document["golden_vector"]
     require(isinstance(entries, list), "golden_vector must be an array")
-    observed = [(entry.get("id"), entry.get("type"), entry.get("test_path")) for entry in entries]
-    require_exact_value(observed, EXPECTED_GOLDEN_VECTORS, "golden-vector identities")
-    for entry in entries:
+    observed = [(entry.get("id"), entry.get("type")) for entry in entries]
+    expected = [(vector_id, type_name) for vector_id, type_name, _ in EXPECTED_GOLDEN_VECTORS]
+    require_exact_value(observed, expected, "golden-vector identities")
+    for entry, (_, _, test_path) in zip(entries, EXPECTED_GOLDEN_VECTORS, strict=True):
         require_exact_keys(
             entry,
             {
                 "id",
                 "type",
-                "test_path",
                 "semantic_value",
                 "canonical_encoding",
                 "bytes_hex",
@@ -787,7 +775,7 @@ def check_golden_vectors(document: dict[str, Any], root: Path) -> None:
         require_exact_value(
             hashlib.sha256(raw).hexdigest(), entry["sha256"], f"{entry['id']} SHA-256"
         )
-        test_source = source_text(root, entry["test_path"])
+        test_source = source_text(root, test_path)
         require(test_source.count(entry["id"]) == 1, f"{entry['id']} must occur once in its Rust test")
         require(
             test_source.count(f'"{entry["bytes_hex"]}"') == 1,
@@ -809,10 +797,9 @@ def check_release_semantic_vectors(document: dict[str, Any], root: Path) -> None
     for entry in entries:
         require_exact_keys(
             entry,
-            {"id", "type", "test_path", "canonical_encoding", "bytes_hex", "sha256"},
+            {"id", "type", "canonical_encoding", "bytes_hex", "sha256"},
             f"release vector {entry.get('id')}",
         )
-        require_exact_value(entry["test_path"], test_path, f"{entry['id']} test path")
         require_exact_value(entry["canonical_encoding"], "postcard-1.1.3", f"{entry['id']} encoding")
         require(re.fullmatch(r"(?:[0-9a-f]{2})+", entry["bytes_hex"]) is not None, f"{entry['id']} bytes must be hex")
         require(is_lower_hex(entry["sha256"], 64), f"{entry['id']} SHA-256 must be lowercase hex")
@@ -835,8 +822,7 @@ def check_release_semantic_corpus(document: dict[str, Any]) -> None:
     require_exact_value(
         document["release_semantic_corpus"],
         {
-            "status": "required-but-unsatisfied",
-            "seed_vectors_status": "representative-seeds-only-not-release-closure",
+            "seed_baseline": "representative-seeds-only-not-release-closure",
             "inventory_schema": "visa.release-semantic-type-inventory.v1",
             "corpus_schema": "visa.release-semantic-golden-corpus.v1",
             "required_crates": ["contract_core", "joint_handoff_core", "visa_profile"],
@@ -848,13 +834,7 @@ def check_release_semantic_corpus(document: dict[str, Any]) -> None:
                 "optional-empty-nonempty-and-bounded-extrema",
                 "rust-constructed-corpus-not-source-literal-presence",
             ],
-            "inventory_path": "",
-            "inventory_sha256": "",
-            "corpus_path": "",
-            "corpus_sha256": "",
-            "generator_source_revision": "",
-            "verifier_receipt_path": "",
-            "verifier_receipt_sha256": "",
+            "closure_evidence": "exact-tag-external-index-artifact-and-verifier-receipt",
         },
         "release semantic corpus closure",
     )
@@ -863,7 +843,7 @@ def check_release_semantic_corpus(document: dict[str, Any]) -> None:
 def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
     neutral = document["neutral_wire_v1"]
     expected_neutral = {
-        "status": "frozen",
+        "provenance": "frozen-local-source-baseline",
         "schema": "visa-nexus-handoff.wire-contract.v1",
         "protocol_major": 1,
         "protocol_minor": 0,
@@ -886,7 +866,7 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
 
     historical = document["historical_nexus_mapping_v1"]
     expected_historical = {
-        "status": "earned-historical-evidence-not-release-adapter",
+        "provenance": "earned-historical-evidence-not-release-adapter",
         "schema": "visa-nexus-handoff.nexus-native-v1-refinement.v1",
         "path": "third_party/joint-handoff-qualification/nexus-native-v1-refinement.toml",
         "sha256": "f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5",
@@ -901,8 +881,8 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
 
     nexus = document["nexus_native_v1"]
     expected_nexus = {
-        "status": "frozen-upstream-contract",
-        "release_api_status": "frozen-source-contract-not-nexus-v0.1.0-released-api",
+        "provenance": "frozen-upstream-contract",
+        "api_provenance": "frozen-source-contract-not-nexus-v0.1.0-released-api",
         "implementation_id": "nexus-effect-peer",
         "repository": "https://github.com/chenty2333/Nexus",
         "freeze_source_revision": "cb773539401107efe7a7ad036b80ff40d8ec305c",
@@ -927,12 +907,15 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
     require_exact_value(
         freeze_lock,
         {
-            "status": "required-but-unsatisfied",
             "upstream_revision": nexus["freeze_source_revision"],
             "upstream_path": nexus["freeze_source_path"],
             "upstream_sha256": nexus["freeze_source_sha256"],
-            "local_path": "",
-            "local_sha256": "",
+            "required_local_path": (
+                "specs/joint-handoff/nexus-effect-peer-native-v1-freeze.json"
+            ),
+            "local_artifact_requirement": (
+                "byte-identical-copy-bound-by-exact-tag-external-evidence"
+            ),
         },
         "Nexus freeze source lock",
     )
@@ -941,16 +924,15 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
     require_exact_value(
         artifact,
         {
-            "status": "required-but-unsatisfied",
             "kind": "nexus-owned-native-v1-wire-crate-or-release-bundle",
             "wire_family": "nexus-effect-peer-native-v1",
             "freeze_contract_id": "nexus-effect-peer-native-v1",
             "license": "MPL-2.0",
             "portal_v2_eligible": False,
             "freeze_origin_revision": "cb773539401107efe7a7ad036b80ff40d8ec305c",
-            "artifact_id": "",
-            "source_revision": "",
-            "sha256": "",
+            "identity_requirement": (
+                "artifact-id-source-revision-and-sha256-in-exact-tag-external-evidence"
+            ),
         },
         "Nexus wire release artifact",
     )
@@ -959,8 +941,6 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
     require_exact_value(
         mapping,
         {
-            "status": "required-but-unsatisfied",
-            "upstream_candidate_status": "candidate-unqualified",
             "schema": "visa-nexus-handoff.nexus-effect-peer-native-v1-refinement.v2",
             "contract_id": "current-nexus-effect-peer-native-v1-to-neutral-wire-v1",
             "repository": "https://github.com/chenty2333/visa-nexus-handoff",
@@ -969,9 +949,9 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
             "neutral_wire_schema": "visa-nexus-handoff.wire-contract.v1",
             "nexus_freeze_contract_id": "nexus-effect-peer-native-v1",
             "nexus_canonical_snapshot_sha256": nexus["canonical_snapshot_sha256"],
-            "source_revision": "",
-            "source_sha256": "",
-            "local_lock_path": "",
+            "qualification_requirement": (
+                "exact-tag-source-revision-sha256-local-lock-and-verifier-receipt"
+            ),
         },
         "required Nexus mapping v2",
     )
@@ -979,7 +959,7 @@ def check_neutral_and_nexus(document: dict[str, Any], root: Path) -> None:
 
 def check_provider_spi(document: dict[str, Any], root: Path) -> None:
     expected = {
-        "status": "in-tree-preview-not-public-0.1-abi",
+        "provenance": "in-tree-preview-not-public-0.1-abi",
         "trait": "substrate_api::EffectClosureProvider",
         "protocol_major": 2,
         "protocol_minor": 0,
@@ -997,10 +977,9 @@ def check_provider_spi(document: dict[str, Any], root: Path) -> None:
             "freeze-thaw",
             "commit-close",
         ],
-        "release_adapter_revision": "",
-        "release_adapter_executable_sha256": "",
-        "release_provider_revision": "",
-        "release_provider_executable_sha256": "",
+        "release_identity_evidence": (
+            "exact-tag-adapter-and-provider-revisions-and-executable-sha256"
+        ),
     }
     require_exact_value(document["provider_spi"], expected, "provider SPI")
     path = "crates/backend/substrate_api/src/effect_closure.rs"
@@ -1023,7 +1002,6 @@ def check_provider_dispatch_fence(document: dict[str, Any]) -> None:
     require_exact_value(
         document["provider_dispatch_fence"],
         {
-            "status": "required-but-unsatisfied",
             "registry_process": "nexus-effect-peer",
             "registry_supervisor_and_native_adapter": "visa-nexusd",
             "native_commit_validation": (
@@ -1077,16 +1055,18 @@ def check_public_surface(document: dict[str, Any]) -> None:
             {
                 "id": "visa-cli",
                 "binary": "visa",
-                "status": "required-but-unsatisfied",
                 "frozen_boundary": "binary-name-and-role",
                 "required_responsibilities": ["status", "run", "handoff", "reconcile", "verify-evidence"],
-                "typed_outcomes": "required-but-unsatisfied",
-                "exit_code_policy": "required-but-unsatisfied",
+                "typed_outcome_requirement": (
+                    "versioned-total-success-rejected-unknown-operator-and-internal-classes"
+                ),
+                "exit_code_requirement": (
+                    "documented-stable-nonoverlapping-mapping-for-every-typed-outcome"
+                ),
             },
             {
                 "id": "visa-agent",
                 "binary": "visa-agent",
-                "status": "required-but-unsatisfied",
                 "frozen_boundary": "binary-name-direct-runtime-role-local-sink-and-control-transport",
                 "required_responsibilities": [
                     "source-or-destination-agent-selected-at-startup",
@@ -1095,13 +1075,16 @@ def check_public_surface(document: dict[str, Any]) -> None:
                     "durable-local-projection",
                     "same-uid-filesystem-uds-service",
                 ],
-                "typed_outcomes": "required-but-unsatisfied",
-                "exit_code_policy": "required-but-unsatisfied",
+                "typed_outcome_requirement": (
+                    "rpc-schema-total-success-rejected-unknown-and-internal-classes"
+                ),
+                "exit_code_requirement": (
+                    "documented-stable-clean-config-integrity-temporary-and-internal-classes"
+                ),
             },
             {
                 "id": "visa-ownershipd",
                 "binary": "visa-ownershipd",
-                "status": "required-but-unsatisfied",
                 "frozen_boundary": "binary-name-single-authority-role-store-and-local-rpc",
                 "required_responsibilities": [
                     "exclusive-ownership-store",
@@ -1109,13 +1092,16 @@ def check_public_surface(document: dict[str, Any]) -> None:
                     "restart-and-exact-request-replay",
                     "same-uid-filesystem-uds-service",
                 ],
-                "typed_outcomes": "required-but-unsatisfied",
-                "exit_code_policy": "required-but-unsatisfied",
+                "typed_outcome_requirement": (
+                    "rpc-schema-total-success-rejected-unknown-and-internal-classes"
+                ),
+                "exit_code_requirement": (
+                    "documented-stable-clean-config-integrity-temporary-and-internal-classes"
+                ),
             },
             {
                 "id": "visa-nexusd",
                 "binary": "visa-nexusd",
-                "status": "required-but-unsatisfied",
                 "frozen_boundary": (
                     "binary-name-native-v1-adapter-grant-ledger-peer-supervisor-and-local-rpc"
                 ),
@@ -1125,8 +1111,12 @@ def check_public_surface(document: dict[str, Any]) -> None:
                     "single-exact-dispatch-grant-ledger",
                     "same-uid-filesystem-uds-service",
                 ],
-                "typed_outcomes": "required-but-unsatisfied",
-                "exit_code_policy": "required-but-unsatisfied",
+                "typed_outcome_requirement": (
+                    "rpc-schema-total-success-rejected-unknown-and-internal-classes"
+                ),
+                "exit_code_requirement": (
+                    "documented-stable-clean-config-integrity-temporary-and-internal-classes"
+                ),
             },
         ],
         "public CLI/agent surface",
@@ -1216,11 +1206,10 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
     support = document["support_policy"]
     require_exact_keys(
         support,
-        {"required_release_cells", "currently_release_supported_cells", "reject_at_admission", "non_claims"},
+        {"required_release_cells", "reject_at_admission", "non_claims"},
         "support policy",
     )
     require_exact_value(support["required_release_cells"], EXPECTED_REQUIRED_CELLS, "required release cells")
-    require_exact_value(support["currently_release_supported_cells"], [], "current release support")
     require_exact_value(
         support["reject_at_admission"],
         [
@@ -1394,6 +1383,7 @@ def check_development_readiness(
             "target_path",
             "target_sha256",
             "status",
+            "observed_cells",
             "satisfied_ids",
             "pending_ids",
             "evidence",
@@ -1414,6 +1404,16 @@ def check_development_readiness(
         ledger["status"],
         "development-progress-not-release-evidence",
         "development readiness status",
+    )
+    observed_cells = ledger["observed_cells"]
+    require(isinstance(observed_cells, list), "observed development cells must be a list")
+    require(
+        len(observed_cells) == len(set(observed_cells)),
+        "observed development cells must be unique",
+    )
+    require(
+        set(observed_cells) <= set(EXPECTED_REQUIRED_CELLS),
+        "observed development cells must be target release cells",
     )
     expected_contract = (root / ledger["target_path"]).resolve()
     require(

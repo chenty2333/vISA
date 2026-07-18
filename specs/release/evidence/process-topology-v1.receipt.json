@@ -2,11 +2,11 @@
   "schema": "visa.development-readiness-verifier-receipt.v1",
   "readiness_id": "process-topology-frozen",
   "target_path": "specs/release/visa-0.1.toml",
-  "target_sha256": "4561ea97d87bb885ba397982a2b377ddbdda926d3d0285e7a79cc997d46bd612",
+  "target_sha256": "1b485224c93791513509631d0c2da8c10712a008c0d5dafae989fdb13379633d",
   "verifier_command": "python3 scripts/check-release-contract.py && python3 scripts/test-check-release-contract.py -q",
   "result": "passed",
   "input_sha256": {
-    "specs/release/visa-0.1.toml": "4561ea97d87bb885ba397982a2b377ddbdda926d3d0285e7a79cc997d46bd612",
-    "specs/release/evidence/process-topology-v1.json": "f49193daaa20e9cce6e937cbf32e47c6793e903d7ff8340b82915e18fa640808"
+    "specs/release/visa-0.1.toml": "1b485224c93791513509631d0c2da8c10712a008c0d5dafae989fdb13379633d",
+    "specs/release/evidence/process-topology-v1.json": "93f3a773170fed72ec0bdfbf7d71d737f8a4db75459eb95a0e84551d42851955"
   }
 }

@@ -186,6 +186,34 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertNotIn("satisfied_ids", document["release_closure"])
         self.assertNotIn("pending_ids", document["release_closure"])
 
+    def test_immutable_target_contains_no_mutable_progress_or_empty_evidence_slots(self) -> None:
+        document = CHECKER.load_contract()
+        forbidden_keys = {
+            "satisfied_ids",
+            "pending_ids",
+            "evidence",
+            "release_ready",
+            "currently_release_supported_cells",
+        }
+
+        def inspect(value: object, path: tuple[str, ...] = ()) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    self.assertNotIn(key, forbidden_keys, ".".join((*path, key)))
+                    if key == "status":
+                        self.assertEqual(path, ())
+                        self.assertEqual(nested, "immutable-release-target")
+                    inspect(nested, (*path, key))
+            elif isinstance(value, list):
+                for index, nested in enumerate(value):
+                    inspect(nested, (*path, str(index)))
+            elif isinstance(value, str):
+                self.assertNotEqual(value, "")
+                self.assertNotEqual(value, "required-but-unsatisfied")
+                self.assertNotEqual(value, "candidate-unqualified")
+
+        inspect(document)
+
     def test_release_ready_mode_fails_closed_on_pending_items(self) -> None:
         result = subprocess.run(
             [sys.executable, str(CHECKER_PATH), "--release-ready"],
@@ -362,7 +390,6 @@ class ReleaseContractTests(unittest.TestCase):
     def test_postcard_golden_bytes_drift_is_rejected(self) -> None:
         old = '''id = "portable-contract-schema-version-1.0"
 type = "contract_core::SchemaVersion"
-test_path = "crates/core/contract_core/tests/release_vectors.rs"
 semantic_value = "major=1,minor=0"
 canonical_encoding = "postcard-1.1.3"
 bytes_hex = "0100"'''
@@ -381,8 +408,8 @@ bytes_hex = "0100"'''
 
     def test_seed_vectors_cannot_close_the_semantic_corpus(self) -> None:
         path = self.mutated_contract(
-            'seed_vectors_status = "representative-seeds-only-not-release-closure"',
-            'seed_vectors_status = "complete-release-corpus"',
+            'seed_baseline = "representative-seeds-only-not-release-closure"',
+            'seed_baseline = "complete-release-corpus"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "semantic corpus closure drifted"):
             CHECKER.validate(path)
@@ -414,8 +441,8 @@ bytes_hex = "0100"'''
 
     def test_nexus_freeze_cannot_be_called_a_released_v01_api(self) -> None:
         path = self.mutated_contract(
-            'release_api_status = "frozen-source-contract-not-nexus-v0.1.0-released-api"',
-            'release_api_status = "nexus-v0.1.0-released-api"',
+            'api_provenance = "frozen-source-contract-not-nexus-v0.1.0-released-api"',
+            'api_provenance = "nexus-v0.1.0-released-api"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "Nexus native-v1 freeze drifted"):
             CHECKER.validate(path)
@@ -492,18 +519,18 @@ source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retai
 
     def test_release_ready_field_cannot_be_written_into_immutable_target(self) -> None:
         path = self.mutated_contract(
-            'contract_revision = 3',
-            'contract_revision = 3\nrelease_ready = true',
+            'contract_revision = 4',
+            'contract_revision = 4\nrelease_ready = true',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "unknown=.*release_ready"):
             CHECKER.validate(path)
 
-    def test_supported_cells_cannot_be_claimed_before_closure(self) -> None:
+    def test_current_supported_cells_cannot_be_written_into_immutable_target(self) -> None:
         path = self.mutated_contract(
-            "currently_release_supported_cells = []",
-            'currently_release_supported_cells = ["single-host-wasmtime-timer-kv"]',
+            "[support_policy]\nrequired_release_cells = [",
+            '[support_policy]\ncurrently_release_supported_cells = []\nrequired_release_cells = [',
         )
-        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "current release support drifted"):
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "support policy keys drifted"):
             CHECKER.validate(path)
 
     def test_development_ledger_target_digest_mismatch_is_rejected(self) -> None:
@@ -601,8 +628,8 @@ sha256 = "709eb08784d446068bbaed47dbfb1dddd637f957cf5de1f3713d5be0aa7d5920"'''
 
     def test_unknown_contract_key_is_rejected(self) -> None:
         path = self.mutated_contract(
-            'contract_revision = 3',
-            'contract_revision = 3\nunreviewed_claim = "production-ready"',
+            'contract_revision = 4',
+            'contract_revision = 4\nunreviewed_claim = "production-ready"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "unknown=.*unreviewed_claim"):
             CHECKER.validate(path)

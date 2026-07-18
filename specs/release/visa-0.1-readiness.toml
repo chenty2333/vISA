@@ -1,7 +1,8 @@
 schema = "visa.development-readiness-ledger.v1"
 target_path = "specs/release/visa-0.1.toml"
-target_sha256 = "4561ea97d87bb885ba397982a2b377ddbdda926d3d0285e7a79cc997d46bd612"
+target_sha256 = "1b485224c93791513509631d0c2da8c10712a008c0d5dafae989fdb13379633d"
 status = "development-progress-not-release-evidence"
+observed_cells = []
 satisfied_ids = ["contract-schema-frozen", "process-topology-frozen"]
 pending_ids = [
   "public-cli",
@@ -29,14 +30,14 @@ pending_ids = [
 
 [[evidence]]
 id = "contract-schema-frozen"
-evidence_path = "specs/release/evidence/contract-schema-v3.json"
-evidence_sha256 = "4ebe8db8b2cb4d320f41424d155d789057b2e411bc5d78bac0edff8112118282"
-verifier_receipt_path = "specs/release/evidence/contract-schema-v3.receipt.json"
-verifier_receipt_sha256 = "001711cb09e96e355d73f10a14d93227efbb6ca43733374ea257014ac63654fa"
+evidence_path = "specs/release/evidence/contract-schema-v4.json"
+evidence_sha256 = "71a9132515a404fd8820afdddaca62bcbc3eabc8af0a8cb092bb6c87ef1a06a2"
+verifier_receipt_path = "specs/release/evidence/contract-schema-v4.receipt.json"
+verifier_receipt_sha256 = "41ce64ba32720e0c39e450d91dc8928bcafcc5af2a493f8a1b803c063ac24f77"
 
 [[evidence]]
 id = "process-topology-frozen"
 evidence_path = "specs/release/evidence/process-topology-v1.json"
-evidence_sha256 = "f49193daaa20e9cce6e937cbf32e47c6793e903d7ff8340b82915e18fa640808"
+evidence_sha256 = "93f3a773170fed72ec0bdfbf7d71d737f8a4db75459eb95a0e84551d42851955"
 verifier_receipt_path = "specs/release/evidence/process-topology-v1.receipt.json"
-verifier_receipt_sha256 = "c06f1a592e821ce1d3448099e03e9b3076b8f8e3946cd82c53c43a2d9374fc17"
+verifier_receipt_sha256 = "e0e7e049e86303cbe3d2faa5d72b672b561b9d92df8ccfbdaf773da287d4b8a5"
