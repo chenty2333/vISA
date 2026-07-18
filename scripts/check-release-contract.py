@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import stat
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONTRACT = ROOT / "specs/release/visa-0.1.toml"
+DEFAULT_READINESS_LEDGER = ROOT / "specs/release/visa-0.1-readiness.toml"
 
 EXPECTED_TOP_LEVEL_KEYS = {
     "schema",
@@ -37,8 +39,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "joint_protocol",
     "cooperative_profile",
     "resource_profile",
-    "build_crate_lock",
-    "build_provenance",
+    "release_dependency_constraints",
     "wit_lock",
     "golden_vector",
     "release_semantic_vector",
@@ -56,7 +57,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "failure_matrix",
     "admission",
     "evidence_policy",
-    "readiness",
+    "release_closure",
 }
 
 EXPECTED_VERSION_NAMESPACES = {
@@ -89,29 +90,14 @@ EXPECTED_SCOPE = {
     "effect_provider_topology": "one-nexus-effect-peer-child-of-visa-nexusd",
     "controller_child_processes": "none",
     "agent_child_processes": "none",
-    "local_control_transport": "bounded-json-lines-lf-over-filesystem-unix-stream",
+    "local_control_transport": (
+        "fixed-header-length-prefixed-postcard-1.1.3-over-filesystem-unix-stream"
+    ),
     "effect_provider_transport": "bounded-json-lines-lf",
     "network_control_transport": False,
     "failure_model": "same-boot-crash-stop-retry-reorder-lost-ack",
     "host_reboot_supported": False,
 }
-
-EXPECTED_CRATES = [
-    ("contract_core", "crates/core/contract_core/Cargo.toml", "0.3.0"),
-    ("joint_handoff_core", "crates/core/joint_handoff_core/Cargo.toml", "0.1.0"),
-    ("visa_profile", "crates/core/visa_profile/Cargo.toml", "0.2.0"),
-    ("semantic_core", "crates/core/semantic_core/Cargo.toml", "0.2.0"),
-    ("substrate_api", "crates/backend/substrate_api/Cargo.toml", "0.2.0"),
-    ("substrate_host", "crates/backend/substrate_host/Cargo.toml", "0.1.0"),
-    ("visa_runtime", "crates/runtime/visa_runtime/Cargo.toml", "0.2.0"),
-    ("visa_joint_handoff", "crates/runtime/visa_joint_handoff/Cargo.toml", "0.1.0"),
-    (
-        "visa_component_adapter",
-        "crates/runtime/visa_component_adapter/Cargo.toml",
-        "0.1.0",
-    ),
-    ("visa_wasmtime", "crates/runtime/visa_wasmtime/Cargo.toml", "0.2.0"),
-]
 
 EXPECTED_WITS = [
     (
@@ -305,7 +291,7 @@ def check_header(document: dict[str, Any]) -> None:
     expected = {
         "schema": "visa.release-contract.v1",
         "contract_id": "visa-product-0.1",
-        "contract_revision": 2,
+        "contract_revision": 3,
         "status": "frozen-target-not-release-ready",
         "product_name": "vISA",
         "product_version": "0.1.0",
@@ -344,12 +330,26 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
         "six-process topology",
     )
     defaults = {
-        "profile": "visa.local-uds-jsonl.v1",
-        "transport": "bounded-json-lines-lf-over-filesystem-unix-stream",
-        "encoding": "utf-8-json-deny-unknown-fields",
-        "max_frame_bytes_excluding_lf": 1_048_576,
+        "profile": "visa.local-uds-postcard.v1",
+        "transport": (
+            "fixed-header-length-prefixed-postcard-1.1.3-over-filesystem-unix-stream"
+        ),
+        "encoding": "postcard-1.1.3-canonical",
+        "header_layout": (
+            "magic[8]+major-u16-be+minor-u16-be+flags-u32-be+payload-len-u32-be"
+        ),
+        "header_bytes": 20,
+        "flags_required": 0,
+        "max_frame_bytes_including_header": 1_048_576,
+        "max_payload_bytes": 1_048_556,
+        "header_read_policy": (
+            "read-exactly-20-validate-magic-version-flags-and-length-before-payload-allocation"
+        ),
+        "canonical_decode_policy": (
+            "reject-trailing-bytes-and-require-byte-identical-reencode"
+        ),
         "max_inflight_mutations_per_connection": 1,
-        "large_artifact_policy": "digest-plus-secure-path-or-fd-reference-never-inline",
+        "large_artifact_policy": "digest-plus-secure-path-never-inline-no-fd-passing",
         "frame_limit_basis": (
             "measured-existing-jsonl-max-53663-native-and-profile-chunks-65536-"
             "product-jsonl-cap-1048576"
@@ -359,6 +359,16 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
         "profile_response_chunk_bound_bytes": 65_536,
         "existing_product_jsonl_bound_bytes": 1_048_576,
         "headroom_policy": "one-mib-control-envelope-with-large-artifacts-out-of-band",
+        "implementation_primitives": [
+            "std-unixlistener-unixstream",
+            "rustix-1.1.4-fs-net-process",
+            "joint-handoff-core-canonical-postcard-and-sha",
+        ],
+        "forbidden_protocol_dependencies": ["varlink", "zlink", "tarpc", "tonic"],
+        "compression": False,
+        "multiplexing": False,
+        "fd_passing": False,
+        "in_band_upgrade": False,
         "runtime_directory": "${XDG_RUNTIME_DIR}/visa/0.1",
         "runtime_directory_mode": "0700",
         "socket_mode": "0600",
@@ -374,8 +384,13 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
     require_exact_value(document["local_rpc_defaults"], defaults, "local RPC defaults")
     require(
         defaults["measured_existing_jsonl_max_bytes"]
-        < defaults["max_frame_bytes_excluding_lf"],
+        < defaults["max_payload_bytes"],
         "local RPC frame lacks measured-corpus headroom",
+    )
+    require(
+        defaults["header_bytes"] + defaults["max_payload_bytes"]
+        == defaults["max_frame_bytes_including_header"],
+        "local RPC header and payload bounds do not equal the whole-frame bound",
     )
     require_source_pattern(
         root,
@@ -399,7 +414,7 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
         "status": "required-but-unsatisfied",
         "protocol_major": 1,
         "protocol_minor": 0,
-        "framing_profile": "visa.local-uds-jsonl.v1",
+        "framing_profile": "visa.local-uds-postcard.v1",
         "schema_path": "",
         "schema_sha256": "",
         "golden_corpus_path": "",
@@ -408,6 +423,12 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
     cli_agent = {
         **common_pending,
         "schema": "visa.agent.control.v1",
+        "magic": "VISACTL1",
+        "request_enum_namespace": "visa.agent.control.request.v1",
+        "response_enum_namespace": "visa.agent.control.response.v1",
+        "error_namespace": "visa.agent.control.error.v1",
+        "replay_namespace": "visa.agent.control.replay.v1",
+        "golden_corpus_id": "visa.agent.control.golden.v1",
         "client": "visa-controller",
         "servers": ["source-visa-agent", "destination-visa-agent"],
         "required_operations": ["status", "run", "handoff", "reconcile", "verify-evidence"],
@@ -418,6 +439,12 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
     ownership = {
         **common_pending,
         "schema": "visa.ownership.local.v1",
+        "magic": "VISAOWN1",
+        "request_enum_namespace": "visa.ownership.local.request.v1",
+        "response_enum_namespace": "visa.ownership.local.response.v1",
+        "error_namespace": "visa.ownership.local.error.v1",
+        "replay_namespace": "visa.ownership.local.replay.v1",
+        "golden_corpus_id": "visa.ownership.local.golden.v1",
         "clients": ["source-visa-agent", "destination-visa-agent"],
         "server": "visa-ownershipd",
         "client_authority": (
@@ -433,6 +460,12 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
     nexus = {
         **common_pending,
         "schema": "visa.nexus-adapter.local.v1",
+        "magic": "VISANEX1",
+        "request_enum_namespace": "visa.nexus-adapter.local.request.v1",
+        "response_enum_namespace": "visa.nexus-adapter.local.response.v1",
+        "error_namespace": "visa.nexus-adapter.local.error.v1",
+        "replay_namespace": "visa.nexus-adapter.local.replay.v1",
+        "golden_corpus_id": "visa.nexus-adapter.local.golden.v1",
         "clients": ["source-visa-agent", "destination-visa-agent"],
         "server": "visa-nexusd",
         "required_operations": [
@@ -468,6 +501,20 @@ def check_process_topology_and_local_rpcs(document: dict[str, Any], root: Path) 
     require_exact_value(document["agent_nexus_rpc_v1"], nexus, "agent-Nexus RPC v1")
     schemas = {cli_agent["schema"], ownership["schema"], nexus["schema"]}
     require(len(schemas) == 3, "local RPC schemas must remain independent")
+    for field in (
+        "magic",
+        "request_enum_namespace",
+        "response_enum_namespace",
+        "error_namespace",
+        "replay_namespace",
+        "golden_corpus_id",
+    ):
+        values = [rpc[field] for rpc in (cli_agent, ownership, nexus)]
+        require(len(set(values)) == 3, f"local RPC {field} values must remain independent")
+    require(
+        all(len(rpc["magic"].encode("ascii")) == 8 for rpc in (cli_agent, ownership, nexus)),
+        "local RPC magic values must be exactly eight ASCII bytes",
+    )
 
     require_exact_value(
         document["ownership_service"],
@@ -622,48 +669,25 @@ def check_resource_profiles(document: dict[str, Any], root: Path) -> None:
     )
 
 
-def check_crates_and_dependencies(document: dict[str, Any], root: Path) -> None:
-    entries = document["build_crate_lock"]
-    require(isinstance(entries, list), "build_crate_lock must be an array")
-    for entry in entries:
-        require(isinstance(entry, dict), "build crate lock entries must be tables")
-        require_exact_keys(entry, {"name", "path", "version"}, "build crate lock entry")
-    observed = [(entry.get("name"), entry.get("path"), entry.get("version")) for entry in entries]
-    require_exact_value(observed, EXPECTED_CRATES, "build crate version locks")
-    for name, path, version in EXPECTED_CRATES:
-        cargo = load_toml_bytes(read_regular_file(root, path, f"{name} manifest"), path)
-        package = cargo.get("package")
-        require(isinstance(package, dict), f"{path} must define [package]")
-        require_exact_value(package.get("name"), name, f"{name} Cargo package name")
-        require_exact_value(package.get("version"), version, f"{name} Cargo package version")
-
-    implementation = document["build_provenance"]
+def check_dependency_constraints(document: dict[str, Any], root: Path) -> None:
+    constraints = document["release_dependency_constraints"]
     require_exact_value(
-        implementation,
+        constraints,
         {
-            "classification": "release-build-provenance-not-wire-or-product-compatibility",
-            "wasmtime": "43.0.2",
-            "rusqlite": "0.40.1-bundled",
-            "postcard": "1.1.3",
-            "cargo_lock_path": "Cargo.lock",
-            "cargo_lock_sha256": "7a85d5797581ee9665ce9cff97b52c6f4604ccc3cae6b7bf94c695cbdd48a304",
-            "rust_toolchain_path": "rust-toolchain.toml",
-            "rust_toolchain_sha256": "265d3cd0dc82929f39070011132b143bf58f28bb287011f61d36b95d5b4471cc",
-            "exact_release_tag_receipt": "required-but-unsatisfied",
+            "classification": "selected-target-constraints-not-complete-build-provenance",
+            "postcard_wire_codec": "1.1.3",
+            "rustix_local_ipc": "1.1.4-fs-net-process",
+            "wasmtime_release_choice": "43.0.2",
+            "rusqlite_release_choice": "0.40.1-bundled",
+            "complete_workspace_package_version_source_license_inventory": (
+                "external-evidence-index-only-at-exact-tag"
+            ),
+            "cargo_lock_digest": "external-evidence-index-only-at-exact-tag",
+            "rust_toolchain_digest": "external-evidence-index-only-at-exact-tag",
             "rust_trait_abi": "not-promised",
         },
-        "build provenance",
+        "release dependency constraints",
     )
-    for path_field, digest_field in (
-        ("cargo_lock_path", "cargo_lock_sha256"),
-        ("rust_toolchain_path", "rust_toolchain_sha256"),
-    ):
-        raw = read_regular_file(root, implementation[path_field], "build provenance")
-        require_exact_value(
-            hashlib.sha256(raw).hexdigest(),
-            implementation[digest_field],
-            f"{implementation[path_field]} build-provenance SHA-256",
-        )
     workspace = load_toml_bytes(read_regular_file(root, "Cargo.toml", "workspace manifest"), "Cargo.toml")
     wasmtime = workspace.get("workspace", {}).get("dependencies", {}).get("wasmtime")
     require(isinstance(wasmtime, dict), "workspace wasmtime dependency must be a table")
@@ -696,8 +720,16 @@ def check_crates_and_dependencies(document: dict[str, Any], root: Path) -> None:
         version = entry.get("version")
         if isinstance(name, str) and isinstance(version, str):
             versions_by_name.setdefault(name, set()).add(version)
-    for name, version in (("wasmtime", "43.0.2"), ("rusqlite", "0.40.1"), ("postcard", "1.1.3")):
-        require_exact_value(versions_by_name.get(name, set()), {version}, f"Cargo.lock {name} versions")
+    for name, version in (
+        ("wasmtime", "43.0.2"),
+        ("rusqlite", "0.40.1"),
+        ("postcard", "1.1.3"),
+        ("rustix", "1.1.4"),
+    ):
+        require(
+            version in versions_by_name.get(name, set()),
+            f"Cargo.lock does not contain selected {name} {version}",
+        )
 
 
 def check_wits(document: dict[str, Any], root: Path) -> None:
@@ -1240,7 +1272,7 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
     require_exact_value(admission.get("schema_check"), "python3 scripts/check-release-contract.py", "schema command")
     require_exact_value(
         admission.get("release_ready_check"),
-        "python3 scripts/check-release-contract.py --release-ready",
+        "python3 scripts/check-release-contract.py --release-ready --evidence-index PATH",
         "release-ready command",
     )
     require_exact_value(
@@ -1266,103 +1298,201 @@ def check_support_and_admission(document: dict[str, Any]) -> None:
     )
 
 
-def check_readiness(document: dict[str, Any], root: Path) -> list[str]:
+def check_evidence_policy_and_required_ids(document: dict[str, Any]) -> list[str]:
     require_exact_value(
         document["evidence_policy"],
         {
+            "closure_location": "external-immutable-bundle-not-release-source-tree",
+            "development_ledger_schema": "visa.development-readiness-ledger.v1",
+            "development_ledger_path": "specs/release/visa-0.1-readiness.toml",
+            "development_receipt_schema": (
+                "visa.development-readiness-verifier-receipt.v1"
+            ),
+            "development_path_policy": "repository-relative-regular-file-no-symlink",
+            "target_path": "specs/release/visa-0.1.toml",
+            "index_schema": "visa.release-readiness-index.v1",
+            "receipt_schema": "visa.release-readiness-verifier-receipt.v1",
+            "build_inventory_schema": "visa.release-build-inventory.v1",
+            "build_inventory_generation": (
+                "cargo-metadata-format-version-1-locked-complete-resolve-plus-license-and-"
+                "source-normalization"
+            ),
+            "build_inventory_verification": (
+                "independent-completeness-check-against-tagged-workspace-and-cargo-lock"
+            ),
             "hash_algorithm": "sha-256",
-            "source_revision": "exact-40-hex-git-commit",
-            "required_for_every_satisfied_id": [
+            "contract_binding": (
+                "repository-path-sha256-exact-40-hex-source-revision-and-rc-tag"
+            ),
+            "release_candidate_tag": "v0.1.0-rc.<positive-integer>",
+            "final_tag": "v0.1.0",
+            "candidate_final_relationship": (
+                "rc-and-final-tags-may-point-to-the-same-source-commit"
+            ),
+            "target_commit_mutation": "forbidden-after-evidence-generation",
+            "required_for_every_id": [
                 "evidence-path",
                 "evidence-sha256",
-                "source-revision",
                 "verifier-receipt-path",
                 "verifier-receipt-sha256",
             ],
-            "path_policy": "repository-relative-regular-file-no-symlink",
-            "receipt_policy": "machine-readable-verifier-command-result-and-input-digests",
+            "path_policy": "index-directory-relative-regular-file-no-symlink",
+            "receipt_policy": (
+                "machine-readable-verifier-command-result-input-digests-and-contract-tag-binding"
+            ),
+            "post_release_claims_ledger": (
+                "may-be-committed-after-release-without-moving-the-release-tag"
+            ),
         },
         "readiness evidence policy",
     )
-    readiness = document["readiness"]
-    require_exact_keys(
-        readiness,
-        {"release_ready", "required_ids", "satisfied_ids", "pending_ids", "evidence"},
-        "readiness",
+    closure = document["release_closure"]
+    require_exact_keys(closure, {"required_ids"}, "release closure")
+    required = closure["required_ids"]
+    require(isinstance(required, list), "required readiness IDs must be a list")
+    require(len(required) == len(set(required)), "required readiness IDs must be unique")
+    require_exact_value(required, EXPECTED_REQUIRED_IDS, "required release closure IDs")
+    return required
+
+
+def read_direct_regular_file(path: Path, label: str) -> bytes:
+    try:
+        mode = path.lstat().st_mode
+    except OSError as error:
+        raise ReleaseContractError(f"cannot stat {label} {path}: {error}") from error
+    require(stat.S_ISREG(mode) and not stat.S_ISLNK(mode), f"{label} must be a regular file")
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        raise ReleaseContractError(f"cannot read {label} {path}: {error}") from error
+
+
+def load_json_bytes(raw: bytes, label: str) -> dict[str, Any]:
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ReleaseContractError(f"cannot parse {label} as JSON") from error
+    require(isinstance(document, dict), f"{label} must contain a JSON object")
+    return document
+
+
+def check_development_readiness(
+    document: dict[str, Any],
+    contract_path: Path,
+    ledger_path: Path,
+    root: Path,
+) -> list[str]:
+    required = check_evidence_policy_and_required_ids(document)
+    ledger = load_toml_bytes(
+        read_direct_regular_file(ledger_path, "development readiness ledger"),
+        str(ledger_path),
     )
-    required = readiness["required_ids"]
-    satisfied = readiness["satisfied_ids"]
-    pending = readiness["pending_ids"]
-    for label, values in (("required", required), ("satisfied", satisfied), ("pending", pending)):
+    require_exact_keys(
+        ledger,
+        {
+            "schema",
+            "target_path",
+            "target_sha256",
+            "status",
+            "satisfied_ids",
+            "pending_ids",
+            "evidence",
+        },
+        "development readiness ledger",
+    )
+    require_exact_value(
+        ledger["schema"],
+        document["evidence_policy"]["development_ledger_schema"],
+        "development readiness ledger schema",
+    )
+    require_exact_value(
+        ledger["target_path"],
+        document["evidence_policy"]["target_path"],
+        "development readiness target path",
+    )
+    require_exact_value(
+        ledger["status"],
+        "development-progress-not-release-evidence",
+        "development readiness status",
+    )
+    expected_contract = (root / ledger["target_path"]).resolve()
+    require(
+        contract_path.resolve() == expected_contract,
+        "development readiness ledger must bind the validated target path",
+    )
+    target_bytes = read_regular_file(root, ledger["target_path"], "release target")
+    target_sha256 = hashlib.sha256(target_bytes).hexdigest()
+    require_exact_value(ledger["target_sha256"], target_sha256, "development target SHA-256")
+    satisfied = ledger["satisfied_ids"]
+    pending = ledger["pending_ids"]
+    for label, values in (("satisfied", satisfied), ("pending", pending)):
         require(isinstance(values, list), f"{label} readiness IDs must be a list")
         require(len(values) == len(set(values)), f"{label} readiness IDs must be unique")
-    require_exact_value(required, EXPECTED_REQUIRED_IDS, "required release closure IDs")
     require(set(satisfied).isdisjoint(pending), "satisfied and pending release IDs must be disjoint")
-    require(set(satisfied) | set(pending) == set(required), "readiness IDs must partition required IDs")
-    evidence = readiness["evidence"]
-    require(isinstance(evidence, list), "readiness evidence must be a list")
+    require(
+        set(satisfied) | set(pending) == set(required),
+        "development readiness IDs must partition target required IDs",
+    )
+    evidence = ledger["evidence"]
+    require(isinstance(evidence, list), "development readiness evidence must be a list")
     evidence_ids: list[str] = []
     for entry in evidence:
-        require(isinstance(entry, dict), "readiness evidence entries must be tables")
+        require(isinstance(entry, dict), "development readiness evidence entries must be tables")
         require_exact_keys(
             entry,
             {
                 "id",
                 "evidence_path",
                 "evidence_sha256",
-                "source_revision",
                 "verifier_receipt_path",
                 "verifier_receipt_sha256",
             },
-            "readiness evidence entry",
+            "development readiness evidence entry",
         )
         readiness_id = entry["id"]
         require(readiness_id in satisfied, f"evidence exists for non-satisfied ID {readiness_id!r}")
         evidence_ids.append(readiness_id)
         require(is_lower_hex(entry["evidence_sha256"], 64), "evidence SHA-256 must be exact")
-        require(is_lower_hex(entry["source_revision"], 40), "evidence source revision must be exact")
         require(
             is_lower_hex(entry["verifier_receipt_sha256"], 64),
             "verifier receipt SHA-256 must be exact",
         )
-        evidence_bytes = read_regular_file(root, entry["evidence_path"], "readiness evidence")
+        evidence_bytes = read_regular_file(root, entry["evidence_path"], "development evidence")
         receipt_bytes = read_regular_file(
-            root, entry["verifier_receipt_path"], "readiness verifier receipt"
+            root, entry["verifier_receipt_path"], "development verifier receipt"
         )
         require_exact_value(
             hashlib.sha256(evidence_bytes).hexdigest(),
             entry["evidence_sha256"],
-            f"{readiness_id} evidence SHA-256",
+            f"{readiness_id} development evidence SHA-256",
         )
         require_exact_value(
             hashlib.sha256(receipt_bytes).hexdigest(),
             entry["verifier_receipt_sha256"],
-            f"{readiness_id} verifier receipt SHA-256",
+            f"{readiness_id} development verifier receipt SHA-256",
         )
-        try:
-            receipt = json.loads(receipt_bytes)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ReleaseContractError(f"{readiness_id} verifier receipt is not JSON") from error
-        require(isinstance(receipt, dict), f"{readiness_id} verifier receipt must be an object")
+        receipt = load_json_bytes(receipt_bytes, f"{readiness_id} development verifier receipt")
         require_exact_keys(
             receipt,
             {
                 "schema",
                 "readiness_id",
-                "source_revision",
+                "target_path",
+                "target_sha256",
                 "verifier_command",
                 "result",
                 "input_sha256",
             },
-            f"{readiness_id} verifier receipt",
+            f"{readiness_id} development verifier receipt",
         )
         require_exact_value(
             receipt["schema"],
-            "visa.release-readiness-verifier-receipt.v1",
-            f"{readiness_id} verifier receipt schema",
+            document["evidence_policy"]["development_receipt_schema"],
+            f"{readiness_id} development verifier receipt schema",
         )
         require_exact_value(receipt["readiness_id"], readiness_id, "receipt readiness ID")
-        require_exact_value(receipt["source_revision"], entry["source_revision"], "receipt revision")
+        require_exact_value(receipt["target_path"], ledger["target_path"], "receipt target path")
+        require_exact_value(receipt["target_sha256"], target_sha256, "receipt target digest")
         require(
             isinstance(receipt["verifier_command"], str) and bool(receipt["verifier_command"]),
             f"{readiness_id} verifier command must be non-empty",
@@ -1375,23 +1505,310 @@ def check_readiness(document: dict[str, Any], root: Path) -> list[str]:
             entry["evidence_sha256"],
             f"{readiness_id} receipt evidence input",
         )
+        require_exact_value(
+            inputs.get(ledger["target_path"]),
+            target_sha256,
+            f"{readiness_id} receipt target input",
+        )
         require(
             all(isinstance(path, str) and is_lower_hex(digest, 64) for path, digest in inputs.items()),
             f"{readiness_id} receipt input digests must be exact",
         )
-    require(len(evidence_ids) == len(set(evidence_ids)), "readiness evidence IDs must be unique")
-    require_exact_value(set(evidence_ids), set(satisfied), "satisfied readiness evidence coverage")
-    require_exact_value(readiness["release_ready"], not pending, "derived release-ready state")
+    require(len(evidence_ids) == len(set(evidence_ids)), "development evidence IDs must be unique")
+    require_exact_value(
+        set(evidence_ids),
+        set(satisfied),
+        "satisfied development readiness evidence coverage",
+    )
     return pending
 
 
-def validate(contract_path: Path = DEFAULT_CONTRACT, root: Path = ROOT) -> list[str]:
+def git_bytes(root: Path, arguments: list[str], label: str) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ReleaseContractError(f"cannot run git for {label}: {error}") from error
+    require(result.returncode == 0, f"git verification failed for {label}")
+    return result.stdout
+
+
+def check_build_inventory(
+    inventory: dict[str, Any],
+    contract_binding: dict[str, Any],
+    build: dict[str, Any],
+) -> None:
+    require_exact_keys(
+        inventory,
+        {
+            "schema",
+            "target_sha256",
+            "source_revision",
+            "source_tag",
+            "cargo_lock_sha256",
+            "rust_toolchain_sha256",
+            "workspace_package_count",
+            "resolved_package_count",
+            "workspace_packages",
+            "resolved_packages",
+        },
+        "release build inventory",
+    )
+    require_exact_value(inventory["schema"], "visa.release-build-inventory.v1", "build inventory schema")
+    for field in ("target_sha256", "source_revision", "source_tag"):
+        require_exact_value(inventory[field], contract_binding[field], f"build inventory {field}")
+    require_exact_value(
+        inventory["cargo_lock_sha256"], build["cargo_lock_sha256"], "build inventory Cargo.lock digest"
+    )
+    require_exact_value(
+        inventory["rust_toolchain_sha256"],
+        build["rust_toolchain_sha256"],
+        "build inventory rust-toolchain digest",
+    )
+    workspace_packages = inventory["workspace_packages"]
+    resolved_packages = inventory["resolved_packages"]
+    require(isinstance(workspace_packages, list) and bool(workspace_packages), "workspace inventory is empty")
+    require(isinstance(resolved_packages, list) and bool(resolved_packages), "resolved inventory is empty")
+    require_exact_value(
+        inventory["workspace_package_count"], len(workspace_packages), "workspace package count"
+    )
+    require_exact_value(
+        inventory["resolved_package_count"], len(resolved_packages), "resolved package count"
+    )
+
+    def package_keys(entries: list[Any], label: str) -> set[tuple[str, str, str, str]]:
+        keys: list[tuple[str, str, str, str]] = []
+        for entry in entries:
+            require(isinstance(entry, dict), f"{label} package entry must be an object")
+            require_exact_keys(entry, {"name", "version", "source", "license"}, f"{label} package entry")
+            values = tuple(entry[field] for field in ("name", "version", "source", "license"))
+            require(
+                all(isinstance(value, str) and bool(value) for value in values),
+                f"{label} package fields must be non-empty strings",
+            )
+            keys.append(values)
+        require(len(keys) == len(set(keys)), f"{label} package inventory must be unique")
+        return set(keys)
+
+    workspace_keys = package_keys(workspace_packages, "workspace")
+    resolved_keys = package_keys(resolved_packages, "resolved")
+    require(workspace_keys <= resolved_keys, "workspace packages must be covered by resolved inventory")
+    require(
+        all(source.startswith("workspace:") for _, _, source, _ in workspace_keys),
+        "workspace package sources must be repository-relative workspace identities",
+    )
+
+
+def check_external_release_index(
+    document: dict[str, Any],
+    contract_path: Path,
+    index_path: Path,
+    root: Path,
+) -> str:
+    required = check_evidence_policy_and_required_ids(document)
+    index_bytes = read_direct_regular_file(index_path, "external release evidence index")
+    index = load_json_bytes(index_bytes, "external release evidence index")
+    require_exact_keys(
+        index,
+        {"schema", "contract", "required_ids", "build_provenance", "evidence"},
+        "external release evidence index",
+    )
+    require_exact_value(index["schema"], document["evidence_policy"]["index_schema"], "evidence index schema")
+    require_exact_value(index["required_ids"], required, "evidence index required IDs")
+    contract = index["contract"]
+    require(isinstance(contract, dict), "evidence index contract binding must be an object")
+    require_exact_keys(
+        contract,
+        {
+            "contract_id",
+            "target_path",
+            "target_sha256",
+            "source_revision",
+            "source_tag",
+            "final_tag",
+        },
+        "evidence index contract binding",
+    )
+    require_exact_value(contract["contract_id"], document["contract_id"], "indexed contract ID")
+    require_exact_value(contract["target_path"], "specs/release/visa-0.1.toml", "indexed target path")
+    require(is_lower_hex(contract["target_sha256"], 64), "indexed target SHA-256 must be exact")
+    require(is_lower_hex(contract["source_revision"], 40), "indexed source revision must be exact")
+    require(
+        isinstance(contract["source_tag"], str)
+        and re.fullmatch(r"v0\.1\.0-rc\.[1-9][0-9]*", contract["source_tag"]) is not None,
+        "indexed source tag must be an exact v0.1.0-rc.N tag",
+    )
+    require_exact_value(contract["final_tag"], document["evidence_policy"]["final_tag"], "indexed final tag")
+    expected_contract_path = (root / contract["target_path"]).resolve()
+    require(contract_path.resolve() == expected_contract_path, "evidence index must bind the validated target path")
+    current_target = read_regular_file(root, contract["target_path"], "release target")
+    require_exact_value(
+        hashlib.sha256(current_target).hexdigest(), contract["target_sha256"], "indexed current target digest"
+    )
+    tag_revision = git_bytes(
+        root,
+        ["rev-parse", "--verify", f"refs/tags/{contract['source_tag']}^{{commit}}"],
+        "release-candidate tag",
+    ).decode("ascii", errors="strict").strip()
+    require_exact_value(tag_revision, contract["source_revision"], "release-candidate tag revision")
+    tagged_target = git_bytes(
+        root,
+        ["cat-file", "blob", f"{contract['source_revision']}:{contract['target_path']}"],
+        "tagged release target",
+    )
+    require_exact_value(
+        hashlib.sha256(tagged_target).hexdigest(), contract["target_sha256"], "tagged target digest"
+    )
+
+    build = index["build_provenance"]
+    require(isinstance(build, dict), "build provenance binding must be an object")
+    require_exact_keys(
+        build,
+        {
+            "cargo_lock_path",
+            "cargo_lock_sha256",
+            "rust_toolchain_path",
+            "rust_toolchain_sha256",
+            "inventory_path",
+            "inventory_sha256",
+        },
+        "external build provenance",
+    )
+    require_exact_value(build["cargo_lock_path"], "Cargo.lock", "indexed Cargo.lock path")
+    require_exact_value(build["rust_toolchain_path"], "rust-toolchain.toml", "indexed toolchain path")
+    for field in ("cargo_lock_sha256", "rust_toolchain_sha256", "inventory_sha256"):
+        require(is_lower_hex(build[field], 64), f"{field} must be an exact SHA-256")
+    for path_field, digest_field in (
+        ("cargo_lock_path", "cargo_lock_sha256"),
+        ("rust_toolchain_path", "rust_toolchain_sha256"),
+    ):
+        tagged_bytes = git_bytes(
+            root,
+            ["cat-file", "blob", f"{contract['source_revision']}:{build[path_field]}"],
+            f"tagged {build[path_field]}",
+        )
+        require_exact_value(
+            hashlib.sha256(tagged_bytes).hexdigest(), build[digest_field], f"tagged {build[path_field]} digest"
+        )
+    bundle_root = index_path.resolve().parent
+    inventory_bytes = read_regular_file(bundle_root, build["inventory_path"], "release build inventory")
+    require_exact_value(
+        hashlib.sha256(inventory_bytes).hexdigest(), build["inventory_sha256"], "release build inventory digest"
+    )
+    inventory = load_json_bytes(inventory_bytes, "release build inventory")
+    check_build_inventory(inventory, contract, build)
+
+    evidence = index["evidence"]
+    require(isinstance(evidence, list), "external release evidence must be a list")
+    evidence_ids: list[str] = []
+    used_paths: list[str] = []
+    supply_chain_entry: dict[str, Any] | None = None
+    for entry in evidence:
+        require(isinstance(entry, dict), "external release evidence entry must be an object")
+        require_exact_keys(
+            entry,
+            {
+                "id",
+                "evidence_path",
+                "evidence_sha256",
+                "verifier_receipt_path",
+                "verifier_receipt_sha256",
+            },
+            "external release evidence entry",
+        )
+        readiness_id = entry["id"]
+        require(readiness_id in required, f"external evidence has unknown ID {readiness_id!r}")
+        evidence_ids.append(readiness_id)
+        for field in ("evidence_sha256", "verifier_receipt_sha256"):
+            require(is_lower_hex(entry[field], 64), f"{readiness_id} {field} must be exact")
+        evidence_bytes = read_regular_file(bundle_root, entry["evidence_path"], "external readiness evidence")
+        receipt_bytes = read_regular_file(
+            bundle_root, entry["verifier_receipt_path"], "external readiness verifier receipt"
+        )
+        require_exact_value(
+            hashlib.sha256(evidence_bytes).hexdigest(), entry["evidence_sha256"], f"{readiness_id} evidence digest"
+        )
+        require_exact_value(
+            hashlib.sha256(receipt_bytes).hexdigest(),
+            entry["verifier_receipt_sha256"],
+            f"{readiness_id} verifier receipt digest",
+        )
+        receipt = load_json_bytes(receipt_bytes, f"{readiness_id} verifier receipt")
+        require_exact_keys(
+            receipt,
+            {
+                "schema",
+                "readiness_id",
+                "target_path",
+                "target_sha256",
+                "source_revision",
+                "source_tag",
+                "verifier_command",
+                "result",
+                "input_sha256",
+            },
+            f"{readiness_id} verifier receipt",
+        )
+        require_exact_value(receipt["schema"], document["evidence_policy"]["receipt_schema"], "receipt schema")
+        require_exact_value(receipt["readiness_id"], readiness_id, "receipt readiness ID")
+        for field in ("target_path", "target_sha256", "source_revision", "source_tag"):
+            require_exact_value(receipt[field], contract[field], f"{readiness_id} receipt {field}")
+        require(
+            isinstance(receipt["verifier_command"], str) and bool(receipt["verifier_command"]),
+            f"{readiness_id} verifier command must be non-empty",
+        )
+        require_exact_value(receipt["result"], "passed", f"{readiness_id} verifier result")
+        inputs = receipt["input_sha256"]
+        require(isinstance(inputs, dict), f"{readiness_id} receipt inputs must be an object")
+        require_exact_value(
+            inputs.get(entry["evidence_path"]), entry["evidence_sha256"], f"{readiness_id} receipt evidence input"
+        )
+        require_exact_value(
+            inputs.get(contract["target_path"]), contract["target_sha256"], f"{readiness_id} receipt target input"
+        )
+        require(
+            all(isinstance(path, str) and is_lower_hex(digest, 64) for path, digest in inputs.items()),
+            f"{readiness_id} receipt input digests must be exact",
+        )
+        used_paths.extend([entry["evidence_path"], entry["verifier_receipt_path"]])
+        if readiness_id == "supply-chain-license-and-artifact-locks":
+            supply_chain_entry = entry
+            require_exact_value(entry["evidence_path"], build["inventory_path"], "supply-chain inventory evidence path")
+            require_exact_value(entry["evidence_sha256"], build["inventory_sha256"], "supply-chain inventory evidence digest")
+            require_exact_value(
+                inputs.get(build["cargo_lock_path"]),
+                build["cargo_lock_sha256"],
+                "supply-chain receipt Cargo.lock input",
+            )
+            require_exact_value(
+                inputs.get(build["rust_toolchain_path"]),
+                build["rust_toolchain_sha256"],
+                "supply-chain receipt toolchain input",
+            )
+    require(len(evidence_ids) == len(set(evidence_ids)), "external evidence IDs must be unique")
+    require_exact_value(evidence_ids, required, "external evidence coverage and order")
+    require(supply_chain_entry is not None, "external evidence lacks supply-chain inventory")
+    require(len(used_paths) == len(set(used_paths)), "external evidence and receipt paths must be unique")
+    return contract["source_revision"]
+
+
+def validate(
+    contract_path: Path = DEFAULT_CONTRACT,
+    readiness_ledger_path: Path = DEFAULT_READINESS_LEDGER,
+    root: Path = ROOT,
+) -> list[str]:
     document = load_contract(contract_path)
     check_header(document)
     check_process_topology_and_local_rpcs(document, root)
     check_core_namespaces(document, root)
     check_resource_profiles(document, root)
-    check_crates_and_dependencies(document, root)
+    check_dependency_constraints(document, root)
     check_wits(document, root)
     check_golden_vectors(document, root)
     check_release_semantic_vectors(document, root)
@@ -1402,16 +1819,22 @@ def validate(contract_path: Path = DEFAULT_CONTRACT, root: Path = ROOT) -> list[
     check_public_surface(document)
     check_failure_matrix(document)
     check_support_and_admission(document)
-    return check_readiness(document, root)
+    return check_development_readiness(document, contract_path, readiness_ledger_path, root)
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
+    parser.add_argument("--readiness-ledger", type=Path, default=DEFAULT_READINESS_LEDGER)
     parser.add_argument(
         "--release-ready",
         action="store_true",
-        help="also require every product-release closure item to be satisfied",
+        help="validate complete exact-tag closure from an external evidence index",
+    )
+    parser.add_argument(
+        "--evidence-index",
+        type=Path,
+        help="external immutable release evidence index; required with --release-ready",
     )
     return parser.parse_args()
 
@@ -1419,16 +1842,32 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = parse_arguments()
     try:
-        pending = validate(arguments.contract)
+        require(
+            arguments.release_ready or arguments.evidence_index is None,
+            "--evidence-index is only valid with --release-ready",
+        )
+        pending = validate(arguments.contract, arguments.readiness_ledger)
         if arguments.release_ready:
-            require(not pending, "release closure is incomplete: " + ", ".join(pending))
+            require(
+                arguments.evidence_index is not None,
+                "--release-ready requires --evidence-index PATH",
+            )
+            document = load_contract(arguments.contract)
+            revision = check_external_release_index(
+                document,
+                arguments.contract,
+                arguments.evidence_index,
+                ROOT,
+            )
     except (ReleaseContractError, OSError) as error:
         print(f"vISA 0.1 release contract violation: {error}", file=sys.stderr)
         return 1
-    if pending:
+    if arguments.release_ready:
+        print(f"vISA 0.1 release contract passed; release-ready=yes source={revision}")
+    elif pending:
         print(f"vISA 0.1 target contract passed; release-ready=no pending={len(pending)}")
     else:
-        print("vISA 0.1 release contract passed; release-ready=yes")
+        print("vISA 0.1 target and development ledger passed; release-ready=no pending=0")
     return 0
 
 

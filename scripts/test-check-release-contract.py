@@ -29,6 +29,7 @@ class ReleaseContractTests(unittest.TestCase):
         )
         self.root = Path(self.temporary.name)
         self.raw = CHECKER.DEFAULT_CONTRACT.read_text(encoding="utf-8")
+        self.ledger_raw = CHECKER.DEFAULT_READINESS_LEDGER.read_text(encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -47,19 +48,143 @@ class ReleaseContractTests(unittest.TestCase):
         shutil.copyfile(source, destination)
         return destination
 
-    def copy_current_readiness_evidence(self, document: dict) -> None:
-        for entry in document["readiness"]["evidence"]:
-            self.copy(entry["evidence_path"], self.root)
-            self.copy(entry["verifier_receipt_path"], self.root)
+    @staticmethod
+    def write_json(path: Path, value: object) -> bytes:
+        raw = (CHECKER.json.dumps(value, sort_keys=True) + "\n").encode()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        return raw
+
+    def external_bundle(self) -> tuple[Path, Path, Path, dict]:
+        repository = self.root / "tagged-repository"
+        contract_path = repository / "specs/release/visa-0.1.toml"
+        contract_path.parent.mkdir(parents=True)
+        contract_bytes = self.raw.encode()
+        contract_path.write_bytes(contract_bytes)
+        for relative in ("Cargo.lock", "rust-toolchain.toml"):
+            destination = repository / relative
+            destination.write_bytes((CHECKER.ROOT / relative).read_bytes())
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "user.name", "vISA test"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "visa-test@example.invalid"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(["git", "add", "."], cwd=repository, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "release candidate"], cwd=repository, check=True)
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository,
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        source_tag = "v0.1.0-rc.1"
+        subprocess.run(["git", "tag", source_tag], cwd=repository, check=True)
+
+        target_sha = CHECKER.hashlib.sha256(contract_bytes).hexdigest()
+        cargo_sha = CHECKER.hashlib.sha256((repository / "Cargo.lock").read_bytes()).hexdigest()
+        toolchain_sha = CHECKER.hashlib.sha256(
+            (repository / "rust-toolchain.toml").read_bytes()
+        ).hexdigest()
+        bundle = self.root / "external-bundle"
+        inventory_path = "build/workspace-package-inventory.json"
+        package = {
+            "name": "visa-release-test",
+            "version": "0.1.0",
+            "source": "workspace:Cargo.toml",
+            "license": "Apache-2.0",
+        }
+        inventory = {
+            "schema": "visa.release-build-inventory.v1",
+            "target_sha256": target_sha,
+            "source_revision": revision,
+            "source_tag": source_tag,
+            "cargo_lock_sha256": cargo_sha,
+            "rust_toolchain_sha256": toolchain_sha,
+            "workspace_package_count": 1,
+            "resolved_package_count": 1,
+            "workspace_packages": [package],
+            "resolved_packages": [package],
+        }
+        inventory_bytes = self.write_json(bundle / inventory_path, inventory)
+        inventory_sha = CHECKER.hashlib.sha256(inventory_bytes).hexdigest()
+        evidence_entries = []
+        for readiness_id in CHECKER.EXPECTED_REQUIRED_IDS:
+            if readiness_id == "supply-chain-license-and-artifact-locks":
+                evidence_path = inventory_path
+                evidence_sha = inventory_sha
+            else:
+                evidence_path = f"evidence/{readiness_id}.json"
+                evidence_bytes = self.write_json(
+                    bundle / evidence_path,
+                    {"readiness_id": readiness_id, "result": "passed"},
+                )
+                evidence_sha = CHECKER.hashlib.sha256(evidence_bytes).hexdigest()
+            receipt_path = f"receipts/{readiness_id}.json"
+            inputs = {
+                "specs/release/visa-0.1.toml": target_sha,
+                evidence_path: evidence_sha,
+            }
+            if readiness_id == "supply-chain-license-and-artifact-locks":
+                inputs["Cargo.lock"] = cargo_sha
+                inputs["rust-toolchain.toml"] = toolchain_sha
+            receipt = {
+                "schema": "visa.release-readiness-verifier-receipt.v1",
+                "readiness_id": readiness_id,
+                "target_path": "specs/release/visa-0.1.toml",
+                "target_sha256": target_sha,
+                "source_revision": revision,
+                "source_tag": source_tag,
+                "verifier_command": f"verify-release-id {readiness_id}",
+                "result": "passed",
+                "input_sha256": inputs,
+            }
+            receipt_bytes = self.write_json(bundle / receipt_path, receipt)
+            evidence_entries.append(
+                {
+                    "id": readiness_id,
+                    "evidence_path": evidence_path,
+                    "evidence_sha256": evidence_sha,
+                    "verifier_receipt_path": receipt_path,
+                    "verifier_receipt_sha256": CHECKER.hashlib.sha256(receipt_bytes).hexdigest(),
+                }
+            )
+        index = {
+            "schema": "visa.release-readiness-index.v1",
+            "contract": {
+                "contract_id": "visa-product-0.1",
+                "target_path": "specs/release/visa-0.1.toml",
+                "target_sha256": target_sha,
+                "source_revision": revision,
+                "source_tag": source_tag,
+                "final_tag": "v0.1.0",
+            },
+            "required_ids": CHECKER.EXPECTED_REQUIRED_IDS,
+            "build_provenance": {
+                "cargo_lock_path": "Cargo.lock",
+                "cargo_lock_sha256": cargo_sha,
+                "rust_toolchain_path": "rust-toolchain.toml",
+                "rust_toolchain_sha256": toolchain_sha,
+                "inventory_path": inventory_path,
+                "inventory_sha256": inventory_sha,
+            },
+            "evidence": evidence_entries,
+        }
+        index_path = bundle / "index.json"
+        self.write_json(index_path, index)
+        return repository, contract_path, index_path, index
 
     def test_current_contract_is_schema_valid_but_not_release_ready(self) -> None:
         pending = CHECKER.validate()
         document = CHECKER.load_contract()
-        self.assertEqual(pending, document["readiness"]["pending_ids"])
-        self.assertEqual(
-            document["readiness"]["satisfied_ids"],
-            ["contract-schema-frozen", "process-topology-frozen"],
+        ledger = CHECKER.load_toml_bytes(
+            CHECKER.DEFAULT_READINESS_LEDGER.read_bytes(), str(CHECKER.DEFAULT_READINESS_LEDGER)
         )
+        self.assertEqual(pending, ledger["pending_ids"])
+        self.assertNotIn("satisfied_ids", document["release_closure"])
+        self.assertNotIn("pending_ids", document["release_closure"])
 
     def test_release_ready_mode_fails_closed_on_pending_items(self) -> None:
         result = subprocess.run(
@@ -71,8 +196,7 @@ class ReleaseContractTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("release closure is incomplete", result.stderr)
-        self.assertIn("nexus-native-v1-wire-artifact", result.stderr)
+        self.assertIn("--release-ready requires --evidence-index PATH", result.stderr)
 
     def test_product_version_drift_is_rejected(self) -> None:
         path = self.mutated_contract('product_version = "0.1.0"', 'product_version = "0.1.1"')
@@ -105,8 +229,8 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_local_rpc_frame_limit_cannot_reuse_the_test_worker_limit(self) -> None:
         path = self.mutated_contract(
-            "max_frame_bytes_excluding_lf = 1048576",
-            "max_frame_bytes_excluding_lf = 16777216",
+            "max_frame_bytes_including_header = 1048576",
+            "max_frame_bytes_including_header = 16777216",
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "local RPC defaults drifted"):
             CHECKER.validate(path)
@@ -125,6 +249,32 @@ class ReleaseContractTests(unittest.TestCase):
             'schema = "visa.agent.control.v1"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "agent-ownership RPC v1 drifted"):
+            CHECKER.validate(path)
+
+    def test_local_rpc_header_and_payload_bounds_are_exact(self) -> None:
+        path = self.mutated_contract("max_payload_bytes = 1048556", "max_payload_bytes = 1048557")
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "local RPC defaults drifted"):
+            CHECKER.validate(path)
+
+    def test_local_rpc_magic_values_cannot_be_conflated(self) -> None:
+        path = self.mutated_contract('magic = "VISAOWN1"', 'magic = "VISACTL1"')
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "agent-ownership RPC v1 drifted"):
+            CHECKER.validate(path)
+
+    def test_local_rpc_canonical_decode_cannot_accept_trailing_bytes(self) -> None:
+        path = self.mutated_contract(
+            'canonical_decode_policy = "reject-trailing-bytes-and-require-byte-identical-reencode"',
+            'canonical_decode_policy = "accept-trailing-bytes"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "local RPC defaults drifted"):
+            CHECKER.validate(path)
+
+    def test_nexus_child_transport_remains_native_v1_jsonl(self) -> None:
+        path = self.mutated_contract(
+            'effect_provider_transport = "bounded-json-lines-lf"',
+            'effect_provider_transport = "visa.local-uds-postcard.v1"',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "single-host scope drifted"):
             CHECKER.validate(path)
 
     def test_same_uid_boundary_cannot_be_promoted_to_tenant_authentication(self) -> None:
@@ -151,13 +301,22 @@ class ReleaseContractTests(unittest.TestCase):
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "ownership service drifted"):
             CHECKER.validate(path)
 
-    def test_crate_version_lock_drift_is_rejected(self) -> None:
+    def test_selected_release_dependency_constraint_drift_is_rejected(self) -> None:
         path = self.mutated_contract(
-            'name = "contract_core"\npath = "crates/core/contract_core/Cargo.toml"\nversion = "0.3.0"',
-            'name = "contract_core"\npath = "crates/core/contract_core/Cargo.toml"\nversion = "0.1.0"',
+            'wasmtime_release_choice = "43.0.2"',
+            'wasmtime_release_choice = "44.0.0"',
         )
-        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "crate version locks drifted"):
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "release dependency constraints drifted"):
             CHECKER.validate(path)
+
+    def test_target_does_not_freeze_current_crate_or_lock_inventory(self) -> None:
+        document = CHECKER.load_contract()
+        self.assertNotIn("build_crate_lock", document)
+        self.assertNotIn("build_provenance", document)
+        constraints = document["release_dependency_constraints"]
+        self.assertEqual(
+            constraints["cargo_lock_digest"], "external-evidence-index-only-at-exact-tag"
+        )
 
     def test_wit_digest_field_drift_is_rejected(self) -> None:
         path = self.mutated_contract(
@@ -331,9 +490,12 @@ source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retai
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "provider major.*drifted"):
             CHECKER.check_provider_spi(document, self.root)
 
-    def test_release_ready_boolean_alone_cannot_close_pending_work(self) -> None:
-        path = self.mutated_contract("release_ready = false", "release_ready = true")
-        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "derived release-ready state drifted"):
+    def test_release_ready_field_cannot_be_written_into_immutable_target(self) -> None:
+        path = self.mutated_contract(
+            'contract_revision = 3',
+            'contract_revision = 3\nrelease_ready = true',
+        )
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "unknown=.*release_ready"):
             CHECKER.validate(path)
 
     def test_supported_cells_cannot_be_claimed_before_closure(self) -> None:
@@ -344,59 +506,87 @@ source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retai
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "current release support drifted"):
             CHECKER.validate(path)
 
-    def test_satisfied_id_requires_exact_evidence_and_verifier_receipt(self) -> None:
+    def test_development_ledger_target_digest_mismatch_is_rejected(self) -> None:
         document = CHECKER.load_contract()
-        self.copy_current_readiness_evidence(document)
-        readiness = document["readiness"]
-        readiness_id = readiness["pending_ids"].pop(0)
-        readiness["satisfied_ids"].append(readiness_id)
-        evidence_path = "evidence/contract.json"
-        receipt_path = "evidence/receipt.json"
-        evidence_bytes = b'{"contract_revision":2,"schema":"visa.release-contract.v1"}\n'
-        evidence_sha = CHECKER.hashlib.sha256(evidence_bytes).hexdigest()
-        evidence_file = self.root / evidence_path
-        evidence_file.parent.mkdir(parents=True)
-        evidence_file.write_bytes(evidence_bytes)
-        revision = "a" * 40
-        receipt = {
-            "schema": "visa.release-readiness-verifier-receipt.v1",
-            "readiness_id": readiness_id,
-            "source_revision": revision,
-            "verifier_command": "python3 scripts/check-release-contract.py",
-            "result": "passed",
-            "input_sha256": {evidence_path: evidence_sha},
-        }
-        receipt_bytes = (CHECKER.json.dumps(receipt, sort_keys=True) + "\n").encode()
-        receipt_file = self.root / receipt_path
-        receipt_file.write_bytes(receipt_bytes)
-        readiness["evidence"].append(
-            {
-                "id": readiness_id,
-                "evidence_path": evidence_path,
-                "evidence_sha256": evidence_sha,
-                "source_revision": revision,
-                "verifier_receipt_path": receipt_path,
-                "verifier_receipt_sha256": CHECKER.hashlib.sha256(receipt_bytes).hexdigest(),
-            }
+        ledger = self.root / "visa-0.1-readiness.toml"
+        current_digest = CHECKER.hashlib.sha256(CHECKER.DEFAULT_CONTRACT.read_bytes()).hexdigest()
+        self.assertIn(current_digest, self.ledger_raw)
+        ledger.write_text(self.ledger_raw.replace(current_digest, "0" * 64, 1), encoding="utf-8")
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "development target SHA-256 drifted"):
+            CHECKER.check_development_readiness(
+                document,
+                CHECKER.DEFAULT_CONTRACT,
+                ledger,
+                CHECKER.ROOT,
+            )
+
+    def test_development_ledger_cannot_drop_a_required_id(self) -> None:
+        document = CHECKER.load_contract()
+        path = self.root / "visa-0.1-readiness.toml"
+        lines = self.ledger_raw.rsplit('  "exact-tag-release-evidence",\n', 1)
+        self.assertEqual(len(lines), 2)
+        path.write_text("".join(lines), encoding="utf-8")
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "partition target required IDs"):
+            CHECKER.check_development_readiness(
+                document,
+                CHECKER.DEFAULT_CONTRACT,
+                path,
+                CHECKER.ROOT,
+            )
+
+    def test_external_release_index_closes_all_required_ids_without_target_rewrite(self) -> None:
+        repository, contract_path, index_path, _ = self.external_bundle()
+        document = CHECKER.load_contract(contract_path)
+        revision = CHECKER.check_external_release_index(
+            document, contract_path, index_path, repository
         )
-        self.assertEqual(CHECKER.check_readiness(document, self.root), readiness["pending_ids"])
+        self.assertRegex(revision, r"^[0-9a-f]{40}$")
+        self.assertNotIn("satisfied_ids", document["release_closure"])
 
-    def test_satisfied_id_without_evidence_fails_closed(self) -> None:
-        document = CHECKER.load_contract()
-        self.copy_current_readiness_evidence(document)
-        readiness = document["readiness"]
-        readiness_id = readiness["pending_ids"].pop(0)
-        readiness["satisfied_ids"].append(readiness_id)
-        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "evidence coverage drifted"):
-            CHECKER.check_readiness(document, self.root)
+    def test_external_release_index_missing_id_fails_closed(self) -> None:
+        repository, contract_path, index_path, index = self.external_bundle()
+        index["evidence"].pop()
+        self.write_json(index_path, index)
+        document = CHECKER.load_contract(contract_path)
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "external evidence coverage"):
+            CHECKER.check_external_release_index(document, contract_path, index_path, repository)
 
-    def test_unknown_build_crate_lock_key_is_rejected(self) -> None:
-        old = '''[[build_crate_lock]]
-name = "contract_core"
-path = "crates/core/contract_core/Cargo.toml"
-version = "0.3.0"'''
+    def test_external_release_index_must_bind_exact_rc_tag_revision(self) -> None:
+        repository, contract_path, index_path, index = self.external_bundle()
+        index["contract"]["source_revision"] = "a" * 40
+        self.write_json(index_path, index)
+        document = CHECKER.load_contract(contract_path)
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "tag revision drifted"):
+            CHECKER.check_external_release_index(document, contract_path, index_path, repository)
+
+    def test_external_build_inventory_requires_package_license(self) -> None:
+        _, _, index_path, index = self.external_bundle()
+        inventory_path = index_path.parent / index["build_provenance"]["inventory_path"]
+        inventory = CHECKER.load_json_bytes(inventory_path.read_bytes(), "test inventory")
+        inventory["workspace_packages"][0]["license"] = ""
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "non-empty strings"):
+            CHECKER.check_build_inventory(
+                inventory,
+                index["contract"],
+                index["build_provenance"],
+            )
+
+    def test_evidence_index_without_release_ready_is_rejected(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(CHECKER_PATH), "--evidence-index", "/tmp/index.json"],
+            cwd=CHECKER.ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("only valid with --release-ready", result.stderr)
+
+    def test_unknown_dependency_constraint_key_is_rejected(self) -> None:
+        old = '[release_dependency_constraints]\nclassification = "selected-target-constraints-not-complete-build-provenance"'
         path = self.mutated_contract(old, old + '\nunreviewed = "claim"')
-        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "build crate lock entry keys drifted"):
+        with self.assertRaisesRegex(CHECKER.ReleaseContractError, "release dependency constraints drifted"):
             CHECKER.validate(path)
 
     def test_unknown_wit_lock_key_is_rejected(self) -> None:
@@ -411,8 +601,8 @@ sha256 = "709eb08784d446068bbaed47dbfb1dddd637f957cf5de1f3713d5be0aa7d5920"'''
 
     def test_unknown_contract_key_is_rejected(self) -> None:
         path = self.mutated_contract(
-            'contract_revision = 2',
-            'contract_revision = 2\nunreviewed_claim = "production-ready"',
+            'contract_revision = 3',
+            'contract_revision = 3\nunreviewed_claim = "production-ready"',
         )
         with self.assertRaisesRegex(CHECKER.ReleaseContractError, "unknown=.*unreviewed_claim"):
             CHECKER.validate(path)

@@ -51,8 +51,24 @@ The product freezes three separate version namespaces and golden corpora:
 2. `visa.ownership.local.v1` for agent-to-ownership-service requests;
 3. `visa.nexus-adapter.local.v1` for agent-to-`visa-nexusd` requests.
 
-They may share a framing implementation, but never a command schema or golden
-corpus. All use bounded UTF-8 JSON Lines over filesystem Unix stream sockets.
+They share one framing implementation, but never a command/response enum,
+error namespace, replay namespace, schema, or golden corpus. All use a fixed
+20-byte header followed by a canonical Postcard 1.1.3 payload over filesystem
+Unix stream sockets. The header is `magic[8]`, major `u16`, minor `u16`, flags
+`u32`, and payload length `u32`; every integer is big-endian. The three exact
+magics are `VISACTL1`, `VISAOWN1`, and `VISANEX1`. Flags must be zero. A reader
+must read and validate the entire header, including the length bound, before it
+allocates the payload. Decode rejects trailing bytes and successful payloads
+must re-encode byte-identically. There is no compression, multiplexing, file
+descriptor passing, or in-band upgrade in 0.1.
+
+The implementation target reuses standard-library `UnixListener`/`UnixStream`,
+the locked rustix 1.1.4 filesystem/network/process facilities, and the existing
+`joint_handoff_core` canonical Postcard/SHA pattern. It does not add varlink,
+zlink, tarpc, tonic, or another RPC framework. This transport is only for the
+three vISA-local boundaries: the `visa-nexusd` to `nexus-effect-peer` boundary
+remains the separately frozen Nexus native-v1 bounded JSONL protocol.
+
 The versioned runtime directory is below `${XDG_RUNTIME_DIR}`, mode `0700`;
 sockets are mode `0600`; every server checks same-UID `SO_PEERCRED`, rejects
 symlinked directories or sockets, uses short role names, and preflights the
@@ -62,13 +78,14 @@ boundary, not authentication or tenant isolation against a malicious process
 running as that UID. Same-UID ptrace, process-memory access, credential
 separation, and cryptographic channel authentication remain outside 0.1.
 
-The exact frame limit is 1,048,576 bytes excluding the terminating LF. This is
-not inherited from the 16 MiB test-worker allowance: the largest generated
-existing vISA system JSONL line is about 53,663 bytes; durable native requests
-and profile response chunks are bounded at 64 KiB; and existing product Jco and
-Wacogo JSONL carriers use 1 MiB. The new RPCs do not inline Component binaries,
-full evidence bundles, databases, or the profile's total 4 MiB logical response.
-Large objects travel only as a digest plus securely opened path or descriptor.
+The exact whole-frame limit is 1,048,576 bytes, including the 20-byte header;
+the payload limit is therefore 1,048,556 bytes. This is not inherited from the
+16 MiB test-worker allowance: the largest generated existing vISA system JSONL
+line is about 53,663 bytes; durable native requests and profile response chunks
+are bounded at 64 KiB; and existing product Jco and Wacogo JSONL carriers use
+1 MiB. The new RPCs do not inline Component binaries, full evidence bundles,
+databases, or the profile's total 4 MiB logical response. Large objects travel
+only as a digest plus a securely opened path; descriptor passing is absent.
 
 Every protocol requires an exact product/protocol/role/executable handshake
 before mutation, one in-flight mutation per connection, same-ID/same-canonical-
@@ -110,10 +127,17 @@ not claimed to be cryptographically unforgeable.
 Product SemVer does not replace any internal namespace. The portable contract,
 joint protocol, profiles/extensions, WIT packages, three local RPCs, neutral
 wire, Nexus native wire, and provider SPI evolve under their own rules. Cargo
-crate versions, Wasmtime/rusqlite selection, Cargo.lock, and the Rust toolchain
-are exact release-build provenance, not additional public compatibility
-namespaces. The current `EffectClosureProvider` v2 surface remains an in-tree
-Rust preview rather than a promised Rust ABI.
+crate versions, the complete workspace/package inventory, Cargo.lock, and the
+Rust toolchain are exact-tag release-build provenance, not additional public
+compatibility namespaces and not fields in the immutable target. The target
+only freezes selected implementation constraints that affect its intended cell:
+Postcard 1.1.3 for canonical wire bytes, rustix 1.1.4 for local IPC facilities,
+Wasmtime 43.0.2, and bundled rusqlite 0.40.1. The complete package/version/
+source/license inventory and exact lock/toolchain digests are generated into
+the external release bundle. Adding the planned CLI, agent, ownership, IPC, or
+Nexus-adapter crates therefore updates build evidence without rewriting the
+product target. The current `EffectClosureProvider` v2 surface remains an
+in-tree Rust preview rather than a promised Rust ABI.
 
 The pinned Nexus native-v1 freeze is an exact source contract at
 `cb773539401107efe7a7ad036b80ff40d8ec305c`; it is not described as a Nexus
@@ -139,21 +163,47 @@ byte rejection, optional/collection cases, and bounded extrema. Rust must
 construct and verify the corpus; source-literal presence is not execution
 evidence.
 
-Every satisfied readiness ID must name a repository-relative regular evidence
-file, its SHA-256, an exact 40-hex source revision, and a machine-readable
-verifier receipt with its own SHA-256. Compatibility, crash recovery,
-observability, and supply-chain/license closure remain separate IDs so partial
-work cannot close the whole release.
+The immutable target contract records required IDs and evidence policy but no
+current satisfied/pending state and no closure artifacts. A separate mutable
+`visa-0.1-readiness.toml` development ledger binds the target's exact SHA-256,
+tracks the current partition, and may cite repository-relative development
+evidence. That ledger is useful for progress and is checked by the default
+command, but it is explicitly not final release evidence.
+
+Final closure lives in a separately archived, immutable evidence bundle. Its
+index binds the exact target path and SHA-256, a 40-hex source commit, and an
+exact `v0.1.0-rc.N` tag that resolves to that commit. Every required ID has one
+bundle-relative regular evidence file and one machine-readable verifier receipt,
+both named by SHA-256; every receipt repeats the target, revision, and tag
+binding. The index separately binds the tagged Cargo.lock and toolchain bytes
+and a complete package/version/source/license inventory. Symlinks and paths
+escaping the bundle are rejected.
+
+The release flow is deliberately non-self-referential: freeze source commit
+`C`, create an exact RC tag such as `v0.1.0-rc.1` at `C`, generate and archive
+the external bundle against that tag and commit, then run release admission with
+that bundle. The final `v0.1.0` tag may point to the same `C`; neither evidence
+generation nor final tagging rewrites `C`. A later claims-ledger receipt may be
+committed on the main development line, but it does not move or alter either
+release tag. Compatibility, crash recovery, observability, and
+supply-chain/license closure remain separate IDs so partial work cannot close
+the whole release.
 
 Two checks deliberately have different meanings:
 
 ```sh
 python3 scripts/check-release-contract.py
-python3 scripts/check-release-contract.py --release-ready
+python3 scripts/check-release-contract.py --release-ready \
+  --evidence-index /archive/visa-0.1.0/index.json
 ```
 
-The first verifies the current target schema, exact local locks, authority and
-failure topology, pending/satisfied partition, and any attached readiness
-evidence. The second additionally requires every closure item to be satisfied.
-It currently fails by design. A schema-valid contract is never itself product
-or release evidence.
+The first verifies the immutable target plus the target-bound mutable
+development ledger: exact local locks, authority/failure topology, current
+pending/satisfied partition, and attached development receipts. It never treats
+that ledger as release closure. The second additionally requires an external
+index, checks its complete ID coverage, paths, digests, receipts, and build
+inventory, verifies that its RC tag resolves to its exact source revision, and
+checks that the target, Cargo.lock, and toolchain bytes at that revision match
+the indexed digests. With no complete external bundle it fails by design. A
+schema-valid target or development ledger is never itself product or release
+evidence.

@@ -1,6 +1,6 @@
 schema = "visa.release-contract.v1"
 contract_id = "visa-product-0.1"
-contract_revision = 2
+contract_revision = 3
 status = "frozen-target-not-release-ready"
 product_name = "vISA"
 product_version = "0.1.0"
@@ -35,7 +35,7 @@ nexus_adapter_topology = "one-independent-visa-nexusd-process"
 effect_provider_topology = "one-nexus-effect-peer-child-of-visa-nexusd"
 controller_child_processes = "none"
 agent_child_processes = "none"
-local_control_transport = "bounded-json-lines-lf-over-filesystem-unix-stream"
+local_control_transport = "fixed-header-length-prefixed-postcard-1.1.3-over-filesystem-unix-stream"
 effect_provider_transport = "bounded-json-lines-lf"
 network_control_transport = false
 failure_model = "same-boot-crash-stop-retry-reorder-lost-ack"
@@ -63,18 +63,34 @@ forbidden_topologies = [
 ]
 
 [local_rpc_defaults]
-profile = "visa.local-uds-jsonl.v1"
-transport = "bounded-json-lines-lf-over-filesystem-unix-stream"
-encoding = "utf-8-json-deny-unknown-fields"
-max_frame_bytes_excluding_lf = 1048576
+profile = "visa.local-uds-postcard.v1"
+transport = "fixed-header-length-prefixed-postcard-1.1.3-over-filesystem-unix-stream"
+encoding = "postcard-1.1.3-canonical"
+header_layout = "magic[8]+major-u16-be+minor-u16-be+flags-u32-be+payload-len-u32-be"
+header_bytes = 20
+flags_required = 0
+max_frame_bytes_including_header = 1048576
+max_payload_bytes = 1048556
+header_read_policy = "read-exactly-20-validate-magic-version-flags-and-length-before-payload-allocation"
+canonical_decode_policy = "reject-trailing-bytes-and-require-byte-identical-reencode"
 max_inflight_mutations_per_connection = 1
-large_artifact_policy = "digest-plus-secure-path-or-fd-reference-never-inline"
+large_artifact_policy = "digest-plus-secure-path-never-inline-no-fd-passing"
 frame_limit_basis = "measured-existing-jsonl-max-53663-native-and-profile-chunks-65536-product-jsonl-cap-1048576"
 measured_existing_jsonl_max_bytes = 53663
 durable_native_request_bound_bytes = 65536
 profile_response_chunk_bound_bytes = 65536
 existing_product_jsonl_bound_bytes = 1048576
 headroom_policy = "one-mib-control-envelope-with-large-artifacts-out-of-band"
+implementation_primitives = [
+  "std-unixlistener-unixstream",
+  "rustix-1.1.4-fs-net-process",
+  "joint-handoff-core-canonical-postcard-and-sha",
+]
+forbidden_protocol_dependencies = ["varlink", "zlink", "tarpc", "tonic"]
+compression = false
+multiplexing = false
+fd_passing = false
+in_band_upgrade = false
 runtime_directory = "${XDG_RUNTIME_DIR}/visa/0.1"
 runtime_directory_mode = "0700"
 socket_mode = "0600"
@@ -89,7 +105,13 @@ status = "required-but-unsatisfied"
 schema = "visa.agent.control.v1"
 protocol_major = 1
 protocol_minor = 0
-framing_profile = "visa.local-uds-jsonl.v1"
+magic = "VISACTL1"
+framing_profile = "visa.local-uds-postcard.v1"
+request_enum_namespace = "visa.agent.control.request.v1"
+response_enum_namespace = "visa.agent.control.response.v1"
+error_namespace = "visa.agent.control.error.v1"
+replay_namespace = "visa.agent.control.replay.v1"
+golden_corpus_id = "visa.agent.control.golden.v1"
 client = "visa-controller"
 servers = ["source-visa-agent", "destination-visa-agent"]
 required_operations = ["status", "run", "handoff", "reconcile", "verify-evidence"]
@@ -106,7 +128,13 @@ status = "required-but-unsatisfied"
 schema = "visa.ownership.local.v1"
 protocol_major = 1
 protocol_minor = 0
-framing_profile = "visa.local-uds-jsonl.v1"
+magic = "VISAOWN1"
+framing_profile = "visa.local-uds-postcard.v1"
+request_enum_namespace = "visa.ownership.local.request.v1"
+response_enum_namespace = "visa.ownership.local.response.v1"
+error_namespace = "visa.ownership.local.error.v1"
+replay_namespace = "visa.ownership.local.replay.v1"
+golden_corpus_id = "visa.ownership.local.golden.v1"
 clients = ["source-visa-agent", "destination-visa-agent"]
 server = "visa-ownershipd"
 client_authority = "submit-idempotent-proposals-and-query-only-no-receipt-issuance-or-local-decision"
@@ -124,7 +152,13 @@ status = "required-but-unsatisfied"
 schema = "visa.nexus-adapter.local.v1"
 protocol_major = 1
 protocol_minor = 0
-framing_profile = "visa.local-uds-jsonl.v1"
+magic = "VISANEX1"
+framing_profile = "visa.local-uds-postcard.v1"
+request_enum_namespace = "visa.nexus-adapter.local.request.v1"
+response_enum_namespace = "visa.nexus-adapter.local.response.v1"
+error_namespace = "visa.nexus-adapter.local.error.v1"
+replay_namespace = "visa.nexus-adapter.local.replay.v1"
+golden_corpus_id = "visa.nexus-adapter.local.golden.v1"
 clients = ["source-visa-agent", "destination-visa-agent"]
 server = "visa-nexusd"
 required_operations = [
@@ -209,66 +243,15 @@ extension_major = 1
 extension_minor = 0
 release_disposition = "required"
 
-[[build_crate_lock]]
-name = "contract_core"
-path = "crates/core/contract_core/Cargo.toml"
-version = "0.3.0"
-
-[[build_crate_lock]]
-name = "joint_handoff_core"
-path = "crates/core/joint_handoff_core/Cargo.toml"
-version = "0.1.0"
-
-[[build_crate_lock]]
-name = "visa_profile"
-path = "crates/core/visa_profile/Cargo.toml"
-version = "0.2.0"
-
-[[build_crate_lock]]
-name = "semantic_core"
-path = "crates/core/semantic_core/Cargo.toml"
-version = "0.2.0"
-
-[[build_crate_lock]]
-name = "substrate_api"
-path = "crates/backend/substrate_api/Cargo.toml"
-version = "0.2.0"
-
-[[build_crate_lock]]
-name = "substrate_host"
-path = "crates/backend/substrate_host/Cargo.toml"
-version = "0.1.0"
-
-[[build_crate_lock]]
-name = "visa_runtime"
-path = "crates/runtime/visa_runtime/Cargo.toml"
-version = "0.2.0"
-
-[[build_crate_lock]]
-name = "visa_joint_handoff"
-path = "crates/runtime/visa_joint_handoff/Cargo.toml"
-version = "0.1.0"
-
-[[build_crate_lock]]
-name = "visa_component_adapter"
-path = "crates/runtime/visa_component_adapter/Cargo.toml"
-version = "0.1.0"
-
-[[build_crate_lock]]
-name = "visa_wasmtime"
-path = "crates/runtime/visa_wasmtime/Cargo.toml"
-version = "0.2.0"
-
-[build_provenance]
-classification = "release-build-provenance-not-wire-or-product-compatibility"
-wasmtime = "43.0.2"
-rusqlite = "0.40.1-bundled"
-postcard = "1.1.3"
-cargo_lock_path = "Cargo.lock"
-cargo_lock_sha256 = "7a85d5797581ee9665ce9cff97b52c6f4604ccc3cae6b7bf94c695cbdd48a304"
-rust_toolchain_path = "rust-toolchain.toml"
-rust_toolchain_sha256 = "265d3cd0dc82929f39070011132b143bf58f28bb287011f61d36b95d5b4471cc"
-exact_release_tag_receipt = "required-but-unsatisfied"
+[release_dependency_constraints]
+classification = "selected-target-constraints-not-complete-build-provenance"
+postcard_wire_codec = "1.1.3"
+rustix_local_ipc = "1.1.4-fs-net-process"
+wasmtime_release_choice = "43.0.2"
+rusqlite_release_choice = "0.40.1-bundled"
+complete_workspace_package_version_source_license_inventory = "external-evidence-index-only-at-exact-tag"
+cargo_lock_digest = "external-evidence-index-only-at-exact-tag"
+rust_toolchain_digest = "external-evidence-index-only-at-exact-tag"
 rust_trait_abi = "not-promised"
 
 [[wit_lock]]
@@ -629,7 +612,7 @@ forbidden_fallback = "respawn-replay-as-original-registry-or-infer-effect-closur
 
 [admission]
 schema_check = "python3 scripts/check-release-contract.py"
-release_ready_check = "python3 scripts/check-release-contract.py --release-ready"
+release_ready_check = "python3 scripts/check-release-contract.py --release-ready --evidence-index PATH"
 fail_closed_dimensions = [
   "product-version",
   "contract-joint-profile-and-resource-versions",
@@ -649,20 +632,34 @@ fail_closed_dimensions = [
 ]
 
 [evidence_policy]
+closure_location = "external-immutable-bundle-not-release-source-tree"
+development_ledger_schema = "visa.development-readiness-ledger.v1"
+development_ledger_path = "specs/release/visa-0.1-readiness.toml"
+development_receipt_schema = "visa.development-readiness-verifier-receipt.v1"
+development_path_policy = "repository-relative-regular-file-no-symlink"
+target_path = "specs/release/visa-0.1.toml"
+index_schema = "visa.release-readiness-index.v1"
+receipt_schema = "visa.release-readiness-verifier-receipt.v1"
+build_inventory_schema = "visa.release-build-inventory.v1"
+build_inventory_generation = "cargo-metadata-format-version-1-locked-complete-resolve-plus-license-and-source-normalization"
+build_inventory_verification = "independent-completeness-check-against-tagged-workspace-and-cargo-lock"
 hash_algorithm = "sha-256"
-source_revision = "exact-40-hex-git-commit"
-required_for_every_satisfied_id = [
+contract_binding = "repository-path-sha256-exact-40-hex-source-revision-and-rc-tag"
+release_candidate_tag = "v0.1.0-rc.<positive-integer>"
+final_tag = "v0.1.0"
+candidate_final_relationship = "rc-and-final-tags-may-point-to-the-same-source-commit"
+target_commit_mutation = "forbidden-after-evidence-generation"
+required_for_every_id = [
   "evidence-path",
   "evidence-sha256",
-  "source-revision",
   "verifier-receipt-path",
   "verifier-receipt-sha256",
 ]
-path_policy = "repository-relative-regular-file-no-symlink"
-receipt_policy = "machine-readable-verifier-command-result-and-input-digests"
+path_policy = "index-directory-relative-regular-file-no-symlink"
+receipt_policy = "machine-readable-verifier-command-result-input-digests-and-contract-tag-binding"
+post_release_claims_ledger = "may-be-committed-after-release-without-moving-the-release-tag"
 
-[readiness]
-release_ready = false
+[release_closure]
 required_ids = [
   "contract-schema-frozen",
   "process-topology-frozen",
@@ -688,43 +685,3 @@ required_ids = [
   "external-workload",
   "exact-tag-release-evidence",
 ]
-satisfied_ids = ["contract-schema-frozen", "process-topology-frozen"]
-pending_ids = [
-  "public-cli",
-  "public-agent",
-  "public-ownership-service",
-  "public-nexus-adapter-service",
-  "cli-agent-rpc-v1",
-  "agent-ownership-rpc-v1",
-  "agent-nexus-rpc-v1",
-  "ownership-single-writer-restart-replay",
-  "stage3-dual-process",
-  "visa-nexus-adapter",
-  "provider-enforced-fence",
-  "release-semantic-golden-corpus",
-  "nexus-freeze-local-source-lock",
-  "nexus-native-v1-wire-artifact",
-  "neutral-nexus-mapping-v2",
-  "compatibility-matrix",
-  "crash-recovery-and-replay",
-  "observability-and-evidence",
-  "supply-chain-license-and-artifact-locks",
-  "external-workload",
-  "exact-tag-release-evidence",
-]
-
-[[readiness.evidence]]
-id = "contract-schema-frozen"
-evidence_path = "specs/release/evidence/contract-schema-v2.json"
-evidence_sha256 = "2919ec66a1c3341ad3672bb9718c64ce0e018c4d42ee6eab98d9391955bb3402"
-source_revision = "befc259c31ea7337303eb51af0ba3b1162bbb1ce"
-verifier_receipt_path = "specs/release/evidence/contract-schema-v2.receipt.json"
-verifier_receipt_sha256 = "8873bcaff4c3224bfcfa25a853fdb438c62661ced269e7445b89884baec10b6d"
-
-[[readiness.evidence]]
-id = "process-topology-frozen"
-evidence_path = "specs/release/evidence/process-topology-v1.json"
-evidence_sha256 = "81ebadea47dc0662ccfa4ccdbcf6cb9f4679674b71d3ae3a497cfe9a68eeb8f9"
-source_revision = "befc259c31ea7337303eb51af0ba3b1162bbb1ce"
-verifier_receipt_path = "specs/release/evidence/process-topology-v1.receipt.json"
-verifier_receipt_sha256 = "14136f5e3e528697a64e9a5e3fc5e207b3bc06e46313fa84b37b7cf8df7bfde5"
