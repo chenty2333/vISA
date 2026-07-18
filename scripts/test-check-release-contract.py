@@ -214,6 +214,18 @@ class ReleaseContractTests(unittest.TestCase):
 
         inspect(document)
 
+    def test_build_inventory_completeness_is_owned_by_supply_chain_receipt(self) -> None:
+        document = CHECKER.load_contract()
+        self.assertEqual(
+            document["evidence_policy"]["build_inventory_verification"],
+            "checker-validates-schema-counts-and-bindings-supply-chain-receipt-attests-"
+            "completeness-against-tagged-workspace-and-cargo-lock",
+        )
+        self.assertIn(
+            "supply-chain-license-and-artifact-locks",
+            document["release_closure"]["required_ids"],
+        )
+
     def test_release_ready_mode_fails_closed_on_pending_items(self) -> None:
         result = subprocess.run(
             [sys.executable, str(CHECKER_PATH), "--release-ready"],

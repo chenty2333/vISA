@@ -888,9 +888,12 @@ tied to source, toolchain, component, profile, configuration, and result
 digests. The external index must bind an exact RC tag and 40-hex commit, the
 target bytes at that commit, all required-ID artifacts and receipts, the tagged
 Cargo.lock and toolchain, and a complete workspace/resolved package version,
-source, and license inventory. The final `v0.1.0` tag may point to that same
-commit without rewriting it; a post-release claims ledger may advance on main
-without moving the release tag.
+source, and license inventory. The release checker validates its structural
+schema, counts, uniqueness, digests, and exact-tag bindings; the supply-chain
+verifier receipt and release attestation own the independent completeness claim
+against locked Cargo metadata and Cargo.lock. The final `v0.1.0` tag may point
+to that same commit without rewriting it; a post-release claims ledger may
+advance on main without moving the release tag.
 
 ### Claim gates
 

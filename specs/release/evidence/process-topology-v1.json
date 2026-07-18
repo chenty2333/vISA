@@ -2,7 +2,7 @@
   "schema": "visa.development-readiness-evidence.v1",
   "readiness_id": "process-topology-frozen",
   "target_path": "specs/release/visa-0.1.toml",
-  "target_sha256": "1b485224c93791513509631d0c2da8c10712a008c0d5dafae989fdb13379633d",
+  "target_sha256": "a9a1ddcf3b4023894fbf77d2529e9f008d6fbf9e44ffe642efce6abcae45c54e",
   "claim": "the vISA 0.1 target has exactly six active processes, no agent worker child, and three independent local RPC namespaces",
   "processes": {
     "visa-controller": 1,

@@ -1307,7 +1307,8 @@ def check_evidence_policy_and_required_ids(document: dict[str, Any]) -> list[str
                 "source-normalization"
             ),
             "build_inventory_verification": (
-                "independent-completeness-check-against-tagged-workspace-and-cargo-lock"
+                "checker-validates-schema-counts-and-bindings-supply-chain-receipt-attests-"
+                "completeness-against-tagged-workspace-and-cargo-lock"
             ),
             "hash_algorithm": "sha-256",
             "contract_binding": (

@@ -176,8 +176,13 @@ exact `v0.1.0-rc.N` tag that resolves to that commit. Every required ID has one
 bundle-relative regular evidence file and one machine-readable verifier receipt,
 both named by SHA-256; every receipt repeats the target, revision, and tag
 binding. The index separately binds the tagged Cargo.lock and toolchain bytes
-and a complete package/version/source/license inventory. Symlinks and paths
-escaping the bundle are rejected.
+and a package/version/source/license inventory. The supply-chain verifier
+receipt, not this structural checker, attests that the inventory was rebuilt
+completely from locked Cargo metadata and Cargo.lock at the exact tag. The
+checker validates the inventory schema, declared counts, uniqueness, workspace
+subset, digests, and tag/target/lock/toolchain bindings. It does not independently
+rerun Cargo metadata or reconstruct licenses. Symlinks and paths escaping the
+bundle are rejected.
 
 The release flow is deliberately non-self-referential: freeze source commit
 `C`, create an exact RC tag such as `v0.1.0-rc.1` at `C`, generate and archive
@@ -202,8 +207,9 @@ development ledger: exact local locks, authority/failure topology, current
 pending/satisfied partition, and attached development receipts. It never treats
 that ledger as release closure. The second additionally requires an external
 index, checks its complete ID coverage, paths, digests, receipts, and build
-inventory, verifies that its RC tag resolves to its exact source revision, and
-checks that the target, Cargo.lock, and toolchain bytes at that revision match
-the indexed digests. With no complete external bundle it fails by design. A
-schema-valid target or development ledger is never itself product or release
-evidence.
+inventory structure/bindings, verifies that its RC tag resolves to its exact
+source revision, and checks that the target, Cargo.lock, and toolchain bytes at
+that revision match the indexed digests. Inventory completeness is a claim of
+the required supply-chain verifier receipt and release attestation. With no
+complete external bundle it fails by design. A schema-valid target or
+development ledger is never itself product or release evidence.

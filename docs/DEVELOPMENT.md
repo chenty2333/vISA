@@ -291,7 +291,10 @@ digest-plus-secure-path references. The Nexus child boundary stays native-v1
 JSONL. The second command is the fail-closed release admission command; it
 requires a complete external exact-RC-tag evidence index, including final
 workspace/package/source/license inventory and tagged Cargo.lock/toolchain
-digests. Updating the development ledger never closes that external gate.
+digests. The checker validates that inventory's schema, counts, digests, and
+bindings; the supply-chain verifier receipt attests completeness against locked
+Cargo metadata and Cargo.lock. Updating the development ledger never closes
+that external gate.
 
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,
