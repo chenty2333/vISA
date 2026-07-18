@@ -3072,13 +3072,13 @@ mod tests {
     use std::{
         os::unix::fs::symlink,
         path::PathBuf,
-        sync::atomic::{AtomicBool, AtomicU64, Ordering},
+        sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     };
 
     use contract_core::{ProfileAccess, state_digest};
     use substrate_api::{
-        EffectClosureProvider, EffectDispatchAcquireError, EffectDispatchOutcome,
-        EffectRequestBinding, ProfilePort,
+        EffectClosureProtocolRange, EffectClosureProvider, EffectClosureProviderDescriptor,
+        EffectDispatchAcquireError, EffectDispatchOutcome, EffectRequestBinding, ProfilePort,
     };
     use visa_component_adapter::{ProfileBinding, identity_string, profile_execute};
     use visa_profile::{LogicalRequestOperation, encode_logical_request_operation};
@@ -3103,6 +3103,109 @@ mod tests {
     };
 
     static NEXT_TEST: AtomicU64 = AtomicU64::new(1);
+
+    struct DescriptorOverrideProvider {
+        inner: ReferenceEffectPeer,
+        descriptor: EffectClosureProviderDescriptor,
+        consume_attempts: AtomicUsize,
+    }
+
+    impl DescriptorOverrideProvider {
+        fn new(
+            config: EffectPeerConfig,
+            mutate: impl FnOnce(&mut EffectClosureProviderDescriptor),
+        ) -> Self {
+            let inner = ReferenceEffectPeer::new_admission_required(config).unwrap();
+            let mut descriptor = EffectClosureProvider::descriptor(&inner).unwrap();
+            mutate(&mut descriptor);
+            Self { inner, descriptor, consume_attempts: AtomicUsize::new(0) }
+        }
+    }
+
+    impl EffectClosureProvider for DescriptorOverrideProvider {
+        type RegistrationRequest = EffectAdmissionRegistration;
+        type Registered = ReferenceRegisteredEffect;
+        type Prepared = ReferencePreparedEffect;
+        type CommitMetadata = ReferenceEffectCommitMetadata;
+        type CommitEvidence = ReferenceEffectCommitEvidence;
+        type DispatchFence = ReferenceEffectDispatchFence;
+        type OutcomeEvidence = ReferenceEffectOutcomeEvidence;
+        type CompletionRequest = ReferenceEffectCompletionRequest;
+        type CompletionEvidence = ReferenceEffectCompletionEvidence;
+        type QueryObservation = ReferenceEffectQueryObservation;
+        type Error = EffectPeerError;
+
+        fn descriptor(&self) -> Result<EffectClosureProviderDescriptor, Self::Error> {
+            Ok(self.descriptor)
+        }
+
+        fn register_effect(
+            &self,
+            effect: &EffectRequest,
+            request: &Self::RegistrationRequest,
+        ) -> Result<Self::Registered, Self::Error> {
+            EffectClosureProvider::register_effect(&self.inner, effect, request)
+        }
+
+        fn prepare_effect(
+            &self,
+            effect: &EffectRequest,
+            registered: &Self::Registered,
+        ) -> Result<Self::Prepared, Self::Error> {
+            EffectClosureProvider::prepare_effect(&self.inner, effect, registered)
+        }
+
+        fn commit_effect(
+            &self,
+            effect: &EffectRequest,
+            prepared: &Self::Prepared,
+            metadata: &Self::CommitMetadata,
+        ) -> Result<Self::CommitEvidence, Self::Error> {
+            EffectClosureProvider::commit_effect(&self.inner, effect, prepared, metadata)
+        }
+
+        fn consume_committed_effect(
+            &self,
+            effect: &EffectRequest,
+            evidence: &Self::CommitEvidence,
+        ) -> Result<Self::DispatchFence, Self::Error> {
+            self.consume_attempts.fetch_add(1, Ordering::SeqCst);
+            EffectClosureProvider::consume_committed_effect(&self.inner, effect, evidence)
+        }
+
+        fn finish_effect_dispatch(
+            &self,
+            effect: &EffectRequest,
+            fence: &Self::DispatchFence,
+            outcome: EffectDispatchOutcome,
+        ) -> Result<(), Self::Error> {
+            EffectClosureProvider::finish_effect_dispatch(&self.inner, effect, fence, outcome)
+        }
+
+        fn record_effect_outcome(
+            &self,
+            effect: &EffectRequest,
+            committed: &Self::CommitEvidence,
+            outcome: &EffectOutcome,
+        ) -> Result<Self::OutcomeEvidence, Self::Error> {
+            EffectClosureProvider::record_effect_outcome(&self.inner, effect, committed, outcome)
+        }
+
+        fn complete_effect(
+            &self,
+            effect: &EffectRequest,
+            request: &Self::CompletionRequest,
+        ) -> Result<Self::CompletionEvidence, Self::Error> {
+            EffectClosureProvider::complete_effect(&self.inner, effect, request)
+        }
+
+        fn query_effect(
+            &self,
+            effect: &EffectRequest,
+        ) -> Result<Option<Self::QueryObservation>, Self::Error> {
+            EffectClosureProvider::query_effect(&self.inner, effect)
+        }
+    }
 
     struct FinishAckLossProvider {
         inner: ReferenceEffectPeer,
@@ -3405,6 +3508,27 @@ mod tests {
         fixture: &AdmissionFixture,
         prepared: &PreparedLogicalRequestStart,
     ) -> substrate_api::CommittedEffectPermit<'a, OutcomeAckLossProvider> {
+        let registration = reference_registration(fixture, prepared);
+        EffectAdmissionSession::new(peer)
+            .register(
+                prepared.effect_request().clone(),
+                EffectAdmissionRegistration::new(prepared.effect_request(), registration).unwrap(),
+            )
+            .unwrap_or_else(|failure| panic!("register failed: {:?}", failure.error()))
+            .prepare()
+            .unwrap_or_else(|failure| panic!("prepare failed: {:?}", failure.error()))
+            .commit(ReferenceEffectCommitMetadata {
+                result: 0,
+                domain_revision: fixture.effect_config.scope_generation,
+            })
+            .unwrap_or_else(|failure| panic!("commit failed: {:?}", failure.error()))
+    }
+
+    fn descriptor_override_permit<'a>(
+        peer: &'a DescriptorOverrideProvider,
+        fixture: &AdmissionFixture,
+        prepared: &PreparedLogicalRequestStart,
+    ) -> substrate_api::CommittedEffectPermit<'a, DescriptorOverrideProvider> {
         let registration = reference_registration(fixture, prepared);
         EffectAdmissionSession::new(peer)
             .register(
@@ -3915,6 +4039,47 @@ mod tests {
         ));
         assert_eq!(logical_peer.request_count(), 0);
         assert_eq!(logical_peer.execution_count(), 0);
+    }
+
+    #[test]
+    fn admitted_start_rejects_incompatible_descriptors_before_consume_or_sink() {
+        type MutateDescriptor = fn(&mut EffectClosureProviderDescriptor);
+        let cases: [(&str, u128, MutateDescriptor); 3] = [
+            ("protocol-2-0", 91_071, |descriptor| {
+                descriptor.protocol = EffectClosureProtocolRange::v2_0_preview();
+            }),
+            ("malformed-limits", 91_072, |descriptor| {
+                descriptor.limits.max_receipt_bytes = 0;
+            }),
+            ("missing-outcome", 91_073, |descriptor| {
+                descriptor.capabilities.outcome_recording = false;
+                descriptor.capabilities.effect_completion = false;
+            }),
+        ];
+
+        for (label, operation, mutate) in cases {
+            let root = TestRoot::new(label);
+            let setup = AdmissionSetup::create_without_source_fault(
+                &root.0,
+                Identity::from_u128(operation),
+            )
+            .unwrap();
+            let (fixture, mut source, _destination, logical_peer) =
+                setup.into_active_source().unwrap();
+            let prepared = source.prepare_start(fixture.request.clone()).unwrap();
+            let peer = DescriptorOverrideProvider::new(fixture.effect_config, mutate);
+            let permit = descriptor_override_permit(&peer, &fixture, &prepared);
+
+            assert!(matches!(
+                source.start_admitted(&prepared, &peer, permit),
+                Err(AdmittedLogicalRequestError::Adapter(
+                    LogicalRequestAdapterError::AdmissionRejected
+                ))
+            ));
+            assert_eq!(peer.consume_attempts.load(Ordering::SeqCst), 0, "{label}");
+            assert_eq!(logical_peer.request_count(), 0, "{label}");
+            assert_eq!(logical_peer.execution_count(), 0, "{label}");
+        }
     }
 
     #[test]

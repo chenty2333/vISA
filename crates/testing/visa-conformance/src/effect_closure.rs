@@ -94,7 +94,7 @@ pub fn effect_closure_descriptor_contract_vectors() -> Vec<EffectClosureDescript
     .require_admission();
 
     let future_minor =
-        EffectClosureProviderRequirements { protocol_minor: 1, ..exact_requirements };
+        EffectClosureProviderRequirements { protocol_minor: 2, ..exact_requirements };
     let malformed_minimum = EffectClosureProviderRequirements::v2_preview(
         EFFECT_CLOSURE_CORE_CAPABILITIES,
         EffectClosureAuthenticationProfile::IntegrityOnly,

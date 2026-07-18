@@ -12,7 +12,13 @@ use contract_core::{
 /// describes runtime/provider compatibility and does not reinterpret any v1
 /// receipt or state-machine transition.
 pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR: u16 = 2;
-pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR: u16 = 0;
+/// Historical protocol minor used by the original provider-neutral preview.
+pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_0: u16 = 0;
+/// Protocol minor which adds exact terminal dispatch replay and permits a
+/// canonical outcome after a `GuestFailed` dispatch.
+pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_1: u16 = 1;
+/// Current provider-neutral protocol minor.
+pub const EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR: u16 = EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_1;
 
 /// Whether one runtime/provider instance permits legacy effect bypasses.
 ///
@@ -68,12 +74,27 @@ pub struct EffectClosureProtocolRange {
 }
 
 impl EffectClosureProtocolRange {
-    pub const fn v2_preview() -> Self {
+    /// Historical 2.0-only range. New admitted execution must not negotiate it.
+    pub const fn v2_0_preview() -> Self {
         Self {
             major: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR,
-            min_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR,
-            max_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR,
+            min_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_0,
+            max_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_0,
         }
+    }
+
+    /// Current 2.1-only range.
+    pub const fn v2_1_preview() -> Self {
+        Self {
+            major: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR,
+            min_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_1,
+            max_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_1,
+        }
+    }
+
+    /// Current provider-neutral preview range.
+    pub const fn v2_preview() -> Self {
+        Self::v2_1_preview()
     }
 
     pub const fn is_well_formed(self) -> bool {
@@ -180,19 +201,45 @@ pub struct EffectClosureProviderRequirements {
 }
 
 impl EffectClosureProviderRequirements {
-    pub const fn v2_preview(
+    /// Historical 2.0 requirements. New admitted execution must use 2.1.
+    pub const fn v2_0_preview(
         capabilities: EffectClosureCapabilities,
         minimum_authentication: EffectClosureAuthenticationProfile,
         minimum_limits: EffectClosureProviderLimits,
     ) -> Self {
         Self {
             protocol_major: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR,
-            protocol_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR,
+            protocol_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_0,
             admission_profile: EffectAdmissionProfile::Compatibility,
             capabilities,
             minimum_authentication,
             minimum_limits,
         }
+    }
+
+    /// Current 2.1 requirements.
+    pub const fn v2_1_preview(
+        capabilities: EffectClosureCapabilities,
+        minimum_authentication: EffectClosureAuthenticationProfile,
+        minimum_limits: EffectClosureProviderLimits,
+    ) -> Self {
+        Self {
+            protocol_major: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MAJOR,
+            protocol_minor: EFFECT_CLOSURE_PROVIDER_PROTOCOL_MINOR_V2_1,
+            admission_profile: EffectAdmissionProfile::Compatibility,
+            capabilities,
+            minimum_authentication,
+            minimum_limits,
+        }
+    }
+
+    /// Current provider-neutral preview requirements.
+    pub const fn v2_preview(
+        capabilities: EffectClosureCapabilities,
+        minimum_authentication: EffectClosureAuthenticationProfile,
+        minimum_limits: EffectClosureProviderLimits,
+    ) -> Self {
+        Self::v2_1_preview(capabilities, minimum_authentication, minimum_limits)
     }
 
     pub const fn is_well_formed(self) -> bool {
