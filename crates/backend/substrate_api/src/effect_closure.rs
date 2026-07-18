@@ -378,9 +378,10 @@ impl ProfileDispatchAuthorization {
 
 /// One provider-side consumed authorization awaiting a guest outcome.
 ///
-/// There is deliberately no retry/clone surface. If this value is dropped or
-/// `finish` fails, provider state remains consumed and recovery must reconcile
-/// it out of band; a second local dispatch is forbidden.
+/// There is deliberately no clone or dispatch-retry surface. A failed
+/// `finish` returns [`EffectDispatchFinishFailure`], which may query or repeat
+/// only the exact provider-side finish transition; a second local dispatch is
+/// forbidden. Dropping either value leaves provider state fail closed.
 pub struct ConsumedEffectDispatch<'a, P>
 where
     P: EffectClosureProvider,
@@ -413,13 +414,87 @@ where
     pub fn finish(
         self,
         outcome: EffectDispatchOutcome,
-    ) -> Result<DispatchedEffectPermit<'a, P>, P::Error> {
-        self.provider.finish_effect_dispatch(&self.effect, &self.fence, outcome)?;
-        Ok(DispatchedEffectPermit {
-            provider: self.provider,
-            effect: self.effect,
-            commit_evidence: self.commit_evidence,
-        })
+    ) -> Result<DispatchedEffectPermit<'a, P>, EffectDispatchFinishFailure<'a, P>> {
+        match self.provider.finish_effect_dispatch(&self.effect, &self.fence, outcome) {
+            Ok(()) => Ok(DispatchedEffectPermit {
+                provider: self.provider,
+                effect: self.effect,
+                commit_evidence: self.commit_evidence,
+            }),
+            Err(error) => Err(EffectDispatchFinishFailure {
+                inner: Box::new(EffectDispatchFinishFailureInner {
+                    error,
+                    consumed: self,
+                    outcome,
+                }),
+            }),
+        }
+    }
+}
+
+/// Failed dispatch-fence closure with the exact consumed state and reported
+/// guest outcome retained.
+///
+/// Retrying this value can only repeat the provider-side `finish` transition;
+/// it never re-exposes the profile authorization or the `consume` operation,
+/// so an acknowledgement loss cannot cause a second external dispatch.
+pub struct EffectDispatchFinishFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    inner: Box<EffectDispatchFinishFailureInner<'a, P>>,
+}
+
+impl<P> core::fmt::Debug for EffectDispatchFinishFailure<'_, P>
+where
+    P: EffectClosureProvider,
+{
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("EffectDispatchFinishFailure")
+            .field("effect", self.effect())
+            .field("outcome", &self.outcome())
+            .finish_non_exhaustive()
+    }
+}
+
+struct EffectDispatchFinishFailureInner<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    error: P::Error,
+    consumed: ConsumedEffectDispatch<'a, P>,
+    outcome: EffectDispatchOutcome,
+}
+
+impl<'a, P> EffectDispatchFinishFailure<'a, P>
+where
+    P: EffectClosureProvider,
+{
+    pub const fn error(&self) -> &P::Error {
+        &self.inner.error
+    }
+
+    pub const fn effect(&self) -> &EffectRequest {
+        self.inner.consumed.effect()
+    }
+
+    pub const fn outcome(&self) -> EffectDispatchOutcome {
+        self.inner.outcome
+    }
+
+    pub fn query(&self) -> Result<Option<P::QueryObservation>, P::Error> {
+        self.inner.consumed.provider.query_effect(self.inner.consumed.effect())
+    }
+
+    pub fn retry(self) -> Result<DispatchedEffectPermit<'a, P>, Self> {
+        let inner = *self.inner;
+        inner.consumed.finish(inner.outcome)
+    }
+
+    pub fn into_parts(self) -> (P::Error, ConsumedEffectDispatch<'a, P>, EffectDispatchOutcome) {
+        let inner = *self.inner;
+        (inner.error, inner.consumed, inner.outcome)
     }
 }
 
@@ -921,6 +996,10 @@ where
         &self.inner.outcome
     }
 
+    pub fn query(&self) -> Result<Option<P::QueryObservation>, P::Error> {
+        self.inner.dispatched.provider.query_effect(self.inner.dispatched.effect())
+    }
+
     pub fn retry(self) -> Result<OutcomeRecordedEffect<'a, P>, Self> {
         let inner = *self.inner;
         inner.dispatched.record_outcome(inner.outcome)
@@ -1083,6 +1162,7 @@ mod tests {
         registration_attempts: AtomicUsize,
         commit_attempts: AtomicUsize,
         dispatch_state: AtomicUsize,
+        finish_attempts: AtomicUsize,
         outcome_attempts: AtomicUsize,
         completion_attempts: AtomicUsize,
     }
@@ -1093,6 +1173,7 @@ mod tests {
                 registration_attempts: AtomicUsize::new(0),
                 commit_attempts: AtomicUsize::new(0),
                 dispatch_state: AtomicUsize::new(0),
+                finish_attempts: AtomicUsize::new(0),
                 outcome_attempts: AtomicUsize::new(0),
                 completion_attempts: AtomicUsize::new(0),
             }
@@ -1198,10 +1279,21 @@ mod tests {
                 EffectDispatchOutcome::GuestReturned => 2,
                 EffectDispatchOutcome::GuestFailed => 3,
             };
-            self.dispatch_state
-                .compare_exchange(1, terminal, Ordering::SeqCst, Ordering::SeqCst)
-                .map_err(|_| "not-consumed")?;
-            Ok(())
+            match self.dispatch_state.compare_exchange(
+                1,
+                terminal,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {}
+                Err(current) if current == terminal => {}
+                Err(_) => return Err("not-consumed"),
+            }
+            if self.finish_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err("finish-acknowledgement-lost")
+            } else {
+                Ok(())
+            }
         }
 
         fn record_effect_outcome(
@@ -1238,7 +1330,7 @@ mod tests {
             &self,
             _effect: &EffectRequest,
         ) -> Result<Option<Self::QueryObservation>, Self::Error> {
-            Ok(None)
+            Ok(Some(self.dispatch_state.load(Ordering::SeqCst) as u64))
         }
     }
 
@@ -1371,7 +1463,14 @@ mod tests {
             Err(_) => panic!("provider unexpectedly rejected the committed dispatch"),
         };
         assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 1);
-        assert!(dispatch.finish(EffectDispatchOutcome::GuestReturned).is_ok());
+        let failure = match dispatch.finish(EffectDispatchOutcome::GuestReturned) {
+            Ok(_) => panic!("the injected finish acknowledgement loss unexpectedly succeeded"),
+            Err(failure) => failure,
+        };
+        assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 2);
+        assert_eq!(failure.query(), Ok(Some(2)));
+        assert_eq!(failure.outcome(), EffectDispatchOutcome::GuestReturned);
+        assert!(failure.retry().is_ok());
         assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 2);
         assert_eq!(other_provider.commit_attempts.load(Ordering::Relaxed), 0);
     }
@@ -1428,11 +1527,19 @@ mod tests {
             .unwrap_or_else(|_| panic!("exact Commit retry unexpectedly failed"));
 
         let outcome = EffectOutcome::Indeterminate { evidence: None };
-        let committed = committed
+        let finish_failure = match committed
             .consume(&provider, &request)
             .unwrap_or_else(|_| panic!("provider unexpectedly rejected dispatch"))
             .finish(EffectDispatchOutcome::GuestReturned)
-            .unwrap_or_else(|_| panic!("provider unexpectedly rejected dispatch outcome"));
+        {
+            Ok(_) => panic!("the injected finish acknowledgement loss unexpectedly succeeded"),
+            Err(failure) => failure,
+        };
+        assert_eq!(*finish_failure.error(), "finish-acknowledgement-lost");
+        assert_eq!(finish_failure.query(), Ok(Some(2)));
+        let committed = finish_failure
+            .retry()
+            .unwrap_or_else(|_| panic!("exact finish retry unexpectedly failed"));
         let outcome_failure = match committed.record_outcome(outcome.clone()) {
             Ok(_) => panic!("the injected outcome acknowledgement loss unexpectedly succeeded"),
             Err(failure) => failure,

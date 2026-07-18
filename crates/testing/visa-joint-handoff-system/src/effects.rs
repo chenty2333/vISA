@@ -176,12 +176,17 @@ pub enum ReferenceEffectQueryPhase {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReferenceEffectQueryObservation {
     phase: ReferenceEffectQueryPhase,
+    dispatch_outcome: Option<EffectDispatchOutcome>,
     outcome: Option<EffectOutcome>,
 }
 
 impl ReferenceEffectQueryObservation {
     pub const fn phase(&self) -> ReferenceEffectQueryPhase {
         self.phase
+    }
+
+    pub const fn dispatch_outcome(&self) -> Option<EffectDispatchOutcome> {
+        self.dispatch_outcome
     }
 
     pub const fn outcome(&self) -> Option<&EffectOutcome> {
@@ -1115,14 +1120,18 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         if admission.effect != *effect
             || admission.registration.binding != fence.binding
             || admission.dispatch_generation != fence.dispatch_generation
-            || admission.dispatch_phase != ReferenceDispatchPhase::Consumed
         {
             return Err(EffectPeerError::StepConflict);
         }
-        admission.dispatch_phase = match outcome {
+        let terminal = match outcome {
             EffectDispatchOutcome::GuestReturned => ReferenceDispatchPhase::GuestReturned,
             EffectDispatchOutcome::GuestFailed => ReferenceDispatchPhase::GuestFailed,
         };
+        match admission.dispatch_phase {
+            ReferenceDispatchPhase::Consumed => admission.dispatch_phase = terminal,
+            existing if existing == terminal => {}
+            _ => return Err(EffectPeerError::StepConflict),
+        }
         Ok(())
     }
 
@@ -1164,7 +1173,11 @@ impl EffectClosureProvider for ReferenceEffectPeer {
                 None => {
                     let dispatch_ready = match admission_profile {
                         EffectAdmissionProfile::AdmissionRequired => {
-                            admission.dispatch_phase == ReferenceDispatchPhase::GuestReturned
+                            matches!(
+                                admission.dispatch_phase,
+                                ReferenceDispatchPhase::GuestReturned
+                                    | ReferenceDispatchPhase::GuestFailed
+                            )
                         }
                         EffectAdmissionProfile::Compatibility => {
                             admission.dispatch_phase == ReferenceDispatchPhase::Available
@@ -1232,6 +1245,13 @@ impl EffectClosureProvider for ReferenceEffectPeer {
         };
         Ok(Some(ReferenceEffectQueryObservation {
             phase,
+            dispatch_outcome: match admission.dispatch_phase {
+                ReferenceDispatchPhase::GuestReturned => Some(EffectDispatchOutcome::GuestReturned),
+                ReferenceDispatchPhase::GuestFailed => Some(EffectDispatchOutcome::GuestFailed),
+                ReferenceDispatchPhase::Available
+                | ReferenceDispatchPhase::Revoked
+                | ReferenceDispatchPhase::Consumed => None,
+            },
             outcome: admission.canonical_outcome.clone(),
         }))
     }

@@ -592,7 +592,7 @@ where
     })?;
     let permit = dispatch
         .finish(EffectDispatchOutcome::GuestReturned)
-        .map_err(|error| provider_error("finish-dispatch", fixture, &error))?;
+        .map_err(|error| provider_error("finish-dispatch", fixture, error.error()))?;
     observe_case(
         &mut observations,
         "dispatch-gate-consumes-permit",
@@ -737,7 +737,7 @@ where
             }
         })?
         .finish(EffectDispatchOutcome::GuestFailed)
-        .map_err(|error| provider_error("finish-failed-dispatch", fixture, &error))?;
+        .map_err(|error| provider_error("finish-failed-dispatch", fixture, error.error()))?;
     observe_case(
         &mut observations,
         "failed-dispatch",
