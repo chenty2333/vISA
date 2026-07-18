@@ -1,0 +1,10 @@
+{
+  "schema": "visa.release-readiness-verifier-receipt.v1",
+  "readiness_id": "process-topology-frozen",
+  "source_revision": "befc259c31ea7337303eb51af0ba3b1162bbb1ce",
+  "verifier_command": "python3 scripts/check-release-contract.py && python3 scripts/test-check-release-contract.py -q",
+  "result": "passed",
+  "input_sha256": {
+    "specs/release/evidence/process-topology-v1.json": "81ebadea47dc0662ccfa4ccdbcf6cb9f4679674b71d3ae3a497cfe9a68eeb8f9"
+  }
+}

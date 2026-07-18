@@ -688,10 +688,8 @@ required_ids = [
   "external-workload",
   "exact-tag-release-evidence",
 ]
-satisfied_ids = []
+satisfied_ids = ["contract-schema-frozen", "process-topology-frozen"]
 pending_ids = [
-  "contract-schema-frozen",
-  "process-topology-frozen",
   "public-cli",
   "public-agent",
   "public-ownership-service",
@@ -714,4 +712,19 @@ pending_ids = [
   "external-workload",
   "exact-tag-release-evidence",
 ]
-evidence = []
+
+[[readiness.evidence]]
+id = "contract-schema-frozen"
+evidence_path = "specs/release/evidence/contract-schema-v2.json"
+evidence_sha256 = "2919ec66a1c3341ad3672bb9718c64ce0e018c4d42ee6eab98d9391955bb3402"
+source_revision = "befc259c31ea7337303eb51af0ba3b1162bbb1ce"
+verifier_receipt_path = "specs/release/evidence/contract-schema-v2.receipt.json"
+verifier_receipt_sha256 = "8873bcaff4c3224bfcfa25a853fdb438c62661ced269e7445b89884baec10b6d"
+
+[[readiness.evidence]]
+id = "process-topology-frozen"
+evidence_path = "specs/release/evidence/process-topology-v1.json"
+evidence_sha256 = "81ebadea47dc0662ccfa4ccdbcf6cb9f4679674b71d3ae3a497cfe9a68eeb8f9"
+source_revision = "befc259c31ea7337303eb51af0ba3b1162bbb1ce"
+verifier_receipt_path = "specs/release/evidence/process-topology-v1.receipt.json"
+verifier_receipt_sha256 = "14136f5e3e528697a64e9a5e3fc5e207b3bc06e46313fa84b37b7cf8df7bfde5"

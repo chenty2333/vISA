@@ -1,0 +1,33 @@
+{
+  "schema": "visa.release-readiness-evidence.v1",
+  "readiness_id": "process-topology-frozen",
+  "source_revision": "befc259c31ea7337303eb51af0ba3b1162bbb1ce",
+  "claim": "the exact vISA 0.1 target has at most six processes and no agent worker child",
+  "contract": {
+    "path": "specs/release/visa-0.1.toml",
+    "sha256": "78651164e5597850b9aee6444396453b8fb9ddfe519320e40f0ce1b3b7e4409f"
+  },
+  "documentation": {
+    "path": "specs/release/visa-0.1.md",
+    "sha256": "7ba97c8af29469e04f604bdd0e04cab9536abd44e8e8d0a6483e127220375363"
+  },
+  "processes": {
+    "visa-controller": 1,
+    "visa-agent": 2,
+    "visa-ownershipd": 1,
+    "visa-nexusd": 1,
+    "nexus-effect-peer": 1,
+    "maximum_active": 6
+  },
+  "local_rpc_schemas": [
+    "visa.agent.control.v1",
+    "visa.ownership.local.v1",
+    "visa.nexus-adapter.local.v1"
+  ],
+  "max_frame_bytes_excluding_lf": 1048576,
+  "authority": {
+    "ownership_decision": "visa-ownershipd-only",
+    "nexus_registry": "nexus-effect-peer-owned-by-visa-nexusd",
+    "profile_sinks": "corresponding-visa-agent"
+  }
+}

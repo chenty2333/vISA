@@ -47,11 +47,19 @@ class ReleaseContractTests(unittest.TestCase):
         shutil.copyfile(source, destination)
         return destination
 
+    def copy_current_readiness_evidence(self, document: dict) -> None:
+        for entry in document["readiness"]["evidence"]:
+            self.copy(entry["evidence_path"], self.root)
+            self.copy(entry["verifier_receipt_path"], self.root)
+
     def test_current_contract_is_schema_valid_but_not_release_ready(self) -> None:
         pending = CHECKER.validate()
         document = CHECKER.load_contract()
         self.assertEqual(pending, document["readiness"]["pending_ids"])
-        self.assertEqual(document["readiness"]["satisfied_ids"], [])
+        self.assertEqual(
+            document["readiness"]["satisfied_ids"],
+            ["contract-schema-frozen", "process-topology-frozen"],
+        )
 
     def test_release_ready_mode_fails_closed_on_pending_items(self) -> None:
         result = subprocess.run(
@@ -338,6 +346,7 @@ source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retai
 
     def test_satisfied_id_requires_exact_evidence_and_verifier_receipt(self) -> None:
         document = CHECKER.load_contract()
+        self.copy_current_readiness_evidence(document)
         readiness = document["readiness"]
         readiness_id = readiness["pending_ids"].pop(0)
         readiness["satisfied_ids"].append(readiness_id)
@@ -360,7 +369,7 @@ source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retai
         receipt_bytes = (CHECKER.json.dumps(receipt, sort_keys=True) + "\n").encode()
         receipt_file = self.root / receipt_path
         receipt_file.write_bytes(receipt_bytes)
-        readiness["evidence"] = [
+        readiness["evidence"].append(
             {
                 "id": readiness_id,
                 "evidence_path": evidence_path,
@@ -369,11 +378,12 @@ source_disposition_after_crash = "already-frozen-remains-frozen-pre-freeze-retai
                 "verifier_receipt_path": receipt_path,
                 "verifier_receipt_sha256": CHECKER.hashlib.sha256(receipt_bytes).hexdigest(),
             }
-        ]
+        )
         self.assertEqual(CHECKER.check_readiness(document, self.root), readiness["pending_ids"])
 
     def test_satisfied_id_without_evidence_fails_closed(self) -> None:
         document = CHECKER.load_contract()
+        self.copy_current_readiness_evidence(document)
         readiness = document["readiness"]
         readiness_id = readiness["pending_ids"].pop(0)
         readiness["satisfied_ids"].append(readiness_id)
