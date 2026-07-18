@@ -415,9 +415,14 @@ where
     }
 
     pub fn finish(
-        self,
+        mut self,
         outcome: EffectDispatchOutcome,
     ) -> Result<DispatchedEffectPermit<'a, P>, EffectDispatchFinishFailure<'a, P>> {
+        // A finish attempt is itself the irreversible boundary after which no
+        // profile sink authorization may escape again. Clear it before calling
+        // the provider because that call may apply the transition and then lose
+        // its acknowledgement.
+        self.profile_authorization = None;
         match self.provider.finish_effect_dispatch(&self.effect, &self.fence, outcome) {
             Ok(()) => Ok(DispatchedEffectPermit {
                 provider: self.provider,
@@ -496,6 +501,8 @@ where
         inner.consumed.finish(inner.outcome)
     }
 
+    /// Recover the exact finish inputs for fail-closed retention. The returned
+    /// consumed state has permanently discarded its profile authorization.
     pub fn into_parts(self) -> (P::Error, ConsumedEffectDispatch<'a, P>, EffectDispatchOutcome) {
         let inner = *self.inner;
         (inner.error, inner.consumed, inner.outcome)
@@ -1474,7 +1481,10 @@ mod tests {
         assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 2);
         assert_eq!(failure.query(), Ok(Some(2)));
         assert_eq!(failure.outcome(), EffectDispatchOutcome::GuestReturned);
-        assert!(failure.retry().is_ok());
+        let (error, mut consumed, outcome) = failure.into_parts();
+        assert_eq!(error, "finish-acknowledgement-lost");
+        assert!(consumed.take_profile_authorization().is_none());
+        assert!(consumed.finish(outcome).is_ok());
         assert_eq!(provider.dispatch_state.load(Ordering::SeqCst), 2);
         assert_eq!(other_provider.commit_attempts.load(Ordering::Relaxed), 0);
     }
