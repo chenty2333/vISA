@@ -133,6 +133,18 @@ and provider queries confirm the exact not-yet-started dispatch. A `started`
 record without a durable terminal outcome is Unknown and can only be queried
 and reconciled; it is never redispatched from the grant.
 
+The agent failure-matrix phrase "exact RPC replay" is scoped to a surviving
+agent process after an ownership-service or user-bus disruption. That process
+retains the same process nonce and generation and may resend the exact
+canonical request bytes. An agent process restart instead creates a new nonce
+and monotonically later generation; the restarted agent must issue a new
+current-binding `Query` and reconcile the authoritative state. It must not
+present request bytes containing the prior process binding as a current call.
+Likewise, an exactly replayed ownership response retains the server process
+binding that originally committed it: those server nonce/generation fields are
+historical execution evidence, while the current transport endpoint is
+verified independently.
+
 ## Three independent local RPC contracts
 
 The product freezes three separate version namespaces and golden corpora:

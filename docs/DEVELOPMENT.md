@@ -417,6 +417,18 @@ satisfy any local-RPC readiness ID; zbus transport, bus-controlled credential
 admission, service-owned durable replay, and process/restart evidence remain
 separate gates.
 
+The O3 supervised-process refinement follows the same rule. It reuses
+systemd's `GetUnitByPIDFD`, unit `InvocationID`, and service `MainPID` contracts
+through a minimal zbus-generated proxy, and keeps rustix for the retained pidfd
+and secure `/proc/<pid>/exe` observation. vISA owns only the exact role-to-unit
+mapping, stable-agent identity policy, generation cursor, and fail-closed
+composition with its admission barrier. A broad generated systemd API crate,
+another D-Bus codec, or a generic retry/RPC framework would add a second
+compatibility surface without replacing any vISA-owned semantics. The product
+agent must use the same user-bus connection both to own its frozen role name
+and to call ownership/Nexus services; a second connection has a different
+bus-controlled unique name and is not the admitted role owner.
+
 The next bounded O1 slice now lives in `visa_ownership_service`. It is a
 transport-independent product ownership authority core, not the final
 `visa-ownershipd` process. The service-owned SQLite transaction performs exact
