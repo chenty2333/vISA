@@ -14,6 +14,7 @@ import sys
 ALLOWED_WORKSPACE_DEPENDENCIES = {
     "contract_core": frozenset(),
     "joint_handoff_core": frozenset({"contract_core"}),
+    "visa_local_rpc": frozenset(),
     "handoff-component": frozenset(),
     "visa_profile": frozenset({"contract_core"}),
     "semantic_core": frozenset({"contract_core", "visa_profile"}),
@@ -56,7 +57,14 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "stage3-file-component": frozenset(),
     "stage3-request-component": frozenset(),
     "visa-conformance": frozenset(
-        {"contract_core", "semantic_core", "substrate_api", "visa_profile"}
+        {
+            "contract_core",
+            "joint_handoff_core",
+            "semantic_core",
+            "substrate_api",
+            "visa_local_rpc",
+            "visa_profile",
+        }
     ),
     "visa-stage3-system": frozenset(
         {

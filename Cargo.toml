@@ -9,6 +9,7 @@ members = [
     "crates/core/semantic_core",
     "crates/core/target_abi",
     "crates/core/visa_profile",
+    "crates/core/visa_local_rpc",
     "crates/oracle/contract_core",
     "crates/oracle/visa-conformance",
     "crates/oracle/semantic_core",
@@ -71,10 +72,13 @@ fatfs = "0.3.6"
 ext4-view = "0.9.3"
 hex = "0.4.3"
 linked_list_allocator = "0.10.6"
+postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] }
+postcard-schema = { version = "=0.2.5", default-features = false, features = ["derive", "use-std"] }
 pic8259 = "0.10.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_ignored = "0.1.12"
 serde_json = "1.0"
+serde_json_canonicalizer = "=0.3.2"
 semantic_core = { path = "crates/core/semantic_core" }
 service_core = { path = "crates/runtime/service_core" }
 fs_adapter = { path = "crates/services/fs_adapter" }
@@ -89,6 +93,7 @@ spin = "0.9.8"
 supervisor_catalog = { path = "crates/runtime/supervisor_catalog" }
 target_abi = { path = "crates/core/target_abi", default-features = false }
 uart_16550 = "0.3.2"
+zbus = { version = "=5.18.0", default-features = false, features = ["async-io"] }
 visa_profile = { path = "crates/core/visa_profile" }
 visa_runtime = { path = "crates/runtime/visa_runtime" }
 visa_joint_handoff = { path = "crates/runtime/visa_joint_handoff" }

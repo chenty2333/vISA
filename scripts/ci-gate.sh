@@ -128,6 +128,7 @@ run_gate() {
 active_spine_packages=(
     contract_core
     joint_handoff_core
+    visa_local_rpc
     handoff-component
     visa_profile
     semantic_core
@@ -184,6 +185,16 @@ gate_release_contract() {
         python3 scripts/check-release-contract.py
     run_gate "release: contract checker self-tests" \
         python3 scripts/test-check-release-contract.py
+}
+
+gate_local_rpc_artifacts() {
+    run_gate "local RPC: dependency, family isolation, and serde policy" \
+        python3 scripts/check-local-rpc-wire.py
+    run_gate "local RPC: static policy checker self-tests" \
+        python3 scripts/test-check-local-rpc-wire.py
+    run_gate "local RPC: owned schemas, golden corpora, and executable negatives" \
+        cargo run --quiet --locked -p visa-conformance \
+            --bin visa-local-rpc-artifacts -- --check
 }
 
 gate_jco_node_toolchain() {
@@ -271,6 +282,7 @@ gate_fast() {
     gate_file_size
     gate_ci_contract
     gate_release_contract
+    gate_local_rpc_artifacts
     gate_jco_node_toolchain
     gate_joint_handoff_source_lock
     gate_nexus_handoff_verifier_self_tests

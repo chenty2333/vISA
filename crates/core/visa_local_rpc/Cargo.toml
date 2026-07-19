@@ -1,0 +1,16 @@
+[package]
+name = "visa_local_rpc"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+readme = "README.md"
+
+[dependencies]
+postcard.workspace = true
+postcard-schema.workspace = true
+serde.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

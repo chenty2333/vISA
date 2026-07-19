@@ -389,6 +389,34 @@ interop oracle, not admission authority. No existing upstream helper covers
 that complete composition, so the profile/closure layer remains small
 vISA-owned code rather than a second general OCI implementation.
 
+For the three pending local RPCs, the same build-vs-reuse rule selects zbus
+5.18.0 for user-bus transport, Postcard 1.1.3 for the bounded inner bytes,
+`postcard-schema` 0.2.5 for reflection, and
+`serde_json_canonicalizer` 0.3.2 for
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) artifact bytes. The
+transport-independent `visa_local_rpc` crate owns only vISA's three concrete
+families, request-paired response APIs, field-level authority bindings, strict
+decode/re-encode rule, and exact replay records. Its generic codec remains
+crate-private, and agent-control response acceptance also binds the verified
+Source/Destination endpoint role. Neutral receipt carriers recompute the exact
+joint-handoff receipt digest with an exhaustive kind/tag/content-schema map;
+this is byte-carrier consistency, not typed receipt or issuer authentication.
+The service/adapter readiness slices must apply the `joint_handoff_core` typed
+decode/re-encode, full header/key/request-binding, and authentication verifier
+before receipt adoption or mutation. The std-only JCS implementation remains in
+`visa-conformance`; it does not enter the wire crate. Owned schema is not
+treated as a wire-compatibility proof: static gates reject unsupported Serde
+shape attributes, floats, unordered collections, sibling-family imports, and
+manual serialization, while three Rust-constructed all-variant corpora lock
+the actual bytes and execute paired request/response/replay malformed and
+binding substitutions. Neutral key/reference shapes, receipt tags, and receipt
+digest behavior are checked against `joint_handoff_core`. Run
+`cargo run --locked -p visa-conformance --bin visa-local-rpc-artifacts -- --check`
+to rederive all six checked-in artifacts. This pure-wire slice does not yet
+satisfy any local-RPC readiness ID; zbus transport, bus-controlled credential
+admission, service-owned durable replay, and process/restart evidence remain
+separate gates.
+
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,
 writes an execution evidence bundle, then invokes the independent

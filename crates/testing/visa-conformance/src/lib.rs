@@ -2,6 +2,7 @@ pub mod artifact_io;
 mod effect_closure;
 mod effect_closure_replay;
 mod joint_handoff;
+pub mod local_rpc;
 mod stage1;
 mod stage1_artifacts;
 mod stage2;
