@@ -2,6 +2,7 @@ use std::{env, error::Error, fmt, future::poll_fn, pin::Pin, thread, time::Durat
 
 use sd_notify::NotifyState;
 use visa_local_rpc::{MAX_INNER_REQUEST_BYTES, MAX_INNER_RESPONSE_BYTES, ownership};
+use visa_ownership_service::OwnershipServiceError;
 use zbus::{
     Connection,
     export::futures_core::Stream,
@@ -351,6 +352,11 @@ fn map_submit_error(error: SubmitError) -> zbus::fdo::Error {
 
 fn map_store_error(error: StoreCallError) -> zbus::fdo::Error {
     match error {
+        StoreCallError::Authority(OwnershipServiceError::CallerBindingConflict) => {
+            zbus::fdo::Error::AccessDenied(
+                "ownership caller process binding is stale or conflicting".to_owned(),
+            )
+        }
         StoreCallError::Authority(_) => {
             zbus::fdo::Error::Failed("ownership authority call failed".to_owned())
         }

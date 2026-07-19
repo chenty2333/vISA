@@ -63,6 +63,7 @@ impl RunError {
             Self::Store(
                 OwnershipServiceError::Integrity
                 | OwnershipServiceError::InvalidRequest
+                | OwnershipServiceError::CallerBindingConflict
                 | OwnershipServiceError::RequestIdConflict
                 | OwnershipServiceError::Capacity,
             ) => ExitClass::Software,
@@ -90,6 +91,7 @@ const fn ownership_error_exit_class(error: OwnershipServiceError) -> ExitClass {
         OwnershipServiceError::StoreMismatch => ExitClass::Configuration,
         OwnershipServiceError::Integrity
         | OwnershipServiceError::InvalidRequest
+        | OwnershipServiceError::CallerBindingConflict
         | OwnershipServiceError::RequestIdConflict
         | OwnershipServiceError::Capacity => ExitClass::Software,
     }

@@ -160,6 +160,25 @@ fn request(
     (request, bytes)
 }
 
+fn process_binding(
+    mut binding: AgentBinding,
+    process_generation: u64,
+    process_nonce: u128,
+) -> AgentBinding {
+    binding.process_generation = process_generation;
+    binding.process_nonce = ProcessNonce::from_u128(process_nonce);
+    binding
+}
+
+fn destination_binding(fixture: &TestFixture) -> AgentBinding {
+    AgentBinding {
+        role: AgentRole::Destination,
+        logical_incarnation: LogicalIncarnation::from_u128(24),
+        process_nonce: ProcessNonce::from_u128(25),
+        ..fixture.caller
+    }
+}
+
 fn execute(
     store: &mut AuthorityStore,
     caller: AgentBinding,
@@ -783,6 +802,171 @@ fn exact_replay_survives_restart_and_changed_bytes_conflict() {
     let replayed_response =
         wire::decode_response_for(&initialize, &replayed).expect("replayed response");
     assert_eq!(replayed_response.server, original_server);
+}
+
+#[test]
+fn caller_generation_cursor_is_role_scoped_and_monotonic() {
+    let fixture = TestFixture::new();
+    let mut store = fixture.create(20);
+    let key = key(200, 201, 202, 7);
+    execute(&mut store, fixture.caller, 1, initialize_operation(key));
+    execute(
+        &mut store,
+        fixture.caller,
+        2,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+
+    let equal_generation_new_nonce = process_binding(fixture.caller, 1, 16);
+    let (_, bytes) = request(
+        equal_generation_new_nonce,
+        3,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        store.execute_exact(equal_generation_new_nonce, &bytes),
+        Err(OwnershipServiceError::CallerBindingConflict)
+    );
+
+    let source_generation_3 = process_binding(fixture.caller, 3, 30);
+    execute(
+        &mut store,
+        source_generation_3,
+        4,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+
+    let stale_source = process_binding(fixture.caller, 2, 20);
+    let (_, bytes) = request(
+        stale_source,
+        5,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        store.execute_exact(stale_source, &bytes),
+        Err(OwnershipServiceError::CallerBindingConflict)
+    );
+
+    let reused_nonce = process_binding(fixture.caller, 4, 30);
+    let (_, bytes) = request(
+        reused_nonce,
+        6,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        store.execute_exact(reused_nonce, &bytes),
+        Err(OwnershipServiceError::CallerBindingConflict)
+    );
+
+    let mut substituted_incarnation = process_binding(fixture.caller, 4, 40);
+    substituted_incarnation.logical_incarnation = LogicalIncarnation::from_u128(99);
+    let (_, bytes) = request(
+        substituted_incarnation,
+        7,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        store.execute_exact(substituted_incarnation, &bytes),
+        Err(OwnershipServiceError::CallerBindingConflict)
+    );
+
+    let destination = destination_binding(&fixture);
+    execute(
+        &mut store,
+        destination,
+        8,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    let source_generation_4 = process_binding(fixture.caller, 4, 40);
+    execute(
+        &mut store,
+        source_generation_4,
+        9,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+}
+
+#[test]
+fn caller_generation_cursor_is_rebuilt_on_reopen() {
+    let fixture = TestFixture::new();
+    let mut store = fixture.create(20);
+    let key = key(200, 201, 202, 7);
+    let (_, initial_bytes) = request(fixture.caller, 1, initialize_operation(key));
+    store.execute_exact(fixture.caller, &initial_bytes).expect("initialize");
+    let source_generation_3 = process_binding(fixture.caller, 3, 30);
+    execute(
+        &mut store,
+        source_generation_3,
+        2,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    drop(store);
+
+    let mut reopened = fixture.reopen(21);
+    for conflicting in
+        [process_binding(fixture.caller, 2, 20), process_binding(fixture.caller, 3, 31)]
+    {
+        let (_, bytes) = request(
+            conflicting,
+            3,
+            wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+        );
+        assert_eq!(
+            reopened.execute_exact(conflicting, &bytes),
+            Err(OwnershipServiceError::CallerBindingConflict)
+        );
+    }
+    execute(
+        &mut reopened,
+        source_generation_3,
+        4,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        reopened.execute_exact(fixture.caller, &initial_bytes),
+        Err(OwnershipServiceError::CallerBindingConflict)
+    );
+}
+
+#[test]
+fn failed_new_process_exchange_does_not_advance_the_cursor() {
+    let fixture = TestFixture::new();
+    let mut store = fixture.create(20);
+    let key = key(200, 201, 202, 7);
+    let (_, initial_bytes) = request(fixture.caller, 1, initialize_operation(key));
+    let initial_response = store.execute_exact(fixture.caller, &initial_bytes).expect("initialize");
+
+    let source_generation_3 = process_binding(fixture.caller, 3, 30);
+    let (_, conflicting_bytes) = request(
+        source_generation_3,
+        1,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        store.execute_exact(source_generation_3, &conflicting_bytes),
+        Err(OwnershipServiceError::RequestIdConflict)
+    );
+    assert_eq!(
+        store.execute_exact(fixture.caller, &initial_bytes).expect("old cursor remains current"),
+        initial_response
+    );
+    execute(
+        &mut store,
+        fixture.caller,
+        2,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+
+    execute(
+        &mut store,
+        source_generation_3,
+        3,
+        wire::Operation::Query(wire::QueryRequest::Unit(key.continuity_unit)),
+    );
+    assert_eq!(
+        store.execute_exact(fixture.caller, &initial_bytes),
+        Err(OwnershipServiceError::CallerBindingConflict)
+    );
 }
 
 #[test]

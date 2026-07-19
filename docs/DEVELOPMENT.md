@@ -439,7 +439,10 @@ cohort/boot/runtime/issuer/receipt-policy identity, retains active-cohort replay
 rows without TTL, retains a gap-free process-generation/nonce history with
 completion-order boundaries, audits its exact schema and authority history, and
 rebuilds a shadow projection by replaying the durable exact RPC ledger at
-startup. Seal
+startup. The same ledger now rebuilds per-role agent caller cursors: a current
+process tuple may continue, or a later generation with a new nonce may advance
+only when its terminal exchange commits; rollback, nonce reuse, and stable
+logical-incarnation substitution fail closed without a second table. Seal
 admission reuses the `joint_handoff_core` reducer for the typed neutral chain.
 First creation converges through an audited, checkpointed, explicitly closed,
 sidecar-free temporary SQLite database followed by `RENAME_NOREPLACE` and

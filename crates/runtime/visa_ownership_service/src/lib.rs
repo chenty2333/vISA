@@ -27,6 +27,7 @@ pub use store::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnershipServiceError {
     InvalidRequest,
+    CallerBindingConflict,
     RequestIdConflict,
     Capacity,
     StoreBusy,

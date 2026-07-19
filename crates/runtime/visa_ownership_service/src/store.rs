@@ -19,8 +19,8 @@ use rustix::{
 use visa_local_rpc::{
     WireValidation,
     common::{
-        AgentBinding, AuthorityRole, AuthorityServiceBinding, BootId, CohortId, IssuerId,
-        IssuerKeyId, IssuerLogId, PRODUCT_VERSION, ProcessNonce, RuntimeSessionId,
+        AgentBinding, AgentRole, AuthorityRole, AuthorityServiceBinding, BootId, CohortId,
+        IssuerId, IssuerKeyId, IssuerLogId, PRODUCT_VERSION, ProcessNonce, RuntimeSessionId,
         ServiceIncarnation,
     },
     ownership as wire,
@@ -207,6 +207,42 @@ pub struct DurabilityReport {
     pub sqlite_source_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct AgentCallerCursors {
+    source: Option<AgentBinding>,
+    destination: Option<AgentBinding>,
+}
+
+impl AgentCallerCursors {
+    fn transition(mut self, caller: AgentBinding) -> Option<Self> {
+        let slot = match caller.role {
+            AgentRole::Source => &mut self.source,
+            AgentRole::Destination => &mut self.destination,
+        };
+        if let Some(previous) = slot
+            && (!same_stable_agent(*previous, caller)
+                || caller.process_generation < previous.process_generation
+                || (caller.process_generation == previous.process_generation
+                    && caller.process_nonce != previous.process_nonce)
+                || (caller.process_generation > previous.process_generation
+                    && caller.process_nonce == previous.process_nonce))
+        {
+            return None;
+        }
+        *slot = Some(caller);
+        Some(self)
+    }
+}
+
+fn same_stable_agent(left: AgentBinding, right: AgentBinding) -> bool {
+    left.product_version == right.product_version
+        && left.cohort == right.cohort
+        && left.boot == right.boot
+        && left.runtime_session == right.runtime_session
+        && left.role == right.role
+        && left.logical_incarnation == right.logical_incarnation
+}
+
 pub struct AuthorityStore {
     connection: Connection,
     _database_guard: File,
@@ -215,6 +251,7 @@ pub struct AuthorityStore {
     binding: StoreBinding,
     identity: OwnershipServiceIdentity,
     server_binding: AuthorityServiceBinding,
+    caller_cursors: AgentCallerCursors,
     limits: StoreLimits,
 }
 
@@ -265,7 +302,7 @@ impl AuthorityStore {
         state::audit_authority_state(&connection, meta.identity.issuer_namespace())?;
         let process_instances =
             audit_process_instances(&connection, meta.process_generation, meta.last_process_nonce)?;
-        audit_rpc_exchanges(
+        let caller_cursors = audit_rpc_exchanges(
             &connection,
             meta.binding,
             meta.identity,
@@ -301,6 +338,7 @@ impl AuthorityStore {
             binding: meta.binding,
             identity: meta.identity,
             server_binding,
+            caller_cursors,
             limits: meta.limits,
         })
     }
@@ -337,6 +375,10 @@ impl AuthorityStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_transaction_error)?;
+        let next_cursors = self
+            .caller_cursors
+            .transition(request.caller)
+            .ok_or(OwnershipServiceError::CallerBindingConflict)?;
         match begin_or_replay(&transaction, &request, exact_request_bytes, self.limits)? {
             ExchangeAdmission::ExactReplay(response_bytes) => {
                 transaction.commit().map_err(map_sqlite_error)?;
@@ -359,6 +401,7 @@ impl AuthorityStore {
                 replay.validate().map_err(|_| OwnershipServiceError::Integrity)?;
                 record_terminal(&transaction, exchange, &response, &response_bytes, self.limits)?;
                 transaction.commit().map_err(map_sqlite_error)?;
+                self.caller_cursors = next_cursors;
                 Ok(response_bytes)
             }
         }
@@ -985,7 +1028,7 @@ fn audit_rpc_exchanges(
     identity: OwnershipServiceIdentity,
     process_instances: &[ProcessInstance],
     limits: StoreLimits,
-) -> Result<(), OwnershipServiceError> {
+) -> Result<AgentCallerCursors, OwnershipServiceError> {
     let mut statement = connection
         .prepare(
             "SELECT exchange_no, family_id, request_id, request_digest, request_bytes,
@@ -1013,6 +1056,7 @@ fn audit_rpc_exchanges(
     let mut previous_completion = 0_i64;
     let mut previous_process_generation = 0_u64;
     let mut process_index = 0_usize;
+    let mut caller_cursors = AgentCallerCursors::default();
     for row in rows {
         let row = row.map_err(|_| OwnershipServiceError::Storage)?;
         let request = wire::decode_request(&row.4).map_err(|_| OwnershipServiceError::Integrity)?;
@@ -1027,6 +1071,8 @@ fn audit_rpc_exchanges(
         {
             return Err(OwnershipServiceError::Integrity);
         }
+        caller_cursors =
+            caller_cursors.transition(request.caller).ok_or(OwnershipServiceError::Integrity)?;
         let response_bytes = row.7.ok_or(OwnershipServiceError::Integrity)?;
         let response = wire::decode_response_for(&request, &response_bytes)
             .map_err(|_| OwnershipServiceError::Integrity)?;
@@ -1073,7 +1119,7 @@ fn audit_rpc_exchanges(
     if count > limits.max_exchanges || retained > limits.max_exchange_bytes {
         return Err(OwnershipServiceError::Integrity);
     }
-    Ok(())
+    Ok(caller_cursors)
 }
 
 fn set_max_page_count(

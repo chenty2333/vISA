@@ -45,6 +45,16 @@ the same state machine and `joint_handoff_core` reducer into an in-memory
 shadow authority; the historical outcomes and final projection must match the
 durable database exactly.
 
+The same canonical exchange ledger reconstructs an independent caller cursor
+for each agent role. A role may continue with the same process nonce and
+generation or advance to a greater generation with a different nonce; rollback,
+equal-generation nonce substitution, nonce reuse, or stable logical-identity
+substitution fails before authority mutation. Generation gaps are valid because
+an agent may crash before its first RPC. The in-memory cursor advances only
+after a new terminal exchange commits, so request-ID conflict, capacity, and
+storage rollback cannot manufacture a newer admitted process. No second caller
+ledger or SQLite schema migration is required.
+
 Seal admission uses typed canonical neutral receipts and the pure
 `joint_handoff_core` reducer rather than a duplicate protocol validator. The
 fixed `PinnedLocalReceiptAuthenticator` policy derives the ownership log ID
