@@ -178,6 +178,55 @@ pub enum AgentRole {
     Destination,
 }
 
+/// Identity that remains stable for one logical agent slot across process
+/// restarts.  The process nonce and generation are deliberately kept out of
+/// this value and are supplied by the live process when it builds a binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StableAgentIdentity {
+    pub product_version: ProductVersion,
+    pub cohort: CohortId,
+    pub boot: BootId,
+    pub runtime_session: RuntimeSessionId,
+    pub role: AgentRole,
+    pub logical_incarnation: LogicalIncarnation,
+}
+
+impl StableAgentIdentity {
+    pub fn matches(self, binding: AgentBinding) -> bool {
+        self.product_version == binding.product_version
+            && self.cohort == binding.cohort
+            && self.boot == binding.boot
+            && self.runtime_session == binding.runtime_session
+            && self.role == binding.role
+            && self.logical_incarnation == binding.logical_incarnation
+    }
+
+    pub fn validate(self) -> Result<(), WireValidationError> {
+        self.product_version.validate()?;
+        self.cohort.validate()?;
+        self.boot.validate()?;
+        self.runtime_session.validate()?;
+        self.logical_incarnation.validate()
+    }
+
+    pub const fn binding(
+        self,
+        process_nonce: ProcessNonce,
+        process_generation: u64,
+    ) -> AgentBinding {
+        AgentBinding {
+            product_version: self.product_version,
+            cohort: self.cohort,
+            boot: self.boot,
+            runtime_session: self.runtime_session,
+            role: self.role,
+            logical_incarnation: self.logical_incarnation,
+            process_nonce,
+            process_generation,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct ControllerBinding {
     pub product_version: ProductVersion,

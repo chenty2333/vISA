@@ -23,8 +23,8 @@ use sha2::{Digest as _, Sha256};
 use visa_local_rpc::{
     MAX_INNER_REQUEST_BYTES, WireValidation,
     common::{
-        AgentBinding, AgentRole, BootId, CohortId, IssuerId, IssuerKeyId, IssuerLogId,
-        LogicalIncarnation, ProcessNonce, ProductVersion, RuntimeSessionId, ServiceIncarnation,
+        AgentRole, BootId, CohortId, IssuerId, IssuerKeyId, IssuerLogId, LogicalIncarnation,
+        ProcessNonce, ProductVersion, RuntimeSessionId, ServiceIncarnation, StableAgentIdentity,
     },
 };
 use visa_ownership_service::{
@@ -53,40 +53,6 @@ pub enum StoreOpenPolicy {
     CreateIfMissingExact,
     /// Refuse creation and reopen the already initialized store only.
     ReopenExisting,
-}
-
-/// Stable identity pinned for one agent role across process restarts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StableAgentIdentity {
-    pub product_version: ProductVersion,
-    pub cohort: CohortId,
-    pub boot: BootId,
-    pub runtime_session: RuntimeSessionId,
-    pub role: AgentRole,
-    pub logical_incarnation: LogicalIncarnation,
-}
-
-impl StableAgentIdentity {
-    /// Returns whether a wire binding carries this stable identity. Process
-    /// nonce and generation are deliberately supplied by the live agent.
-    pub fn matches(self, binding: AgentBinding) -> bool {
-        self.product_version == binding.product_version
-            && self.cohort == binding.cohort
-            && self.boot == binding.boot
-            && self.runtime_session == binding.runtime_session
-            && self.role == binding.role
-            && self.logical_incarnation == binding.logical_incarnation
-    }
-
-    fn validate(self) -> Result<(), ConfigError> {
-        self.product_version
-            .validate()
-            .and_then(|()| self.cohort.validate())
-            .and_then(|()| self.boot.validate())
-            .and_then(|()| self.runtime_session.validate())
-            .and_then(|()| self.logical_incarnation.validate())
-            .map_err(|_| ConfigError::InvalidField("agent stable identity"))
-    }
 }
 
 /// Stable agent identity and executable digest admitted for one role.
@@ -364,7 +330,10 @@ fn validate_agent(
     expected_role: AgentRole,
     store_binding: StoreBinding,
 ) -> Result<(), ConfigError> {
-    agent.stable_identity.validate()?;
+    agent
+        .stable_identity
+        .validate()
+        .map_err(|_| ConfigError::InvalidField("agent stable identity"))?;
     if agent.stable_identity.role != expected_role {
         return Err(ConfigError::InvalidField("agent role"));
     }
@@ -538,7 +507,7 @@ impl StableAgentIdentityDocument {
             role: self.role.into_typed(),
             logical_incarnation: LogicalIncarnation::from_bytes(self.logical_incarnation.0),
         };
-        identity.validate()?;
+        identity.validate().map_err(|_| ConfigError::InvalidField("agent stable identity"))?;
         Ok(identity)
     }
 }
@@ -634,7 +603,7 @@ mod tests {
 
     use serde_json::Value;
     use tempfile::{NamedTempFile, tempdir};
-    use visa_local_rpc::common::PRODUCT_VERSION;
+    use visa_local_rpc::common::{AgentBinding, PRODUCT_VERSION};
 
     use super::*;
 

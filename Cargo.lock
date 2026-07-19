@@ -2656,6 +2656,17 @@ name = "visa_abi"
 version = "0.1.0"
 
 [[package]]
+name = "visa_agent_store"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "rustix",
+ "tempfile",
+ "visa_durable_sqlite",
+ "visa_local_rpc",
+]
+
+[[package]]
 name = "visa_component_adapter"
 version = "0.1.0"
 dependencies = [
