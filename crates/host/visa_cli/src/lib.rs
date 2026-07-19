@@ -1,10 +1,16 @@
 //! Local, non-authoritative vISA controller operations.
 
 mod cohort;
+pub mod systemd_activation;
 
 use std::{ffi::OsString, fmt};
 
 pub use cohort::{CohortManager, CohortPlan, CohortRoots};
+pub use systemd_activation::{
+    ActivationConflict, ActivationContext, ActivationDecision, ActivationError, ActivationSession,
+    FrozenUnit, JobOutcome, JobRemovedEvent, JobTracker, JobTrackerError, ListUnitRow, NexusMarker,
+    PreparedActivation, SystemdManagerProxy, UnitSnapshot, UnitState,
+};
 
 /// Stable command exit classes. They intentionally match the operational
 /// classes used by the long-lived vISA services.
