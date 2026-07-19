@@ -108,11 +108,8 @@ impl OwnershipInterface {
             )
         })?;
         let permit = self.gate.reserve(sender.as_str()).map_err(map_gate_error)?;
-        let admitted = self
-            .admission
-            .admit(connection, &header, &request_bytes)
-            .await
-            .map_err(map_peer_error)?;
+        let admitted =
+            self.admission.admit(&header, &request_bytes).await.map_err(map_peer_error)?;
         if admitted.bus_epoch != permit.epoch() {
             return Err(zbus::fdo::Error::Disconnected(
                 "ownership request crossed a bus-connection epoch".to_owned(),

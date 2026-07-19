@@ -2604,6 +2604,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "visa_local_rpc",
+ "visa_local_transport",
  "visa_ownership_service",
  "zbus",
 ]
@@ -2704,6 +2705,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "visa_local_transport"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "sha2",
+ "zbus",
 ]
 
 [[package]]

@@ -1,8 +1,8 @@
 # vISA ownership daemon process slice
 
 `visa-ownershipd` is the O2 process layer around the transport-independent
-`visa_ownership_service` authority core. It reuses zbus 5.18.0 for the systemd
-user-bus interface, rustix 1.1.4 for Linux pidfd/proc-file admission, bundled
+`visa_ownership_service` authority core. It reuses `visa_local_transport` for
+the zbus 5.18.0 and rustix 1.1.4 Linux pidfd/proc-file peer admission, bundled
 SQLite through O1, and `sd-notify` 0.5.0 for readiness.
 
 The daemon owns no second ownership state machine, replay cache, database, or

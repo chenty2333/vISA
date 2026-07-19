@@ -136,6 +136,7 @@ active_spine_packages=(
     substrate_host
     visa_runtime
     visa_joint_handoff
+    visa_local_transport
     visa_ownership_service
     visa-ownershipd
     visa_component_adapter

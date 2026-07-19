@@ -26,11 +26,17 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "visa_joint_handoff": frozenset(
         {"contract_core", "joint_handoff_core", "substrate_api", "visa_runtime"}
     ),
+    "visa_local_transport": frozenset(),
     "visa_ownership_service": frozenset(
         {"contract_core", "joint_handoff_core", "visa_local_rpc"}
     ),
     "visa-ownershipd": frozenset(
-        {"joint_handoff_core", "visa_local_rpc", "visa_ownership_service"}
+        {
+            "joint_handoff_core",
+            "visa_local_rpc",
+            "visa_local_transport",
+            "visa_ownership_service",
+        }
     ),
     "visa_component_adapter": frozenset(
         {"contract_core", "substrate_api", "visa_profile", "visa_runtime"}
