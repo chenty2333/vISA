@@ -21,6 +21,7 @@ pub const SYSTEMD_SERVICE: &str = "org.freedesktop.systemd1";
 pub const SYSTEMD_MANAGER_PATH: &str = "/org/freedesktop/systemd1";
 pub const SYSTEMD_MANAGER_INTERFACE: &str = "org.freedesktop.systemd1.Manager";
 pub const START_MODE: &str = "replace";
+pub const STOP_MODE: &str = "replace";
 
 const FROZEN_UNITS: [FrozenUnit; 5] = [
     FrozenUnit::Target,
@@ -393,6 +394,9 @@ pub trait SystemdManager {
     #[zbus(name = "StartUnit", no_autostart)]
     fn start_unit(&self, name: String, mode: String) -> zbus::Result<OwnedObjectPath>;
 
+    #[zbus(name = "StopUnit", no_autostart)]
+    fn stop_unit(&self, name: String, mode: String) -> zbus::Result<OwnedObjectPath>;
+
     #[zbus(name = "GetUnit", no_autostart)]
     fn get_unit(&self, name: String) -> zbus::Result<OwnedObjectPath>;
 
@@ -516,6 +520,24 @@ impl<'a> PreparedActivation<'a> {
             .start_unit(unit.name().to_owned(), START_MODE.to_owned())
             .await
             .map_err(ActivationError::Bus)?;
+        self.wait_for_job(job, unit).await
+    }
+
+    pub async fn stop_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
+        self.require_manager_owner().await?;
+        let job = self
+            .manager
+            .stop_unit(unit.name().to_owned(), STOP_MODE.to_owned())
+            .await
+            .map_err(ActivationError::Bus)?;
+        self.wait_for_job(job, unit).await
+    }
+
+    async fn wait_for_job(
+        &mut self,
+        job: OwnedObjectPath,
+        unit: FrozenUnit,
+    ) -> Result<JobOutcome, ActivationError> {
         let mut tracker = JobTracker::new(job.as_str(), unit.name());
         loop {
             let Some(message) = next_stream_item(&mut self.jobs).await else {
@@ -548,6 +570,8 @@ impl<'a> PreparedActivation<'a> {
                 .await
                 .map_err(ActivationError::Bus)?;
             let unit_proxy = SystemdUnitProxy::builder(self.connection)
+                .destination(self.manager_owner.clone())
+                .map_err(ActivationError::Bus)?
                 .path(&path)
                 .map_err(ActivationError::Bus)?
                 .build()
@@ -560,6 +584,8 @@ impl<'a> PreparedActivation<'a> {
                 Some(unit_proxy.invocation_id().await.map_err(ActivationError::Bus)?);
             if unit.is_service() {
                 let service = SystemdServiceProxy::builder(self.connection)
+                    .destination(self.manager_owner.clone())
+                    .map_err(ActivationError::Bus)?
                     .path(&path)
                     .map_err(ActivationError::Bus)?
                     .build()
