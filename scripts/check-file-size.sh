@@ -10,6 +10,7 @@ ACTIVE_SPINE_PREFIXES=(
     crates/core/contract_core/
     crates/core/joint_handoff_core/
     crates/core/visa_local_rpc/
+    crates/host/visa_cli/
     crates/testing/handoff-component/
     crates/core/visa_profile/
     crates/core/semantic_core/

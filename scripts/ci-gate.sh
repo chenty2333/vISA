@@ -129,6 +129,7 @@ active_spine_packages=(
     contract_core
     joint_handoff_core
     visa_local_rpc
+    visa-cli
     handoff-component
     visa_profile
     semantic_core

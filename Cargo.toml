@@ -24,6 +24,7 @@ members = [
     "crates/host/osctl-cli",
     "crates/host/osctl-view",
     "crates/host/runner",
+    "crates/host/visa_cli",
     "crates/runtime/service_core",
     "crates/runtime/supervisor_catalog",
     "crates/runtime/target_executor",

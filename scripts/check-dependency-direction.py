@@ -15,6 +15,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "contract_core": frozenset(),
     "joint_handoff_core": frozenset({"contract_core"}),
     "visa_local_rpc": frozenset(),
+    "visa-cli": frozenset({"visa_agent_store", "visa_durable_sqlite", "visa_local_rpc"}),
     "handoff-component": frozenset(),
     "visa_profile": frozenset({"contract_core"}),
     "semantic_core": frozenset({"contract_core", "visa_profile"}),

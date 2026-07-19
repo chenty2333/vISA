@@ -2550,6 +2550,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa-cli"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "tempfile",
+ "visa_agent_store",
+ "visa_durable_sqlite",
+ "visa_local_rpc",
+]
+
+[[package]]
 name = "visa-conformance"
 version = "0.2.0"
 dependencies = [
