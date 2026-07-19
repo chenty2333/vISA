@@ -96,15 +96,9 @@ impl FakeManager {
         // Emit before returning the method reply. The client must have
         // installed its JobRemoved match already and retain the event while
         // it learns the returned job object path.
-        Self::job_removed(
-            &emitter,
-            id,
-            job.as_ref().try_into().expect("owned path is valid"),
-            &unit,
-            "done",
-        )
-        .await
-        .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+        Self::job_removed(&emitter, id, job.as_ref(), &unit, "done")
+            .await
+            .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
         Ok(job)
     }
 
@@ -130,15 +124,9 @@ impl FakeManager {
             }
             state.next_job()
         };
-        Self::job_removed(
-            &emitter,
-            id,
-            job.as_ref().try_into().expect("owned path is valid"),
-            &unit,
-            "done",
-        )
-        .await
-        .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+        Self::job_removed(&emitter, id, job.as_ref(), &unit, "done")
+            .await
+            .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
         Ok(job)
     }
 

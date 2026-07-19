@@ -8,8 +8,9 @@ use std::{ffi::OsString, fmt};
 pub use cohort::{CohortManager, CohortPlan, CohortRoots};
 pub use systemd_activation::{
     ActivationConflict, ActivationContext, ActivationDecision, ActivationError, ActivationSession,
-    FrozenUnit, JobOutcome, JobRemovedEvent, JobTracker, JobTrackerError, ListUnitRow, NexusMarker,
-    PreparedActivation, START_MODE, STOP_MODE, SystemdManagerProxy, UnitSnapshot, UnitState,
+    FrozenUnit, JOB_WAIT_TIMEOUT, JobOutcome, JobRemovedEvent, JobTracker, JobTrackerError,
+    ListUnitRow, NexusMarker, PreparedActivation, START_MODE, STOP_MODE, SystemdManagerProxy,
+    UnitSnapshot, UnitState,
 };
 
 /// Stable command exit classes. They intentionally match the operational

@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
     time::Duration,
 };
@@ -20,7 +20,7 @@ use async_io::Timer;
 use futures_lite::FutureExt;
 use rustix::process::geteuid;
 use zbus::{
-    Connection,
+    Connection, OwnedGuid,
     export::futures_core::Stream,
     fdo::DBusProxy,
     names::{BusName, OwnedUniqueName, WellKnownName},
@@ -47,6 +47,12 @@ const FROZEN_UNITS: [FrozenUnit; 5] = [
     FrozenUnit::SourceAgent,
     FrozenUnit::DestinationAgent,
 ];
+
+const PREPARE_OPEN: u8 = 0;
+const PREPARE_INFLIGHT: u8 = 1;
+const PREPARE_SUBSCRIBED: u8 = 2;
+const PREPARE_DONE: u8 = 3;
+const PREPARE_POISONED: u8 = 4;
 
 /// The five frozen systemd units in the 0.1 launch contract.
 ///
@@ -101,9 +107,13 @@ pub type ListUnitRow =
 pub struct UnitSnapshot {
     pub unit: FrozenUnit,
     pub id: String,
+    pub unit_path: OwnedObjectPath,
     pub load_state: String,
     pub active_state: String,
     pub sub_state: String,
+    pub job_id: u32,
+    pub job_type: String,
+    pub job_path: OwnedObjectPath,
     pub active_enter_timestamp: u64,
     pub invocation_id: Option<Vec<u8>>,
     pub main_pid: Option<u32>,
@@ -115,9 +125,13 @@ impl UnitSnapshot {
         Self {
             unit,
             id: unit.name().to_owned(),
+            unit_path: root_object_path(),
             load_state: "not-found".to_owned(),
             active_state: "inactive".to_owned(),
             sub_state: "dead".to_owned(),
+            job_id: 0,
+            job_type: String::new(),
+            job_path: root_object_path(),
             active_enter_timestamp: 0,
             invocation_id: None,
             main_pid: None,
@@ -129,9 +143,13 @@ impl UnitSnapshot {
         Self {
             unit,
             id: row.0.clone(),
+            unit_path: row.6.clone(),
             load_state: row.2.clone(),
             active_state: row.3.clone(),
             sub_state: row.4.clone(),
+            job_id: row.7,
+            job_type: row.8.clone(),
+            job_path: row.9.clone(),
             active_enter_timestamp: 0,
             invocation_id: None,
             main_pid: None,
@@ -393,10 +411,15 @@ pub enum ActivationError {
     Bus(zbus::Error),
     Fdo(zbus::fdo::Error),
     AlreadyPrepared,
+    SessionPoisoned,
     WrongManagerUid,
+    BusChanged,
     ManagerChanged,
     ObservationChanged,
+    PendingJob(FrozenUnit),
+    UnitPathChanged(FrozenUnit),
     JobTimeout,
+    JobFailed { unit: FrozenUnit, result: String },
     JobMessage(zbus::Error),
     Job(JobTrackerError),
 }
@@ -411,8 +434,14 @@ impl fmt::Display for ActivationError {
             Self::AlreadyPrepared => {
                 formatter.write_str("activation session already subscribed to JobRemoved")
             }
+            Self::SessionPoisoned => {
+                formatter.write_str("activation session setup failed and is permanently poisoned")
+            }
             Self::WrongManagerUid => {
                 formatter.write_str("systemd user manager is not owned by the current uid")
+            }
+            Self::BusChanged => {
+                formatter.write_str("D-Bus server identity changed during activation")
             }
             Self::ManagerChanged => {
                 formatter.write_str("systemd user manager owner changed during activation")
@@ -420,8 +449,17 @@ impl fmt::Display for ActivationError {
             Self::ObservationChanged => {
                 formatter.write_str("systemd unit observation changed during activation")
             }
+            Self::PendingJob(unit) => {
+                write!(formatter, "systemd unit {unit:?} has a pending job")
+            }
+            Self::UnitPathChanged(unit) => {
+                write!(formatter, "systemd unit {unit:?} object path changed during observation")
+            }
             Self::JobTimeout => {
                 write!(formatter, "systemd job did not complete within {JOB_WAIT_TIMEOUT:?}")
+            }
+            Self::JobFailed { unit, result } => {
+                write!(formatter, "systemd job for {unit:?} failed with result {result:?}")
             }
             Self::JobMessage(error) => {
                 write!(formatter, "malformed systemd JobRemoved signal: {error}")
@@ -502,8 +540,9 @@ trait SystemdService {
 #[derive(Clone, Debug)]
 pub struct ActivationSession {
     connection: Connection,
+    server_guid: OwnedGuid,
     manager_owner: OwnedUniqueName,
-    prepared: Arc<AtomicBool>,
+    prepare_state: Arc<AtomicU8>,
 }
 
 impl ActivationSession {
@@ -514,6 +553,7 @@ impl ActivationSession {
             .build()
             .await
             .map_err(ActivationError::Bus)?;
+        let server_guid = connection.server_guid().clone();
         let dbus = DBusProxy::new(&connection).await.map_err(ActivationError::Bus)?;
         let systemd_name: WellKnownName<'_> =
             SYSTEMD_SERVICE.try_into().expect("frozen systemd service name is valid");
@@ -526,7 +566,12 @@ impl ActivationSession {
         if credentials.unix_user_id() != Some(geteuid().as_raw()) {
             return Err(ActivationError::WrongManagerUid);
         }
-        Ok(Self { connection, manager_owner, prepared: Arc::new(AtomicBool::new(false)) })
+        Ok(Self {
+            connection,
+            server_guid,
+            manager_owner,
+            prepare_state: Arc::new(AtomicU8::new(PREPARE_OPEN)),
+        })
     }
 
     pub fn connection(&self) -> &Connection {
@@ -534,16 +579,35 @@ impl ActivationSession {
     }
 
     pub async fn prepare(&self) -> Result<PreparedActivation<'_>, ActivationError> {
-        if self.prepared.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err()
-        {
-            return Err(ActivationError::AlreadyPrepared);
+        match self.prepare_state.compare_exchange(
+            PREPARE_OPEN,
+            PREPARE_INFLIGHT,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {}
+            Err(PREPARE_POISONED) => return Err(ActivationError::SessionPoisoned),
+            Err(PREPARE_INFLIGHT) => return Err(ActivationError::SessionPoisoned),
+            Err(PREPARE_SUBSCRIBED) => return Err(ActivationError::SessionPoisoned),
+            Err(_) => return Err(ActivationError::AlreadyPrepared),
         }
         let result = self.prepare_inner().await;
         if result.is_err() {
-            // A failed setup did not leave a usable stream.  Permit a retry
-            // on the same connection; once setup succeeds the gate remains
-            // closed for the lifetime of that connection.
-            self.prepared.store(false, Ordering::Release);
+            // Before Subscribe, a synchronous setup failure may be retried.
+            // Once Subscribe returned, or if the future is cancelled, the
+            // connection is never reused for another subscription.
+            let _ = self.prepare_state.compare_exchange(
+                PREPARE_SUBSCRIBED,
+                PREPARE_POISONED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            let _ = self.prepare_state.compare_exchange(
+                PREPARE_INFLIGHT,
+                PREPARE_OPEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
         }
         result
     }
@@ -559,12 +623,15 @@ impl ActivationSession {
             .await
             .map_err(ActivationError::Bus)?;
         manager.subscribe().await.map_err(ActivationError::Bus)?;
+        self.prepare_state.store(PREPARE_SUBSCRIBED, Ordering::Release);
         // `receive_job_removed` awaits AddMatch registration.  Keeping this
         // stream alive is the active subscription required by the contract.
         let jobs = manager.receive_job_removed().await.map_err(ActivationError::Bus)?;
         self.require_manager_owner().await?;
+        self.prepare_state.store(PREPARE_DONE, Ordering::Release);
         Ok(PreparedActivation {
             connection: &self.connection,
+            server_guid: self.server_guid.clone(),
             manager,
             manager_owner: self.manager_owner.clone(),
             jobs,
@@ -573,6 +640,9 @@ impl ActivationSession {
 
     async fn require_manager_owner(&self) -> Result<(), ActivationError> {
         let dbus = DBusProxy::new(&self.connection).await.map_err(ActivationError::Bus)?;
+        if self.connection.server_guid() != &self.server_guid {
+            return Err(ActivationError::BusChanged);
+        }
         let systemd_name: WellKnownName<'_> =
             SYSTEMD_SERVICE.try_into().expect("frozen systemd service name is valid");
         let owner =
@@ -586,6 +656,7 @@ impl ActivationSession {
 
 pub struct PreparedActivation<'a> {
     connection: &'a Connection,
+    server_guid: OwnedGuid,
     manager: SystemdManagerProxy<'a>,
     manager_owner: OwnedUniqueName,
     jobs: JobRemovedStream,
@@ -643,7 +714,12 @@ impl<'a> PreparedActivation<'a> {
                     let event = decode_job_removed(message).map_err(ActivationError::JobMessage)?;
                     if let Some(outcome) = tracker.observe(event).map_err(ActivationError::Job)? {
                         self.require_manager_owner().await?;
-                        return Ok(outcome);
+                        return match outcome {
+                            JobOutcome::Done => Ok(JobOutcome::Done),
+                            JobOutcome::Failed(result) => {
+                                Err(ActivationError::JobFailed { unit, result })
+                            }
+                        };
                     }
                 }
             }
@@ -670,12 +746,22 @@ impl<'a> PreparedActivation<'a> {
                 result.push(UnitSnapshot::missing(*unit));
                 continue;
             };
+            if row.2 == "not-found" {
+                result.push(UnitSnapshot::missing(*unit));
+                continue;
+            }
+            if row.7 != 0 || !row.8.is_empty() || row.9.as_str() != "/" {
+                return Err(ActivationError::PendingJob(*unit));
+            }
             let mut snapshot = UnitSnapshot::from_row(*unit, row);
             let path = self
                 .manager
                 .get_unit(unit.name().to_owned())
                 .await
                 .map_err(ActivationError::Bus)?;
+            if path != row.6 {
+                return Err(ActivationError::UnitPathChanged(*unit));
+            }
             let unit_proxy = SystemdUnitProxy::builder(self.connection)
                 .destination(self.manager_owner.clone())
                 .map_err(ActivationError::Bus)?
@@ -709,6 +795,9 @@ impl<'a> PreparedActivation<'a> {
 
     async fn require_manager_owner(&self) -> Result<(), ActivationError> {
         let dbus = DBusProxy::new(self.connection).await.map_err(ActivationError::Bus)?;
+        if self.connection.server_guid() != &self.server_guid {
+            return Err(ActivationError::BusChanged);
+        }
         let systemd_name: WellKnownName<'_> =
             SYSTEMD_SERVICE.try_into().expect("frozen systemd service name is valid");
         let owner =
@@ -735,6 +824,10 @@ fn decode_job_removed(signal: JobRemoved) -> zbus::Result<JobRemovedEvent> {
         unit: args.unit().to_string(),
         result: args.result().to_string(),
     })
+}
+
+fn root_object_path() -> OwnedObjectPath {
+    "/".try_into().expect("frozen root object path is valid")
 }
 
 #[cfg(test)]
