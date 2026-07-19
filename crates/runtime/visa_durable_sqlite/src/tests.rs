@@ -125,3 +125,78 @@ fn preexisting_sidecar_is_never_consumed() {
     ));
     assert_eq!(fs::read(&sidecar).expect("retain sidecar"), b"keep me");
 }
+
+#[test]
+fn generic_publication_accepts_arbitrary_bytes_and_ignores_sqlite_sidecars() {
+    let fixture = Fixture::new();
+    let final_path = fixture.database.with_extension("manifest");
+    let sidecar = sqlite_sidecar_path(&final_path, "-wal");
+    fs::write(&sidecar, b"sidecar remains independent").expect("create sidecar-like path");
+    let payload = b"not an SQLite database\0with arbitrary bytes";
+    let nonce = [0x11_u8; 16];
+    let temporary = initialization_path(&final_path, nonce);
+
+    publish_private_noreplace(&final_path, payload, nonce).expect("publish generic bytes");
+
+    assert_eq!(fs::read(&final_path).expect("read published bytes"), payload);
+    assert_eq!(
+        fs::read(&sidecar).expect("retain sidecar-like path"),
+        b"sidecar remains independent"
+    );
+    assert_eq!(
+        fs::metadata(&final_path).expect("published metadata").permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(!temporary.exists(), "temporary file must not remain visible");
+}
+
+#[test]
+fn generic_publication_is_noreplace_and_preserves_competing_paths() {
+    let fixture = Fixture::new();
+    let final_path = fixture.database.with_extension("manifest");
+    fs::write(&final_path, b"original").expect("create existing final");
+    fs::set_permissions(&final_path, fs::Permissions::from_mode(0o600))
+        .expect("restrict existing final");
+
+    let conflict_nonce = [0x22_u8; 16];
+    let conflict_temporary = initialization_path(&final_path, conflict_nonce);
+    assert!(matches!(
+        publish_private_noreplace(&final_path, b"replacement", conflict_nonce),
+        Err(DurableStoreError::AlreadyExists)
+    ));
+    assert_eq!(fs::read(&final_path).expect("retain existing final"), b"original");
+    assert!(!conflict_temporary.exists(), "owned temporary must be cleaned after conflict");
+
+    let occupied_nonce = [0x33_u8; 16];
+    let occupied_temporary = initialization_path(&final_path, occupied_nonce);
+    fs::write(&occupied_temporary, b"preexisting temporary").expect("occupy temporary path");
+    fs::set_permissions(&occupied_temporary, fs::Permissions::from_mode(0o600))
+        .expect("restrict occupied temporary");
+    assert!(matches!(
+        publish_private_noreplace(&final_path, b"replacement", occupied_nonce),
+        Err(DurableStoreError::AlreadyExists)
+    ));
+    assert_eq!(
+        fs::read(&occupied_temporary).expect("preserve preexisting temporary"),
+        b"preexisting temporary"
+    );
+
+    let target = fixture.database.with_extension("target");
+    fs::write(&target, b"symlink target").expect("create symlink target");
+    let symlink_final = fixture.database.with_extension("symlink-manifest");
+    std::os::unix::fs::symlink(&target, &symlink_final).expect("create symlink final");
+    let symlink_nonce = [0x44_u8; 16];
+    let symlink_temporary = initialization_path(&symlink_final, symlink_nonce);
+    assert!(matches!(
+        publish_private_noreplace(&symlink_final, b"must not replace", symlink_nonce),
+        Err(DurableStoreError::AlreadyExists)
+    ));
+    assert!(
+        fs::symlink_metadata(&symlink_final)
+            .expect("retain final symlink")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read(&target).expect("retain symlink target"), b"symlink target");
+    assert!(!symlink_temporary.exists(), "temporary must be cleaned after symlink conflict");
+}

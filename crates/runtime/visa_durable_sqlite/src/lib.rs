@@ -7,6 +7,7 @@
 
 use std::{
     fs::{self, File},
+    io::Write,
     os::unix::{
         fs::{DirBuilderExt, FileExt, MetadataExt, PermissionsExt},
         io::AsFd,
@@ -280,6 +281,50 @@ pub fn sync_parent_directory(database_path: &Path) -> Result<()> {
     fsync(&directory).map_err(map_errno)
 }
 
+/// Publish arbitrary private bytes at `final_path` without replacement.
+///
+/// The payload is written to a nonce-named `0600` temporary file using
+/// `O_CREAT|O_EXCL|O_NOFOLLOW`, fsynced while held open, and then moved into
+/// place with `RENAME_NOREPLACE`. The containing private directory is fsynced
+/// after the rename. This helper deliberately does not inspect SQLite headers
+/// or sidecars, so it can be used for schema-independent manifests and other
+/// durable metadata.
+pub fn publish_private_noreplace(final_path: &Path, bytes: &[u8], nonce: [u8; 16]) -> Result<()> {
+    ensure_private_parent(final_path)?;
+    let temporary_path = initialization_path(final_path, nonce);
+    let fd = open(
+        &temporary_path,
+        OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::RUSR | Mode::WUSR,
+    )
+    .map_err(map_open_error)?;
+    let mut temporary_file: File = fd.into();
+
+    let result = (|| {
+        verify_private_regular_fd(&temporary_file)?;
+        temporary_file.write_all(bytes).map_err(map_io)?;
+        verify_private_regular_fd(&temporary_file)?;
+        sync_file(&temporary_file)?;
+        renameat_with(CWD, &temporary_path, CWD, final_path, RenameFlags::NOREPLACE).map_err(
+            |error| {
+                if error == rustix::io::Errno::EXIST {
+                    DurableStoreError::AlreadyExists
+                } else if error == rustix::io::Errno::NOENT {
+                    DurableStoreError::Missing
+                } else {
+                    map_errno(error)
+                }
+            },
+        )?;
+        sync_parent_directory(final_path)
+    })();
+
+    if result.is_err() {
+        cleanup_owned_file(&temporary_path, &temporary_file);
+    }
+    result
+}
+
 /// Publish a closed SQLite initialization file with `RENAME_NOREPLACE`.
 ///
 /// The descriptor is checked and fsynced before the rename. Both the source
@@ -333,6 +378,22 @@ pub fn cleanup_owned_initialization_files(temporary_path: &Path, temporary_file:
     for suffix in ["-wal", "-shm", "-journal", ""] {
         let _ = fs::remove_file(sqlite_sidecar_path(temporary_path, suffix));
     }
+}
+
+fn cleanup_owned_file(temporary_path: &Path, temporary_file: &impl AsFd) {
+    let Ok(guard_stat) = fstat(temporary_file) else {
+        return;
+    };
+    let Ok(path_metadata) = fs::symlink_metadata(temporary_path) else {
+        return;
+    };
+    if !path_metadata.file_type().is_file()
+        || path_metadata.dev() != guard_stat.st_dev
+        || path_metadata.ino() != guard_stat.st_ino
+    {
+        return;
+    }
+    let _ = fs::remove_file(temporary_path);
 }
 
 /// Checkpoint and truncate a WAL before a database is closed and published.
