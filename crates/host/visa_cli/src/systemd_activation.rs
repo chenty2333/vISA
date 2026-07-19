@@ -156,7 +156,7 @@ impl UnitSnapshot {
             && (!self.unit.is_service()
                 || (self.main_pid.unwrap_or(0) != 0
                     && self.invocation_id.as_deref().is_some_and(|value| value.len() == 16)))
-            && self.result.as_deref().is_none_or(|value| value == "success")
+            && (!self.unit.is_service() || self.result.as_deref() == Some("success"))
     }
 }
 
