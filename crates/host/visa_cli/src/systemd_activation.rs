@@ -5,7 +5,15 @@
 //! evaluator; the caller still has to bind the result to a launch manifest,
 //! perform product RPC health checks, and publish no authority receipt here.
 
-use std::{fmt, future::poll_fn, pin::Pin};
+use std::{
+    fmt,
+    future::poll_fn,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use rustix::process::geteuid;
 use zbus::{
@@ -189,6 +197,7 @@ pub enum ActivationConflict {
     DifferentCohort,
     UnitBusy(FrozenUnit),
     FailedUnit(FrozenUnit),
+    UnhealthyUnit(FrozenUnit),
     NexusMarkerLost,
 }
 
@@ -244,6 +253,12 @@ pub fn evaluate_activation(
         .expect("frozen unit list includes nexusd");
     if context.nexus_marker == NexusMarker::PresentWithoutHealthyProcess && !nexusd.0.healthy() {
         return ActivationDecision::Conflict(ActivationConflict::NexusMarkerLost);
+    }
+
+    if let Some((snapshot, _)) =
+        ordered.iter().find(|(snapshot, state)| *state == UnitState::Active && !snapshot.healthy())
+    {
+        return ActivationDecision::Conflict(ActivationConflict::UnhealthyUnit(snapshot.unit));
     }
 
     if ordered.iter().all(|(snapshot, _)| snapshot.healthy()) {
@@ -346,6 +361,7 @@ impl JobTracker {
 pub enum ActivationError {
     Bus(zbus::Error),
     Fdo(zbus::fdo::Error),
+    AlreadyPrepared,
     WrongManagerUid,
     ManagerChanged,
     JobMessage(zbus::Error),
@@ -358,6 +374,9 @@ impl fmt::Display for ActivationError {
             Self::Bus(error) => write!(formatter, "systemd user-bus activation failed: {error}"),
             Self::Fdo(error) => {
                 write!(formatter, "systemd user-bus daemon rejected activation: {error}")
+            }
+            Self::AlreadyPrepared => {
+                formatter.write_str("activation session already subscribed to JobRemoved")
             }
             Self::WrongManagerUid => {
                 formatter.write_str("systemd user manager is not owned by the current uid")
@@ -445,6 +464,7 @@ trait SystemdService {
 pub struct ActivationSession {
     connection: Connection,
     manager_owner: OwnedUniqueName,
+    prepared: Arc<AtomicBool>,
 }
 
 impl ActivationSession {
@@ -462,7 +482,7 @@ impl ActivationSession {
         if credentials.unix_user_id() != Some(geteuid().as_raw()) {
             return Err(ActivationError::WrongManagerUid);
         }
-        Ok(Self { connection, manager_owner })
+        Ok(Self { connection, manager_owner, prepared: Arc::new(AtomicBool::new(false)) })
     }
 
     pub fn connection(&self) -> &Connection {
@@ -470,6 +490,9 @@ impl ActivationSession {
     }
 
     pub async fn prepare(&self) -> Result<PreparedActivation<'_>, ActivationError> {
+        if self.prepared.swap(true, Ordering::AcqRel) {
+            return Err(ActivationError::AlreadyPrepared);
+        }
         self.require_manager_owner().await?;
         let manager = SystemdManagerProxy::builder(&self.connection)
             .destination(self.manager_owner.clone())
@@ -739,6 +762,26 @@ mod tests {
                 },
             ),
             ActivationDecision::Conflict(ActivationConflict::UnitBusy(FrozenUnit::SourceAgent))
+        );
+    }
+
+    #[test]
+    fn active_but_unhealthy_member_is_not_silently_accepted() {
+        let mut values = healthy_set();
+        let source = values.iter_mut().find(|value| value.unit == FrozenUnit::SourceAgent).unwrap();
+        source.main_pid = Some(0);
+        assert_eq!(
+            evaluate_activation(
+                &values,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort_matches: true,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::UnhealthyUnit(
+                FrozenUnit::SourceAgent
+            ))
         );
     }
 
