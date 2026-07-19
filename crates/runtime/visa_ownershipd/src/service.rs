@@ -14,7 +14,7 @@ use zbus::{
 use crate::{
     config::RuntimeConfig,
     fence::{ActivationError, AdmissionGate, GateError},
-    peer::{LivePeerAdmission, PeerAdmissionError},
+    peer::{LivePeerAdmission, PeerAdmissionError, has_business_file_descriptors},
     sequencer::{StoreCallError, StoreSequencer, SubmitError},
 };
 
@@ -97,7 +97,7 @@ impl OwnershipInterface {
                 "ownership request exceeds the frozen inner-byte limit".to_owned(),
             ));
         }
-        if header.unix_fds().unwrap_or(0) != 0 {
+        if has_business_file_descriptors(&header) {
             return Err(zbus::fdo::Error::InvalidArgs(
                 "ownership Execute does not accept business file descriptors".to_owned(),
             ));
@@ -117,7 +117,10 @@ impl OwnershipInterface {
         }
         let bus_epoch = admitted.bus_epoch;
         let caller = admitted.caller;
-        let process_fd = admitted.process_fd;
+        // This is the admission linearization check: no await occurs between
+        // the final pidfd liveness observation and synchronous queue insertion.
+        admitted.require_live().map_err(map_peer_error)?;
+        let peer = admitted.peer;
         let reply = self
             .sequencer
             .submit(&self.gate, permit, caller, request_bytes)
@@ -125,7 +128,7 @@ impl OwnershipInterface {
         // Queue insertion is the final application admission barrier. The
         // pidfd must pin the caller through that point, but O1 completion no
         // longer depends on the client process remaining alive.
-        drop(process_fd);
+        drop(peer);
         let reply = match reply.await {
             Ok(reply) => reply,
             Err(error) => {
@@ -329,7 +332,9 @@ fn map_peer_error(error: PeerAdmissionError) -> zbus::fdo::Error {
         | PeerAdmissionError::InvalidProcfs
         | PeerAdmissionError::InvalidExecutable
         | PeerAdmissionError::ExecutableChanged
-        | PeerAdmissionError::ExecutableDigestMismatch => zbus::fdo::Error::AccessDenied(
+        | PeerAdmissionError::ExecutableDigestMismatch
+        | PeerAdmissionError::SystemdAttestation
+        | PeerAdmissionError::SystemdAttestationChanged => zbus::fdo::Error::AccessDenied(
             "ownership caller failed exact local peer admission".to_owned(),
         ),
     }

@@ -417,17 +417,31 @@ satisfy any local-RPC readiness ID; zbus transport, bus-controlled credential
 admission, service-owned durable replay, and process/restart evidence remain
 separate gates.
 
-The O3 supervised-process refinement follows the same rule. It reuses
-systemd's `GetUnitByPIDFD`, unit `InvocationID`, and service `MainPID` contracts
-through a minimal zbus-generated proxy, and keeps rustix for the retained pidfd
-and secure `/proc/<pid>/exe` observation. vISA owns only the exact role-to-unit
-mapping, stable-agent identity policy, generation cursor, and fail-closed
-composition with its admission barrier. A broad generated systemd API crate,
-another D-Bus codec, or a generic retry/RPC framework would add a second
-compatibility surface without replacing any vISA-owned semantics. The product
-agent must use the same user-bus connection both to own its frozen role name
-and to call ownership/Nexus services; a second connection has a different
-bus-controlled unique name and is not the admitted role owner.
+The O3 supervised-process refinement follows the same rule. It reuses the
+release contract's existing systemd `GetUnit` method plus Unit `Id`, Unit
+`InvocationID`, and Service `MainPID` properties through a minimal
+zbus-generated proxy. rustix retains the local pidfd and performs secure
+`/proc/<pid>/exe` observation. vISA owns only the exact role-to-unit mapping,
+stable-agent identity policy, generation cursor, and fail-closed composition
+with its admission barrier. A broad generated systemd API crate, another D-Bus
+codec, or a generic retry/RPC framework would add a second compatibility
+surface without replacing any vISA-owned semantics. The product agent must use
+the same user-bus connection both to own its frozen role name and to call
+ownership/Nexus services; a second connection has a different bus-controlled
+unique name and is not the admitted role owner.
+
+Admission calls `GetUnit` with the exact frozen role unit, verifies the returned
+object's primary Unit `Id` and invocation ID, and requires Service `MainPID` to
+equal the bus-controlled live process. The pidfd is never sent to systemd; it
+brackets both property observations and stays retained through the final
+synchronous liveness check immediately before queue insertion. This does not
+relax the no-file-descriptor rule on any vISA `Execute(ay) -> ay` business
+interface. systemd attests the live invocation ID used as process nonce, while
+the agent store remains the sole allocator of the durable process generation
+and the ownership caller cursor rejects stale or conflicting pairs at commit.
+The composition does not claim an atomic snapshot spanning procfs, the bus
+daemon, systemd, and the ownership queue, nor does it cover a hostile same-UID
+process that preserves a bus socket across executable substitution.
 
 The next bounded O1 slice now lives in `visa_ownership_service`. It is a
 transport-independent product ownership authority core, not the final

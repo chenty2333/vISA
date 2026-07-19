@@ -32,8 +32,8 @@ use visa_ownership_service::{
     StoreLimits,
 };
 
-/// Exact schema accepted by this O2 bootstrap reader.
-pub const BOOTSTRAP_SCHEMA: &str = "visa.ownershipd.bootstrap.v1";
+/// Exact schema accepted by this O3 bootstrap reader.
+pub const BOOTSTRAP_SCHEMA: &str = "visa.ownershipd.bootstrap.v2";
 
 /// Hard cap applied before JSON parsing.
 pub const MAX_BOOTSTRAP_BYTES: usize = 1024 * 1024;
@@ -55,10 +55,44 @@ pub enum StoreOpenPolicy {
     ReopenExisting,
 }
 
-/// Exact process identity and executable digest admitted for one agent role.
+/// Stable identity pinned for one agent role across process restarts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StableAgentIdentity {
+    pub product_version: ProductVersion,
+    pub cohort: CohortId,
+    pub boot: BootId,
+    pub runtime_session: RuntimeSessionId,
+    pub role: AgentRole,
+    pub logical_incarnation: LogicalIncarnation,
+}
+
+impl StableAgentIdentity {
+    /// Returns whether a wire binding carries this stable identity. Process
+    /// nonce and generation are deliberately supplied by the live agent.
+    pub fn matches(self, binding: AgentBinding) -> bool {
+        self.product_version == binding.product_version
+            && self.cohort == binding.cohort
+            && self.boot == binding.boot
+            && self.runtime_session == binding.runtime_session
+            && self.role == binding.role
+            && self.logical_incarnation == binding.logical_incarnation
+    }
+
+    fn validate(self) -> Result<(), ConfigError> {
+        self.product_version
+            .validate()
+            .and_then(|()| self.cohort.validate())
+            .and_then(|()| self.boot.validate())
+            .and_then(|()| self.runtime_session.validate())
+            .and_then(|()| self.logical_incarnation.validate())
+            .map_err(|_| ConfigError::InvalidField("agent stable identity"))
+    }
+}
+
+/// Stable agent identity and executable digest admitted for one role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PinnedAgent {
-    pub binding: AgentBinding,
+    pub stable_identity: StableAgentIdentity,
     pub executable_sha256: [u8; 32],
 }
 
@@ -79,7 +113,7 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// Returns the exact configured identity for an agent role.
+    /// Returns the configured stable identity and executable for an agent role.
     pub const fn allowed_agent(&self, role: AgentRole) -> &PinnedAgent {
         match role {
             AgentRole::Source => &self.source_agent,
@@ -330,13 +364,13 @@ fn validate_agent(
     expected_role: AgentRole,
     store_binding: StoreBinding,
 ) -> Result<(), ConfigError> {
-    agent.binding.validate().map_err(|_| ConfigError::InvalidField("agent binding"))?;
-    if agent.binding.role != expected_role {
+    agent.stable_identity.validate()?;
+    if agent.stable_identity.role != expected_role {
         return Err(ConfigError::InvalidField("agent role"));
     }
-    if agent.binding.cohort != store_binding.cohort
-        || agent.binding.boot != store_binding.boot
-        || agent.binding.runtime_session != store_binding.runtime_session
+    if agent.stable_identity.cohort != store_binding.cohort
+        || agent.stable_identity.boot != store_binding.boot
+        || agent.stable_identity.runtime_session != store_binding.runtime_session
     {
         return Err(ConfigError::InvalidField("agent store binding"));
     }
@@ -470,14 +504,14 @@ impl ReceiptIssuerDocument {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AgentDocument {
-    binding: AgentBindingDocument,
+    stable_identity: StableAgentIdentityDocument,
     executable_sha256: LowerHex<32>,
 }
 
 impl AgentDocument {
     fn into_typed(self) -> Result<PinnedAgent, ConfigError> {
         Ok(PinnedAgent {
-            binding: self.binding.into_typed()?,
+            stable_identity: self.stable_identity.into_typed()?,
             executable_sha256: self.executable_sha256.0,
         })
     }
@@ -485,31 +519,27 @@ impl AgentDocument {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AgentBindingDocument {
+struct StableAgentIdentityDocument {
     product_version: ProductVersionDocument,
     cohort: LowerHex<16>,
     boot: LowerHex<16>,
     runtime_session: LowerHex<16>,
     role: AgentRoleDocument,
     logical_incarnation: LowerHex<16>,
-    process_nonce: LowerHex<16>,
-    process_generation: u64,
 }
 
-impl AgentBindingDocument {
-    fn into_typed(self) -> Result<AgentBinding, ConfigError> {
-        let binding = AgentBinding {
+impl StableAgentIdentityDocument {
+    fn into_typed(self) -> Result<StableAgentIdentity, ConfigError> {
+        let identity = StableAgentIdentity {
             product_version: self.product_version.into_typed(),
             cohort: CohortId::from_bytes(self.cohort.0),
             boot: BootId::from_bytes(self.boot.0),
             runtime_session: RuntimeSessionId::from_bytes(self.runtime_session.0),
             role: self.role.into_typed(),
             logical_incarnation: LogicalIncarnation::from_bytes(self.logical_incarnation.0),
-            process_nonce: ProcessNonce::from_bytes(self.process_nonce.0),
-            process_generation: self.process_generation,
         };
-        binding.validate().map_err(|_| ConfigError::InvalidField("agent binding"))?;
-        Ok(binding)
+        identity.validate()?;
+        Ok(identity)
     }
 }
 
@@ -621,9 +651,9 @@ mod tests {
         }
     }
 
-    fn agent(role: AgentRoleDocument, logical: u8, nonce: u8) -> AgentDocument {
+    fn agent(role: AgentRoleDocument, logical: u8) -> AgentDocument {
         AgentDocument {
-            binding: AgentBindingDocument {
+            stable_identity: StableAgentIdentityDocument {
                 product_version: ProductVersionDocument {
                     major: PRODUCT_VERSION.major,
                     minor: PRODUCT_VERSION.minor,
@@ -634,8 +664,6 @@ mod tests {
                 runtime_session: lower16(3),
                 role,
                 logical_incarnation: lower16(logical),
-                process_nonce: lower16(nonce),
-                process_generation: 1,
             },
             executable_sha256: LowerHex([0x9a; 32]),
         }
@@ -669,8 +697,8 @@ mod tests {
                 visa_destination: issuer(50),
                 effect_closure: issuer(70),
             },
-            source_agent: agent(AgentRoleDocument::Source, 90, 91),
-            destination_agent: agent(AgentRoleDocument::Destination, 92, 93),
+            source_agent: agent(AgentRoleDocument::Source, 90),
+            destination_agent: agent(AgentRoleDocument::Destination, 92),
         }
     }
 
@@ -699,11 +727,32 @@ mod tests {
         let loaded = load_digest_pinned(file.path(), &pin(&bytes)).expect("load bootstrap");
 
         assert_eq!(loaded.canonical_sha256, <[u8; 32]>::from(Sha256::digest(&bytes)));
-        assert_eq!(loaded.runtime.allowed_agent(AgentRole::Source).binding.role, AgentRole::Source);
+        assert_eq!(
+            loaded.runtime.allowed_agent(AgentRole::Source).stable_identity.role,
+            AgentRole::Source
+        );
         assert_eq!(
             loaded.runtime.allowed_agent(AgentRole::Destination).executable_sha256,
             [0x9a; 32]
         );
+        let source_identity = loaded.runtime.allowed_agent(AgentRole::Source).stable_identity;
+        let current = AgentBinding {
+            product_version: source_identity.product_version,
+            cohort: source_identity.cohort,
+            boot: source_identity.boot,
+            runtime_session: source_identity.runtime_session,
+            role: source_identity.role,
+            logical_incarnation: source_identity.logical_incarnation,
+            process_nonce: ProcessNonce::from_u128(0x5151),
+            process_generation: 7,
+        };
+        assert!(source_identity.matches(current));
+        let mut restarted = current;
+        restarted.process_nonce = ProcessNonce::from_u128(0x5252);
+        restarted.process_generation = 8;
+        assert!(source_identity.matches(restarted));
+        restarted.logical_incarnation = LogicalIncarnation::from_u128(0x9999);
+        assert!(!source_identity.matches(restarted));
         assert!(loaded.runtime.receipt_authenticator().is_ok());
 
         let create = loaded
@@ -793,7 +842,7 @@ mod tests {
         ));
 
         let mut wrong_schema = document(StoreOpenPolicy::CreateIfMissingExact);
-        wrong_schema.schema = "visa.ownershipd.bootstrap.v2".to_owned();
+        wrong_schema.schema = "visa.ownershipd.bootstrap.v1".to_owned();
         let bytes = canonical(&wrong_schema);
         let file = write_private(&bytes);
         assert!(matches!(
@@ -802,7 +851,7 @@ mod tests {
         ));
 
         let mut wrong_binding = document(StoreOpenPolicy::CreateIfMissingExact);
-        wrong_binding.destination_agent.binding.boot = lower16(99);
+        wrong_binding.destination_agent.stable_identity.boot = lower16(99);
         let bytes = canonical(&wrong_binding);
         let file = write_private(&bytes);
         assert!(matches!(

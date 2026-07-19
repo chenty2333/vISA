@@ -5,6 +5,7 @@ mod fence;
 mod peer;
 mod sequencer;
 mod service;
+mod systemd;
 
 use std::{fmt, fs, io, path::Path};
 

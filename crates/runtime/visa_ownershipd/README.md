@@ -1,6 +1,6 @@
 # vISA ownership daemon process slice
 
-`visa-ownershipd` is the O2 process layer around the transport-independent
+`visa-ownershipd` is the O2/O3 process layer around the transport-independent
 `visa_ownership_service` authority core. It reuses `visa_local_transport` for
 the zbus 5.18.0 and rustix 1.1.4 Linux pidfd/proc-file peer admission, bundled
 SQLite through O1, and `sd-notify` 0.5.0 for readiness.
@@ -12,11 +12,13 @@ then atomically orders a fully admitted request against name/bus-loss fencing
 before it can enter the 16-item worker queue. O1 commits the authority change
 and exact response bytes before the transport can send a reply.
 
-The explicit bootstrap input is secure-opened, canonical RFC 8785 JSON and is
-bound to a SHA-256 supplied out of band. It avoids compiling another product
-binary's digest into this binary, but is not yet the release runtime trust root.
-O3 must freeze its installed path/provenance and connect real source and
-destination agents before any ownership readiness ID can become satisfied.
+The v2 bootstrap input is secure-opened, canonical RFC 8785 JSON and bound to a
+SHA-256 supplied out of band. It pins each agent's product/cohort/boot/session,
+role, stable logical incarnation, and executable digest, but deliberately does
+not pin a process nonce or generation. It avoids compiling another product
+binary's digest into this binary, but is not yet the release runtime trust
+root. O3 must still freeze its installed path/provenance and connect real source
+and destination agents before any ownership readiness ID can become satisfied.
 
 The daemon has no ambient configuration fallback. Its launch interface is:
 
@@ -43,13 +45,26 @@ configuration. Help and version requests exit `0` and never open the store.
 
 Every call revalidates the bus-controlled unique sender, role-name ownership,
 UID/PID, ProcessFD or double-query pidfd fallback, and the opened
-`/proc/<pid>/exe` identity/digest. `ProcessFD` is allowed only as a D-Bus
-credentials control-plane result; the frozen `Execute(ay) -> ay` business
-method rejects attached Unix FDs. This is same-UID trusted-binary admission,
-not hostile same-UID isolation or cryptographic peer authenticity.
+`/proc/<pid>/exe` identity/digest. A narrow zbus proxy then resolves the live
+systemd user manager to one unique bus owner and twice calls the frozen
+`GetUnit` method for the exact `visa-agent@source.service` or
+`visa-agent@destination.service`. It requires the returned object's primary
+Unit `Id`, a 16-byte Unit `InvocationID` equal to the caller nonce, and a
+Service `MainPID` equal to the bus-controlled PID. The retained pidfd stays
+local, brackets both systemd observations with liveness checks, and remains the
+admission lease through a final synchronous liveness check immediately before
+queue insertion.
 
-This O2 slice deliberately leaves `public-ownership-service`,
+The frozen `Execute(ay) -> ay` business method rejects attached Unix FDs.
+systemd attests invocation nonce, not process generation: the future agent
+store allocates that durable order and O1's caller cursor enforces forward
+nonce/generation pairs at commit. These sequential checks are same-UID
+trusted-binary admission, not an atomic cross-subsystem snapshot, hostile
+same-UID isolation, or cryptographic peer authenticity.
+
+This bounded slice deliberately leaves `public-ownership-service`,
 `agent-ownership-rpc-v1`, `ownership-single-writer-restart-replay`, and the
-shared `crash-recovery-and-replay` readiness IDs pending. Real systemd units,
-agents, crash/lost-ACK evidence, Ubuntu 24.04 compatibility, and the exact-tag
-release archive belong to O3 and later release gates.
+shared `crash-recovery-and-replay` readiness IDs pending. Real agent stores and
+processes, installed systemd units, crash/lost-ACK evidence, Ubuntu 24.04
+systemd-255 compatibility, and the exact-tag release archive remain separate
+O3 and release gates.

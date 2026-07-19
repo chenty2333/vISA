@@ -188,6 +188,22 @@ impl LocalPeerVerifier {
         Ok(VerifiedLocalPeer { pid, process_fd, executable })
     }
 
+    /// Rechecks that one bus-controlled unique name still owns an expected
+    /// role name on the captured connection epoch.
+    pub async fn require_named_owner(
+        &self,
+        well_known_name: &str,
+        unique_name: &UniqueName<'_>,
+    ) -> Result<(), PeerVerificationError> {
+        self.require_bus_epoch()?;
+        let well_known: WellKnownName<'_> =
+            well_known_name.try_into().map_err(|_| PeerVerificationError::InvalidWellKnownName)?;
+        let proxy =
+            DBusProxy::new(&self.connection).await.map_err(|_| PeerVerificationError::Bus)?;
+        require_name_owner(&proxy, &well_known, unique_name).await?;
+        self.require_bus_epoch()
+    }
+
     fn require_bus_epoch(&self) -> Result<(), PeerVerificationError> {
         if self.connection.server_guid().as_str() == self.bus_guid {
             Ok(())
