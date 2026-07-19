@@ -417,6 +417,24 @@ satisfy any local-RPC readiness ID; zbus transport, bus-controlled credential
 admission, service-owned durable replay, and process/restart evidence remain
 separate gates.
 
+The next bounded O1 slice now lives in `visa_ownership_service`. It is a
+transport-independent product ownership authority core, not the final
+`visa-ownershipd` process. The service-owned SQLite transaction performs exact
+request-ID admission, ownership mutation, request-paired response construction,
+and exact response persistence atomically under `BEGIN IMMEDIATE`. Create-new
+and reopen-existing are distinct fail-closed paths; the store persists its
+cohort/boot/runtime/issuer/receipt-policy identity, retains active-cohort replay
+rows without TTL, retains a gap-free process-generation/nonce history with
+completion-order boundaries, audits its exact schema and authority history, and
+rebuilds a shadow projection by replaying the durable exact RPC ledger at
+startup. Seal
+admission reuses the `joint_handoff_core` reducer for the typed neutral chain.
+The fixed local issuer policy remains only a same-UID trusted-binary TCB pin:
+without an authenticated neutral envelope it is not cryptographic or
+request-bound authenticity. O1 alone changes no readiness-ledger status; the
+zbus/credential/fence/sd-notify process slice and the real agent vertical remain
+required before any ownership RPC or service ID can become satisfied.
+
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,
 writes an execution evidence bundle, then invokes the independent

@@ -29,6 +29,7 @@ members = [
     "crates/runtime/target_executor",
     "crates/runtime/visa_runtime",
     "crates/runtime/visa_joint_handoff",
+    "crates/runtime/visa_ownership_service",
     "crates/runtime/visa_component_adapter",
     "crates/runtime/visa_jco_node",
     "crates/runtime/visa_wacogo",
@@ -97,6 +98,7 @@ zbus = { version = "=5.18.0", default-features = false, features = ["async-io"] 
 visa_profile = { path = "crates/core/visa_profile" }
 visa_runtime = { path = "crates/runtime/visa_runtime" }
 visa_joint_handoff = { path = "crates/runtime/visa_joint_handoff" }
+visa_ownership_service = { path = "crates/runtime/visa_ownership_service" }
 visa_component_adapter = { path = "crates/runtime/visa_component_adapter" }
 visa_jco_node = { path = "crates/runtime/visa_jco_node" }
 visa_wacogo = { path = "crates/runtime/visa_wacogo" }

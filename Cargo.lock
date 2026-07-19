@@ -2284,6 +2284,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa_ownership_service"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "joint_handoff_core",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "tempfile",
+ "visa_local_rpc",
+]
+
+[[package]]
 name = "visa_profile"
 version = "0.2.0"
 dependencies = [

@@ -136,6 +136,7 @@ active_spine_packages=(
     substrate_host
     visa_runtime
     visa_joint_handoff
+    visa_ownership_service
     visa_component_adapter
     visa_jco_node
     visa_wacogo

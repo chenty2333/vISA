@@ -17,6 +17,7 @@ ACTIVE_SPINE_PREFIXES=(
     crates/backend/substrate_host/
     crates/runtime/visa_runtime/
     crates/runtime/visa_joint_handoff/
+    crates/runtime/visa_ownership_service/
     crates/runtime/visa_component_adapter/
     crates/runtime/visa_jco_node/
     crates/runtime/visa_wacogo/
