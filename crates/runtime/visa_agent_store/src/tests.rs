@@ -7,7 +7,7 @@ use visa_local_rpc::common::{
     RuntimeSessionId, StableAgentIdentity,
 };
 
-use super::{AgentStore, AgentStoreError, audit_unstarted, publish_new};
+use super::{AgentStore, AgentStoreError, audit_unstarted, inspect_existing, publish_new};
 
 fn identity(role: AgentRole, seed: u128) -> StableAgentIdentity {
     StableAgentIdentity {
@@ -37,6 +37,7 @@ fn publish_audit_and_reopen_allocate_gap_free_process_bindings() {
     let audit = audit_unstarted(&database, expected).expect("generation-zero audit");
     assert_eq!(audit.stable_identity, expected);
     assert_eq!(audit.process_generation, 0);
+    assert_eq!(inspect_existing(&database).expect("identity inspection"), audit);
 
     let first = AgentStore::reopen_existing(&database, expected, ProcessNonce::from_u128(101))
         .expect("first process");

@@ -226,6 +226,27 @@ pub fn audit_unstarted(
     Ok(AgentStoreAudit { stable_identity: stored_identity, process_generation })
 }
 
+/// Audits an existing store without requiring a caller to know the persisted
+/// logical incarnation first.  This is intentionally read-only with respect
+/// to process history and is useful to a bootstrap layer that must discover
+/// an already-initialized role before checking its cohort/boot binding.
+pub fn inspect_existing(
+    database_path: impl AsRef<Path>,
+) -> Result<AgentStoreAudit, AgentStoreError> {
+    let database_path = database_path.as_ref();
+    ensure_private_parent(database_path).map_err(AgentStoreError::from)?;
+    let _lock = StoreLock::acquire(lock_path(database_path)).map_err(AgentStoreError::from)?;
+    let database_guard =
+        DatabaseGuard::open_existing(database_path).map_err(AgentStoreError::from)?;
+    let connection = open_connection(database_path)?;
+    configure_session(&connection)?;
+    audit_schema(&connection)?;
+    let stable_identity = load_identity(&connection)?;
+    let process_generation = audit_process_history(&connection)?;
+    sync_file(database_guard.file()).map_err(AgentStoreError::from)?;
+    Ok(AgentStoreAudit { stable_identity, process_generation })
+}
+
 fn validate_identity(identity: StableAgentIdentity) -> Result<(), AgentStoreError> {
     identity.validate().map_err(|_| AgentStoreError::InvalidRequest)
 }
