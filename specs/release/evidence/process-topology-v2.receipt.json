@@ -1,0 +1,20 @@
+{
+  "schema": "visa.development-readiness-verifier-receipt.v3",
+  "readiness_id": "process-topology-frozen",
+  "target_path": "specs/release/visa-0.1.toml",
+  "target_sha256": "6cb7be12504297bf633ca7f90b845fdd76023517b85d6cc8064035c5aea18209",
+  "verifier_id": "visa.development.verify.process-topology-frozen.v1",
+  "verifier_source_path": "scripts/check-release-contract.py",
+  "verifier_source_sha256": "9fc5a5c9bd593362765d5b034a9eb93eb7feee69b41c4a631bfd5be38ed49b5f",
+  "verifier_test_path": "scripts/test-check-release-contract.py",
+  "verifier_test_sha256": "7d905f6e86cf5095b869f80421523fc644152562309ef2282c629d05cf33a91f",
+  "exit_code": 0,
+  "output_sha256": "44adb01872bcb3d3b375aebd244e128c7903fc0383a39c6eaecf26ca3bd90f2c",
+  "input_scope": "selected-reproduction-inputs-not-complete-verifier-read-closure-current-checkout-revalidation-required",
+  "selected_input_sha256": {
+    "specs/release/visa-0.1.toml": "6cb7be12504297bf633ca7f90b845fdd76023517b85d6cc8064035c5aea18209",
+    "specs/release/evidence/process-topology-v2.json": "44adb01872bcb3d3b375aebd244e128c7903fc0383a39c6eaecf26ca3bd90f2c",
+    "scripts/check-release-contract.py": "9fc5a5c9bd593362765d5b034a9eb93eb7feee69b41c4a631bfd5be38ed49b5f",
+    "scripts/test-check-release-contract.py": "7d905f6e86cf5095b869f80421523fc644152562309ef2282c629d05cf33a91f"
+  }
+}

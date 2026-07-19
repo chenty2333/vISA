@@ -463,7 +463,8 @@ destination pre-resume checkpoint. Destination resume is bound to the durable
 activation completion-record digest rather than merely to an attempted local
 mutation.
 
-The current source lock pins remote-accepted neutral implementation
+The accepted `bounded-joint-handoff-refinement-v1` source lock pins
+remote-accepted neutral implementation
 `f4a8211f0e5fde13e0f6101be3c3322854458c79` at tree
 `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`. Its machine contract SHA-256
 is `f054fa08d48b7eed8fef18c274a464f66443410e6698474ff721bfb1a6b5cbf5`.

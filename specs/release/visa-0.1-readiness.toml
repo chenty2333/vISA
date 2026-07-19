@@ -1,6 +1,6 @@
 schema = "visa.development-readiness-ledger.v1"
 target_path = "specs/release/visa-0.1.toml"
-target_sha256 = "a9a1ddcf3b4023894fbf77d2529e9f008d6fbf9e44ffe642efce6abcae45c54e"
+target_sha256 = "6cb7be12504297bf633ca7f90b845fdd76023517b85d6cc8064035c5aea18209"
 status = "development-progress-not-release-evidence"
 observed_cells = []
 satisfied_ids = ["contract-schema-frozen", "process-topology-frozen"]
@@ -28,16 +28,22 @@ pending_ids = [
   "exact-tag-release-evidence",
 ]
 
+[measurements.preexisting_jsonl]
+status = "development-observation-not-immutable-contract"
+observed_max_jsonl_bytes = 53663
+normative_inner_rpc_cap_bytes = 1048576
+basis = "preexisting-native-and-generated-system-jsonl-sample-not-dbus-wire-evidence"
+
 [[evidence]]
 id = "contract-schema-frozen"
-evidence_path = "specs/release/evidence/contract-schema-v4.json"
-evidence_sha256 = "2e15bc48cae5e7e614300f6d9c219a2f0685c68a72b62ca071d5017c3c31cd0d"
-verifier_receipt_path = "specs/release/evidence/contract-schema-v4.receipt.json"
-verifier_receipt_sha256 = "1c51d35167408aa4e83a91c84f89ef3b926079d4731431706fa85f9082a7ee37"
+evidence_path = "specs/release/evidence/contract-schema-v5.json"
+evidence_sha256 = "e3182e8dc0c01f8d467b1c8927517167ccd9f6a3003e9b7bf2c91be2adeaa823"
+verifier_receipt_path = "specs/release/evidence/contract-schema-v5.receipt.json"
+verifier_receipt_sha256 = "4907636da8ffe017254bcedd342a235596293430422b07194783793f21a9ed5a"
 
 [[evidence]]
 id = "process-topology-frozen"
-evidence_path = "specs/release/evidence/process-topology-v1.json"
-evidence_sha256 = "a02dffc324690d4248fe96411a25c268d1e9d763f20aea455ed7d61e840b3a2b"
-verifier_receipt_path = "specs/release/evidence/process-topology-v1.receipt.json"
-verifier_receipt_sha256 = "394a6b945f377ffa78ee2bb4fd053e7e629a681fbf9e624dec62096e31016234"
+evidence_path = "specs/release/evidence/process-topology-v2.json"
+evidence_sha256 = "44adb01872bcb3d3b375aebd244e128c7903fc0383a39c6eaecf26ca3bd90f2c"
+verifier_receipt_path = "specs/release/evidence/process-topology-v2.receipt.json"
+verifier_receipt_sha256 = "9a8baa7979c4fa2078b31cc76b17f31c9400908245e621c8a561ee8cffa6ab27"

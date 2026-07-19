@@ -9,7 +9,7 @@ build = "build.rs"
 [dependencies]
 contract_core.workspace = true
 joint_handoff_core.workspace = true
-rusqlite = { version = "0.40.1", features = ["bundled", "serialize"] }
+rusqlite = { version = "=0.40.1", features = ["bundled", "serialize"] }
 semantic_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

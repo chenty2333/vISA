@@ -124,7 +124,7 @@ lineage records acceptance without replacing that identity. Its source lock
 pins remote-accepted neutral implementation
 `f4a8211f0e5fde13e0f6101be3c3322854458c79`
 (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`), which defines the 16
-normative schedules and current Nexus native-v1 mapping. Its exact-SHA artifact
+normative schedules and the accepted v1 Nexus native-v1 mapping. Its exact-SHA artifact
 was independently reverified after download; `be250c30...` is the later receipt
 lineage. Earlier accepted revisions remain historical evidence only. The
 separate Nexus qualification lock remains `prospective=true`, while the neutral

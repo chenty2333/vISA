@@ -15,7 +15,7 @@ test-control = []
 contract_core = { path = "../../core/contract_core" }
 getrandom = "=0.4.2"
 hmac = "=0.12.1"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
 serde = "1.0"
 serde_json = "1.0"
 sha2 = "0.10"

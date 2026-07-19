@@ -146,13 +146,14 @@ from the exact commit, closure, and source
 fence chain. No monolithic, cross-host, or production execution cell runs all
 three evidence axes end to end; acceptance is a bounded composition result.
 
-The current source lock pins remote-accepted neutral implementation
+The accepted `bounded-joint-handoff-refinement-v1` source lock pins
+remote-accepted neutral implementation
 `f4a8211f0e5fde13e0f6101be3c3322854458c79` (tree
 `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). It supplies the reviewed wire
 contract, 16-case normative model, TLA+ safety/progress checks, expected rollback
 counterexample, independent mutation-tested oracle, and exact Nexus native-v1
 field mapping. Earlier remote results, including `8fcdaf42...`, remain historical
-evidence rather than the current source identity. The separate Nexus
+evidence rather than the accepted v1 source identity. The separate Nexus
 qualification lock remains `prospective=true`, and the neutral mapping still
 declares `adapter_qualification=false`; neither becomes Nexus execution truth.
 The vISA registry has 16 case-identity mappings plus one supplemental

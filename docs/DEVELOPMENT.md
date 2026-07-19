@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-17.
+Last reviewed: 2026-07-19.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -276,25 +276,118 @@ Check the frozen vISA 0.1 target separately with:
 ```sh
 python3 scripts/check-release-contract.py
 python3 scripts/check-release-contract.py --release-ready \
-  --evidence-index /archive/visa-0.1.0/index.json
+  --release-stage rc-admitted --archive-root /archive/visa-v0.1.0-rc.N \
+  --attestation-verifier-sha256 "$GH_SHA256" \
+  --trusted-root-sha256 "$TRUSTED_ROOT_SHA256" \
+  --expected-source-tag "v0.1.0-rc.N"
+python3 scripts/check-release-contract.py --release-ready \
+  --release-stage final-release-verified --archive-root /archive/visa-v0.1.0-final \
+  --attestation-verifier-sha256 "$GH_SHA256" \
+  --trusted-root-sha256 "$TRUSTED_ROOT_SHA256" \
+  --expected-source-tag "v0.1.0-rc.N"
 ```
 
 The first command is part of `fast` and validates the immutable target plus its
-target-digest-bound mutable development readiness ledger. The target fixes a six-process product
-topology: one short-lived controller, two direct-execution Wasmtime agents, one
+target-digest-bound mutable development readiness ledger. The target admits at
+most five resident product roles plus one mutating CLI holding the exclusive
+controller-operation lease under `systemd --user`: two direct-execution Wasmtime agents, one
 independent ownership service, one Nexus adapter service, and its one native-v1
-peer child. It also keeps controller/agent, agent/ownership, and agent/Nexus
-local UDS schemas independent. They share a 20-byte fixed header and canonical
-Postcard 1.1.3 payload, use distinct eight-byte magics, and bound the whole
-frame at 1 MiB (payload 1,048,556 bytes); large artifacts remain
-digest-plus-secure-path references. The Nexus child boundary stays native-v1
-JSONL. The second command is the fail-closed release admission command; it
-requires a complete external exact-RC-tag evidence index, including final
-workspace/package/source/license inventory and tagged Cargo.lock/toolchain
-digests. The checker validates that inventory's schema, counts, digests, and
-bindings; the supply-chain verifier receipt attests completeness against locked
-Cargo metadata and Cargo.lock. Updating the development ledger never closes
-that external gate.
+peer child. Concurrent read-only CLI diagnostics are not controller roles. The existing
+systemd user manager, D-Bus daemon, and library threads are host infrastructure,
+not product-role processes; the CLI uses the typed user-bus Manager interface
+instead of spawning `systemctl`. `cohort-create` and `cohort-retire` are local
+pre-RPC launch/supervision operations and never issue authority receipts. The
+lease lives directly under the pre-existing `${XDG_RUNTIME_DIR}`, so first-use
+parent-directory creation cannot precede lease admission. Its first mutation is
+an `O_CREAT|O_RDWR|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK` flat-path open followed by
+regular/euid/nlink/mode checks and nonblocking `flock`; the file is never
+unlinked. The
+controller/agent, agent/ownership, and agent/Nexus schemas remain independent
+user-bus D-Bus interfaces implemented with zbus. Each uses `Execute(ay) -> ay`
+with a canonical Postcard 1.1.3 inner payload capped at 1 MiB; names, object
+paths, interfaces, signatures, credential-bound executable admission, and
+inner bytes are locked, while outer D-Bus bytes are not. Large artifacts remain
+digest-plus-secure-path references. The 0.1 admission profile requires
+effect-closure provider protocol 2.1 and fault-matrix v2; protocol 2.0 and
+fault-matrix v1 remain historical contracts. The Nexus child boundary stays
+native-v1 JSONL, with the historical freeze origin kept distinct from the
+merged release-component source pin. The artifact inventory separately records
+that component source revision and the exact tagged workflow revision that
+produced the Nexus-owned attestation; a later producer commit may build the
+pinned component checkout without being relabelled as its source. That record
+is not the cross-pin proof. The component Git bundle must also contain the
+tagged producer revision, exact workflow source, and full-SHA action pins, not
+only the older component checkout.
+
+The `nexus-native-v1-wire-artifact` verifier gets seven closed inputs: the
+archived component bundle, closed source graph, exported corpus, artifact
+inventory, binary, standard build-provenance bundle, and separate in-toto Link
+v0.3 bundle. The outer checker verifies the exact binary subject twice. It
+requires the default `actions/attest` SLSA v1
+`https://actions.github.io/buildtypes/workflow/v1` predicate for producer
+identity, cross-checking its OIDC-derived source, workflow, repository IDs,
+hosted runner, builder, and invocation with the verified certificate. A strict
+Link profile separately binds the same binary and run invocation to the exact
+component revision, build argv/record, and prebuilt bundle/graph/corpus
+digests. The exact bundle bytes handed to `gh` are hashed against their
+inventory/runtime bindings before verification. The typed verifier closes
+producer workflow/action-pin checks, component and freeze ancestry, graph and
+corpus equivalence, and build-record and binary identity.
+
+The exact-tag Nexus producer is a no-input `push` workflow with every action
+pinned by full SHA. Build and qualification jobs are GitHub-hosted and declare
+an exact job-level permission map containing only `contents: read`. A separate
+GitHub-hosted attestation job declares exactly `contents: read`,
+`id-token: write`, and `attestations: write`; every other scope is `none`. It
+downloads and validates outputs but never executes component code. This is a
+locked producer profile, not a SLSA-level, hermetic-build, or reproducibility
+claim.
+
+The second command verifies the authenticated `rc-admitted` archive; the third
+additionally requires the annotated final tag and the attested post-tag receipt.
+Both operate from the explicit evidence-self-contained archive and source Git
+bundle, reject path aliases/symlinks/hardlinks and duplicate JSON keys, and
+require closed typed verifier receipts plus fixed GitHub/Sigstore workflow and
+source identities. They also require independent pins for the archived exact,
+security-floor-compliant `gh` binary and custom trusted root. The initial index
+attestation must pass before any archived dispatcher is executed, and
+final-stage verification also authenticates the post-tag receipt before cloning
+its final bundle. The RC and final annotated tag objects must exactly match the
+separately trusted checkout, not merely peel to the same commit.
+
+Each dispatcher invocation receives a fresh private `tagged-source/` plus
+`archive/` input snapshot generated from the exact receipt, never the original
+archive root. It runs with Python `-I -S`; the snapshot and dispatcher are
+rehashed afterward, and the dispatcher is not colocated with the private
+`gh`/trusted-root copies. This is input closure within the trusted host, not
+hostile same-UID process confinement. The build inventory is per product root
+and retains the reachable locked graph/features; the supply-chain verifier
+rebuilds those graphs offline with archived Cargo/Rustc plus
+`cargo vendor --locked --versioned-dirs` inputs. The release image producer is
+pinned to Buildx 0.35.0 and BuildKit 0.31.2, uses a fresh `tar=false` OCI
+directory, and archives every layout file through an owned file-set inventory.
+The layout permits at most 4,096 files and
+the vISA canonical regular-file profile permits only `oci-layout`, `index.json`,
+and `blobs/sha256/*`. OCI itself permits extra files; empty BuildKit-internal
+directories carry no identity, while files beneath them are rejected by the
+vISA profile. Offline verification does not rerun Docker during
+verification or claim source-to-binary reproducibility. The artifact inventory binds all executables,
+systemd units, hashes, build argv, component source revisions, attestation
+producer revisions, and subject attestations; an external component's
+source-to-binary relationship remains a separate authenticated-material and
+typed-verifier obligation. Updating the development ledger never
+closes either external gate. Development receipts list selected reproduction
+anchors, not every ambient source read by the full checker, so only a fresh
+current-checkout checker run can support those development-only satisfied IDs.
+
+For the pending typed OCI verifier, apply the build-vs-reuse rule: reuse the
+OCI project's `image-spec/schema` and `specs-go/v1` definitions plus
+`opencontainers/go-digest` streaming validation in a pinned helper, while vISA
+owns only its stricter regular-file profile, reachable-closure walk, release
+bindings, and resource bounds. A pinned `umoci` run may serve as a differential
+interop oracle, not admission authority. No existing upstream helper covers
+that complete composition, so the profile/closure layer remains small
+vISA-owned code rather than a second general OCI implementation.
 
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,

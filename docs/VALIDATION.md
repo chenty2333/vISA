@@ -32,7 +32,7 @@ exact-SHA CI, relocation, and post-download obligations recorded in the
 artifact; any same-SHA retry must be evaluated as a separate attempt rather than
 erasing that failure history.
 
-Last reviewed: 2026-07-17.
+Last reviewed: 2026-07-19.
 
 This document defines what each result proves and the acceptance boundaries for
 the first architecture-complete slice, the legacy Stage 2 execution-path
@@ -194,14 +194,17 @@ The fast tier is the ordinary edit loop: formatting, locked metadata, strict
 linting and focused tests for the active spine, plus strict dependency direction
 and the [vISA 0.1 exact-version target-contract](../specs/release/visa-0.1.md)
 checker/self-tests. The default contract check proves that frozen identifiers,
-versions, digests, the six-process role/authority topology, three independent
-bounded local UDS contracts, and the target-bound development pending/satisfied
+versions, digests, the five-resident-plus-one-leased-controller role/authority
+topology, three independent bounded user-bus D-Bus contracts, and the target-bound development pending/satisfied
 partition still match. It validates the mutable ledger's repository-relative
 evidence paths, digests, and receipts, but does not treat that progress ledger
-as release closure. The local vISA RPCs use one fixed 20-byte header plus
-canonical Postcard payload, three independent magics/namespaces, and a 1 MiB
-whole-frame bound; the Nexus child protocol remains native-v1 JSONL. `fast`
-does not make the separate external-index `--release-ready` admission pass. The
+as release closure. The local vISA RPCs reuse zbus and three separately named
+`Execute(ay) -> ay` interfaces with canonical Postcard payloads capped at 1 MiB.
+Golden data locks D-Bus names/paths/interfaces/signatures and inner bytes, not
+outer D-Bus serialization; peer credentials and executable hashes come from
+bus-controlled UID/PID plus pidfd/proc identity. The Nexus child protocol
+remains native-v1 JSONL. `fast`
+does not make either authenticated archive `--release-ready` stage pass. The
 tier proves local logic and structural direction, not implemented adapter or
 continuity behavior.
 
@@ -865,35 +868,115 @@ unknown schemas, and older bundles do not inherit either newer claim boundary.
 
 The machine-readable [vISA 0.1 exact-version target
 contract](../specs/release/visa-0.1.toml) freezes the intended single-host,
-same-boot Linux x86-64 product cell and its version/digest boundaries. Its
-default checker is implemented in `fast`; release admission is a separate
-fail-closed `python3 scripts/check-release-contract.py --release-ready
---evidence-index PATH` command. The immutable target contains required IDs but
+same-boot and same-user-manager-lifetime Linux x86-64 product cell and its
+version/digest boundaries. Its
+default checker is implemented in `fast`; RC admission and final verification
+are separate fail-closed `python3 scripts/check-release-contract.py
+--release-ready --release-stage STAGE --archive-root PATH
+--attestation-verifier-sha256 GH_SHA256 --trusted-root-sha256
+TRUSTED_ROOT_SHA256 --expected-source-tag RC_TAG` commands. The
+immutable target contains required IDs but
 no mutable closure state. A separate target-digest-bound development ledger is
 explicitly not release evidence, and the current target claims no supported
 product cell. The target topology is one short-lived controller, two long-lived
 agents that directly host Wasmtime and their real profile sinks, one independent
 SQLite ownership authority, and one `visa-nexusd` supervising one native-v1
-peer. Controller/agent/ownership/Nexus RPCs are local UDS only, with fixed-header
-Postcard framing on the three vISA boundaries and native-v1 JSONL only on the
-Nexus child boundary. Agent and
+peer. Controller/agent/ownership/Nexus RPCs are three independent user-bus D-Bus
+interfaces with canonical Postcard byte-array payloads; native-v1 JSONL remains
+only on the Nexus child boundary. The release target requires the current
+effect-closure provider 2.1 admission profile and fault-matrix v2 while
+retaining 2.0/v1 as historical contracts; it separately pins the merged Nexus
+release component without rewriting the older native-v1 freeze source. Agent and
 controller crash recovery may reconnect to the surviving Registry; adapter or
 peer crash is terminal fail-closed in 0.1 and cannot be disguised by respawning
-a replacement Registry.
+a replacement Registry. The supported release supervisor is `systemd --user`;
+product binaries remain foreground-only, `visa-nexusd` is the sole peer parent,
+socket activation is disabled, both authority services use successful
+`Type=notify` readiness before agent start, and runtime name loss makes resident
+agents fence before reconnect/query. No `Upholds=` or Requires/BindsTo cascade
+is admitted; ownershipd/agent self-crash may use bounded `Restart=on-failure`,
+while Nexus failure is terminal and can never schedule a Nexus restart. The
+CLI subscribes to and matches user-D-Bus Manager job completion by object path.
+`cohort-create` atomically binds a non-authoritative persistent/active launch
+manifest to cohort, boot, and volatile runtime-session identity before starting
+units. Clean retire and explicit abandon stop and confirm all five residents
+inactive before tombstoning/removing the active manifest; partial stop preserves
+that manifest and all old stores/authority uncertainty. Boot, runtime-session, or stable-incarnation mismatch makes old
+state audit-only; logout/runtime-root-loss resume is a 0.1 nonclaim. The release
+runtime baseline is Ubuntu 24.04 LTS amd64 (glibc 2.39, systemd 255, Linux 6.8),
+with feature probes and no generic-Linux compatibility claim.
 
 The release tier reruns system scenarios in declared runtime/ISA/substrate
 cells with pinned inputs and provenance, then adds stress, recovery,
 compatibility, performance, and artifact-integrity checks. Evidence must be
 tied to source, toolchain, component, profile, configuration, and result
-digests. The external index must bind an exact RC tag and 40-hex commit, the
-target bytes at that commit, all required-ID artifacts and receipts, the tagged
-Cargo.lock and toolchain, and a complete workspace/resolved package version,
-source, and license inventory. The release checker validates its structural
-schema, counts, uniqueness, digests, and exact-tag bindings; the supply-chain
-verifier receipt and release attestation own the independent completeness claim
-against locked Cargo metadata and Cargo.lock. The final `v0.1.0` tag may point
-to that same commit without rewriting it; a post-release claims ledger may
-advance on main without moving the release tag.
+digests. The evidence-self-contained archive must bind an annotated RC tag and 40-hex
+commit, the target bytes at that commit, exact source Git bundle, original
+lock/toolchain bytes, closed typed verifiers, all required-ID evidence,
+per-product-root reachable build graphs, five executables, four systemd units,
+and their attestations. Artifact records distinguish the revision of the
+component source graph from the exact tagged workflow revision that produced
+the attestation; the record alone is not a cross-pin proof. The Nexus artifact
+lane requires the exact source bundle, closed source graph, exported corpus,
+artifact inventory, binary, standard build-provenance bundle, and separate
+release-Link bundle. The source bundle must include both the pinned component
+history and the tagged producer workflow/action pins.
+
+The standard attestation must have the exact default `actions/attest` SLSA v1
+workflow shape. Its source/ref, workflow, repository IDs, hosted-runner value,
+builder, and invocation are cross-checked against non-workflow-controlled
+certificate fields. A separate strict in-toto Link v0.3 attestation must bind
+the same captured binary and certificate run invocation to the component
+revision, exact build argv and record, and prebuilt source-bundle,
+source-graph, and corpus digests. The Link uses logical material names and
+digests rather than archive-derived `file:` URIs. The typed verifier binds
+those materials back to the pinned component graph, producer tag/workflow,
+build record, and frozen native-v1 contract. For each predicate, the bundle
+bytes actually passed to `gh` must match the digest already bound by the
+artifact inventory or runtime-input registry.
+
+The producer is an exact-tag, no-input `push` workflow. All
+artifact-influencing jobs are GitHub-hosted and all actions use full-SHA pins.
+Build/qualification jobs declare only `contents: read`; the distinct minimal
+attestation job declares exactly `contents: read`, `id-token: write`, and
+`attestations: write`, with all other token scopes absent. It must not execute
+component code. The two authenticated predicates must have identical
+source/signer/run certificate coordinates. This verifies the frozen profile
+but establishes no SLSA level, hermetic derivation, or source-to-binary
+reproducibility.
+
+Per-verifier runtime inventories also bind archived Cargo/Rustc, Cargo vendor
+config/tree inventory, exact Buildx 0.35.0/BuildKit 0.31.2 producer identity,
+and the fresh `tar=false` derived OCI layout file set. These support offline
+`cargo metadata --frozen` graph reconstruction but do not claim
+source-to-binary reproducibility. The checker rejects duplicate JSON keys, path
+aliases, symlinks, hardlinks, unbounded or unreferenced files, and ambient Git
+or Cargo identity. The verifier-host TCB is the trusted checker invocation, its
+pre-existing Python interpreter/stdlib, resolved Git/runtime,
+kernel/filesystem, and non-hostile same-UID processes, plus independently
+supplied hashes of an exact `gh` binary at or above the 2.93.0 security floor
+and the custom Sigstore trusted root. Recorded Python/Git versions are audit
+and compatibility observations, not byte-authenticity pins. Each typed
+verifier sees only an outer-checker-generated private snapshot with explicit
+`tagged-source/` and `archive/` origins; it never receives the original archive
+root. The snapshot and separately housed dispatcher are rehashed after every
+run, then the private `gh` and trusted root are rehashed before post-verifier
+attestation. This closes the normal input interface but is not confinement
+against a malicious tagged verifier, ptrace, `/proc`, or hostile same-UID
+concurrency. The archive is evidence-self-contained, not an
+external-runtime-free trust bootstrap. `rc-admitted` requires an index attested by the fixed workflow at the RC
+source/ref before any archived dispatcher executes. `final-release-verified` additionally requires authenticating the
+attested post-tag receipt before its selected final bundle is cloned or archived code runs; the bundle proves annotated `v0.1.0` and the
+admitted RC tag peel to the exact same commit, and both annotated tag objects
+must exactly match the separately trusted checkout. The OCI layout is capped at
+4,096 files so its individual path/digest map remains encodable within the
+1 MiB receipt bound. OCI permits extra files, but the narrower vISA canonical
+regular-file profile admits only `oci-layout`, `index.json`, and
+`blobs/sha256/*`; empty producer-internal directories have no identity and any
+file beneath them is rejected. Any source change requires a new
+RC. RC and final evidence use separate immutable roots: the final checker reruns
+the complete RC validation, while the preserved RC root is never appended to or
+replaced. A later claims ledger may advance on main without moving either tag.
 
 ### Claim gates
 

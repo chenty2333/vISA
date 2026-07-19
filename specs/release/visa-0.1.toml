@@ -1,6 +1,6 @@
 schema = "visa.release-contract.v1"
 contract_id = "visa-product-0.1"
-contract_revision = 4
+contract_revision = 5
 status = "immutable-release-target"
 product_name = "vISA"
 product_version = "0.1.0"
@@ -21,25 +21,48 @@ rust_trait_abi = "not-defined"
 
 [scope]
 host_count = 1
-boot_scope = "same-boot"
+boot_scope = "same-boot-and-active-systemd-user-manager-lifetime"
 operating_system = "linux"
 architecture = "x86_64"
 endianness = "little"
 pointer_width_bits = 64
 maximum_active_processes = 6
+maximum_resident_product_processes = 5
+process_count_scope = "at-most-five-resident-admitted-product-roles-plus-one-exclusive-lease-holding-mutating-visa-cli-controller"
+process_count_enforcement = "role-admission-contract-not-kernel-global-process-limit-extra-unadmitted-binaries-have-no-mutation-or-controller-role"
+readonly_cli_concurrency = "status-and-verify-evidence-may-run-concurrently-without-controller-role-or-mutation-lease"
 source_destination_topology = "two-long-lived-visa-agent-processes"
 agent_execution_model = "in-process-wasmtime-local-provider-profile-sink-and-durable-projection"
 orchestrator_topology = "one-short-lived-visa-cli-controller-process"
 ownership_service_topology = "one-independent-visa-ownershipd-process"
 nexus_adapter_topology = "one-independent-visa-nexusd-process"
 effect_provider_topology = "one-nexus-effect-peer-child-of-visa-nexusd"
-controller_child_processes = "none"
+controller_child_processes = "no-product-role-child-cli-uses-direct-user-dbus"
 agent_child_processes = "none"
-local_control_transport = "fixed-header-length-prefixed-postcard-1.1.3-over-filesystem-unix-stream"
+local_control_transport = "three-independent-versioned-user-bus-dbus-interfaces-via-zbus-with-canonical-postcard-ay-payloads"
 effect_provider_transport = "bounded-json-lines-lf"
 network_control_transport = false
-failure_model = "same-boot-crash-stop-retry-reorder-lost-ack"
+failure_model = "same-user-manager-lifetime-within-one-boot-crash-stop-retry-reorder-lost-ack"
 host_reboot_supported = false
+boot_identity_source = "/proc/sys/kernel/random/boot_id"
+
+[host_compatibility]
+release_target = "x86_64-unknown-linux-gnu"
+release_build_base_image = "docker.io/library/debian@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e"
+release_build_base_platform = "linux-amd64-debian-12-bookworm-slim-glibc-2.36"
+release_build_toolchain = "nightly-2026-06-07-rustc-1.98.0-nightly-61d7280f3c4c63fa24c56bdaa9a446151b5a30dc-llvm-22.1.6"
+release_build_recipe_path = "packaging/release/Containerfile"
+release_build_context_path = "."
+derived_build_image_policy = "exact-oci-manifest-digest-and-exported-layout-in-release-build-inventory-no-floating-tag-or-network-resolution"
+supported_runtime_baseline = "ubuntu-24.04-lts-amd64-glibc-2.39-systemd-255-linux-6.8"
+minimum_systemd_version = 254
+required_systemd_features = ["user-manager", "user-session-bus", "ListUnitsByNames", "StateDirectory-XDG_STATE_HOME", "Type-notify", "user-DBus-Manager"]
+systemd_admission = "feature-probe-manager-methods-effective-state-directory-user-bus-and-notify-behavior-version-string-alone-insufficient"
+user_bus_process_identity_admission = "feature-probe-getconnectioncredentials-processfd-preferred-pid-fallback-requires-double-credential-and-owner-recheck"
+minimum_runtime_glibc = "2.39"
+minimum_runtime_kernel = "6.8"
+compatibility_policy = "only-exact-tested-matrix-cells-supported-untested-distributions-kernels-libcs-and-systemd-backports-are-nonclaims"
+development_host_observation = "fedora-44-glibc-2.43-systemd-259-linux-7.1.3-not-a-release-baseline"
 
 [process_topology]
 controller_processes = 1
@@ -48,13 +71,20 @@ ownership_service_processes = 1
 nexus_adapter_processes = 1
 nexus_effect_peer_processes = 1
 maximum_active_processes = 6
+resident_processes = 5
 source_agent_role = "source-wasmtime-local-provider-profile-sink-and-durable-projection"
 destination_agent_role = "destination-wasmtime-local-provider-profile-sink-and-durable-projection"
 ownership_service_role = "sole-durable-reservation-seal-abort-commit-and-query-authority"
 nexus_adapter_role = "sole-native-v1-adapter-dispatch-grant-ledger-and-peer-supervisor"
 nexus_effect_peer_role = "sole-in-memory-authoritative-nexus-registry"
 controller_role = "short-lived-orchestrator-client-with-no-durable-decision-authority"
+controller_operation_lease_path = "${XDG_RUNTIME_DIR}/visa-0.1-controller.lock"
+controller_operation_lease = "first-product-owned-mutation-open-o-creat-o-rdwr-o-cloexec-o-nofollow-o-nonblock-flat-lock-fstat-regular-euid-owned-nlink1-mode0600-then-nonblocking-flock-held-before-all-other-mutation-dbus-or-rpc-never-unlink"
+mutating_cli_operations = ["cohort-create", "cohort-retire", "run", "handoff", "reconcile"]
+readonly_cli_operations = ["status", "verify-evidence"]
+additional_mutating_cli = "typed-busy-rejection-before-mutation-or-rpc-not-an-admitted-controller-process"
 registry_owner_during_controller_or_agent_crash = "nexus-effect-peer-owned-by-visa-nexusd"
+binary_launch_model = "foreground-only-no-self-daemonization"
 forbidden_topologies = [
   "controller-owned-agent-worker",
   "agent-owned-stdio-worker-child",
@@ -62,59 +92,161 @@ forbidden_topologies = [
   "controller-or-agent-owned-nexus-effect-peer",
 ]
 
+[supervision]
+supported_supervisor = "systemd-user"
+supported_environment = "linux-x86_64-with-available-systemd-user-manager-and-xdg-runtime-dir"
+fallback = "manual-foreground-test-and-diagnostic-only-not-release-topology"
+product_target = "visa-local.target"
+source_agent_unit = "visa-agent@source.service"
+destination_agent_unit = "visa-agent@destination.service"
+ownership_unit = "visa-ownershipd.service"
+nexus_adapter_unit = "visa-nexusd.service"
+nexus_peer_unit = "none-child-only"
+foreground_policy = "all-product-binaries-remain-foreground-and-never-self-daemonize"
+cli_activation = "cohort-create-local-launch-manifest-then-direct-user-dbus-start-stop-status-no-systemctl-child-process"
+dbus_destination = "org.freedesktop.systemd1"
+dbus_manager_path = "/org/freedesktop/systemd1"
+dbus_manager_interface = "org.freedesktop.systemd1.Manager"
+dbus_methods = ["Subscribe", "StartUnit", "StopUnit", "GetUnit", "ListUnitsByNames"]
+dbus_subscription = "manager-subscribe-once-per-connection-then-install-and-await-active-jobremoved-signal-stream-before-first-operation"
+dbus_job_semantics = "start-or-stop-only-after-active-stream-match-returned-job-object-path-including-already-buffered-event-require-result-done-then-check-unit-and-product-health"
+dbus_implementation_reuse = "zbus-systemd-manager-proxy-or-minimal-zbus-typed-proxy-no-handwritten-dbus-wire"
+target_relationships = "target-wants-and-after-ownershipd-nexusd-and-both-agents-all-four-services-partof-target-no-upholds-bindsto-or-automatic-dependency-recovery"
+agent_authority_dependencies = "each-agent-after-ownershipd-and-nexusd-type-notify-ready-no-requires-wants-bindsto-or-upholds"
+authority_start_completion = "type-notify-ready-completes-after-order-before-either-agent-starts-or-reports-ready"
+authority_failure_propagation = "agents-application-fence-on-authority-name-loss-ownershipd-restart-reconnect-query-nexusd-loss-terminal-burns-cohort-no-systemd-nexus-or-agent-recovery-job"
+ownershipd_service = "Type=notify-Restart=on-failure-KillMode=control-group-SendSIGKILL=yes-TimeoutStopSec=10s"
+nexusd_service = "Type=notify-Restart=no-KillMode=control-group-SendSIGKILL=yes-TimeoutStopSec=10s"
+agent_service = "Type=notify-Restart=on-failure-KillMode=control-group-SendSIGKILL=yes-TimeoutStopSec=10s"
+nexusd_ready = "after-peer-spawn-handshake-dbus-interface-export-well-known-name-acquire-and-initial-cohort-epoch-fence-validation"
+nexusd_peer_loss = "application-fence-first-then-nonzero-exit-no-peer-respawn"
+ownershipd_restart = "Restart=on-failure-RestartSec=1s-StartLimitIntervalSec=30s-StartLimitBurst=3"
+agent_restart = "Restart=on-failure-RestartSec=1s-StartLimitIntervalSec=30s-StartLimitBurst=3"
+socket_activation = false
+linger_enablement = "never-automatic-operator-owned"
+peer_child_management = "tokio-process-retained-child-wait-reap-graceful-term-bounded-kill-lifeline-fallback"
+readiness_library = "sd-notify-0.5.0"
+readiness_delivery = "explicit-var-os-notify-socket-present-and-nonempty-precheck-then-ready-notification-send-must-succeed-missing-empty-or-send-failure-is-not-ready"
+shutdown_authority = "systemd-cleanup-is-not-effect-or-ownership-authority"
+
+[same_boot_cohort]
+cohort_id = "operator-created-random-identity-namespaces-all-durable-state-and-runtime-paths"
+boot_id_source = "/proc/sys/kernel/random/boot_id"
+runtime_session_id = "random-128-bit-lowercase-hex-create-new-under-xdg-runtime-root-and-bind-into-persistent-launch-manifest"
+runtime_session_scope = "same-systemd-user-manager-and-xdg-runtime-directory-lifetime-within-one-boot"
+runtime_session_path = "${XDG_RUNTIME_DIR}/visa/0.1/runtime-session.json"
+runtime_session_creation = "secure-user-owned-mode-0600-no-symlink-create-new-write-fsync-file-and-parent-then-read-exact-existing"
+cohort_create_order = "read-or-create-runtime-session-then-create-or-match-persistent-launch-manifest-then-create-or-match-active-manifest-then-start-units"
+cohort_create_argv = "visa cohort-create --cohort-id <32-lowercase-hex>"
+cohort_create_boundary = "local-pre-agent-rpc-launch-configuration-and-systemd-activation-never-ownership-receipt-or-effect-authority"
+cohort_retire_argv = "visa cohort-retire --cohort-id <32-lowercase-hex>"
+cohort_abandon_argv = "visa cohort-retire --cohort-id <32-lowercase-hex> --acknowledge-stranded-state <reason>"
+launch_manifest_path = "${XDG_STATE_HOME:-$HOME/.local/state}/visa/0.1/cohorts/<cohort-id>/launch.json"
+active_launch_manifest_path = "${XDG_RUNTIME_DIR}/visa/0.1/active-cohort.json"
+cohort_runtime_directory = "${XDG_RUNTIME_DIR}/visa/0.1/cohorts/<cohort-id>"
+launch_manifest_contents = "canonical-product-version-cohort-id-boot-id-runtime-session-id-state-path-runtime-path"
+launch_manifest_authority = "non-authoritative-startup-configuration-never-an-ownership-or-effect-receipt"
+cohort_create_retry = "same-exact-manifest-boot-and-runtime-session-is-idempotent-and-may-converge-partial-start-any-difference-is-conflict"
+active_cohort_exclusion = "different-active-cohort-or-any-product-unit-active-activating-or-deactivating-is-conflict-same-exact-cohort-retry-only"
+role_store_initialization = "each-durable-role-create-new-or-open-exact-matching-store-before-ready-never-reset-or-adopt-mismatch"
+partial_start = "exact-manifest-retry-may-create-only-never-initialized-role-stores-and-restart-allowed-roles-existing-mismatches-fail-closed"
+nexus_registry_attempt_tombstone = "visa-nexusd-create-new-fsync-before-peer-spawn-or-registry-create"
+nexus_retry_boundary = "marker-absent-may-retry-start-marker-present-requires-same-live-healthy-nexusd-process-otherwise-cohort-burned-no-startunit-or-peer-respawn"
+clean_retire = "query-and-reconcile-require-no-frozen-unknown-or-inflight-handoff-and-sealed-required-evidence-then-dbus-stop-and-confirm-five-resident-processes-inactive"
+retirement_tombstone = "create-new-fsync-non-authoritative-record-then-remove-only-exact-active-manifest-never-delete-or-modify-role-stores-or-infer-receipt"
+abandon = "explicit-acknowledgement-records-unknown-or-stranded-reason-old-cohort-permanently-audit-only-new-cohort-requires-new-workload-and-state-identity"
+abandon_stop_order = "record-reason-then-dbus-stop-and-confirm-five-resident-processes-inactive-partial-stop-keeps-active-manifest-then-retirement-tombstone-and-remove-exact-active-manifest"
+retire_retry = "same-id-and-tombstone-is-idempotent-stop-ack-loss-queries-unit-state-partial-stop-never-removes-active-manifest"
+persisted_by = ["visa-ownershipd", "source-visa-agent", "destination-visa-agent", "visa-nexusd"]
+registry_binding = "nexus-effect-peer-registry-created-once-for-exact-cohort-and-boot-id"
+startup_match = "role-cohort-id-and-persisted-boot-id-must-match-before-mutation-or-recovery"
+boot_mismatch = "fail-closed-read-only-audit-no-mutation-no-recovery-no-new-registry-under-old-cohort"
+old_state = "retained-immutable-for-audit-never-combined-with-new-in-memory-registry"
+runtime_loss = "old-cohort-becomes-read-only-audit-state-new-cohort-id-required-no-runtime-manifest-reconstruction"
+cohort_resume = "unsupported-in-0.1"
+new_cohort = "explicit-cohort-create-requires-new-cohort-id-and-new-versioned-state-and-runtime-paths"
+reset = "never-in-place-never-delete-or-relabel-old-state"
+admission_coverage = "public-cli-and-process-topology-frozen-typed-verifiers-cover-create-exact-retry-conflict-each-partial-start-boundary-registry-attempt-stop-ack-loss-partial-stop-retire-abandon-runtime-loss-and-no-authority"
+
+[agent_incarnation]
+logical_identity = "stable-role-slot-cohort-and-boot-scoped-incarnation"
+persistence = "created-once-and-persisted-in-agent-projection-across-process-restart"
+grant_binding = "logical-agent-incarnation-role-slot-cohort-id-boot-id-and-exact-projection-digest"
+process_identity = "fresh-random-process-nonce-and-monotonic-generation-on-every-start"
+handshake_binding = "logical-incarnation-plus-current-process-nonce-and-generation"
+armed_recovery = "query-authoritative-provider-and-ownership-state-then-resume-only-the-recorded-not-yet-started-dispatch"
+started_recovery = "without-durable-terminal-outcome-is-unknown-query-and-reconcile-never-redispatch"
+state_loss = "fail-closed-never-mint-replacement-incarnation-for-existing-cohort-slot"
+
 [local_rpc_defaults]
-profile = "visa.local-uds-postcard.v1"
-transport = "fixed-header-length-prefixed-postcard-1.1.3-over-filesystem-unix-stream"
-encoding = "postcard-1.1.3-canonical"
-header_layout = "magic[8]+major-u16-be+minor-u16-be+flags-u32-be+payload-len-u32-be"
-header_bytes = 20
-flags_required = 0
-max_frame_bytes_including_header = 1048576
-max_payload_bytes = 1048556
-header_read_policy = "read-exactly-20-validate-magic-version-flags-and-length-before-payload-allocation"
+profile = "visa.local-user-bus-dbus-postcard.v1"
+transport = "systemd-user-session-bus-dbus-via-zbus-5.18.0"
+outer_encoding = "dbus-owned-by-daemon-and-zbus-not-release-byte-locked"
+inner_encoding = "postcard-1.1.3-canonical-in-ay"
+method_signature = "ay-to-ay"
+max_inner_request_bytes = 1048576
+max_inner_response_bytes = 1048576
+outer_dbus_byte_array_hard_max_bytes = 67108864
+outer_dbus_message_hard_max_bytes = 134217728
+limit_policy = "check-inner-cap-before-send-and-at-method-entry-before-decode"
 canonical_decode_policy = "reject-trailing-bytes-and-require-byte-identical-reencode"
+deterministic_type_policy = "ordered-structs-tuples-bounded-vec-btreemap-and-btreeset-only-no-hashmap-hashset-or-float"
+per_interface_golden_policy = "each-rpc-request-and-response-type-all-enum-variants-bounds-non-minimal-varint-trailing-bytes-and-decode-reencode-identity"
+schema_reflection_policy = "postcard-schema-0.2.5-owned-schema-export-full-artifact-bytes-sha256-authoritative"
+schema_key_policy = "postcard-schema-fnv-key-is-noncryptographic-and-never-security-version-or-schema-authority"
+serde_wire_attribute_policy = "simple-serde-rename-allowed-only-when-owned-schema-and-corpus-lock-it-rename-all-directional-rename-flatten-with-skip-default-and-custom-serialize-deserialize-shapes-forbidden-in-v1"
+semantic_outcomes = "canonical-inner-success-rejected-unknown-and-internal-dbus-error-only-for-transport-or-pre-admission"
 max_inflight_mutations_per_connection = 1
-large_artifact_policy = "digest-plus-secure-path-never-inline-no-fd-passing"
-frame_limit_basis = "measured-existing-jsonl-max-53663-native-and-profile-chunks-65536-product-jsonl-cap-1048576"
-measured_existing_jsonl_max_bytes = 53663
+max_queued_messages_per_connection = 16
+mutation_sequencing = "single-visa-sequencer-per-service-correctness-by-request-id-and-durable-state-never-dbus-arrival-order"
+large_artifact_policy = "digest-plus-secure-path-never-inline-no-unix-fd"
 durable_native_request_bound_bytes = 65536
 profile_response_chunk_bound_bytes = 65536
-existing_product_jsonl_bound_bytes = 1048576
-headroom_policy = "one-mib-control-envelope-with-large-artifacts-out-of-band"
 implementation_primitives = [
-  "std-unixlistener-unixstream",
-  "rustix-1.1.4-fs-net-process",
+  "zbus-5.18.0-user-bus-proxy-and-interface",
+  "org.freedesktop.DBus-get-connection-credentials-and-name-owner-changed",
+  "rustix-1.1.4-process-pidfd-and-secure-proc-exe-identity",
   "joint-handoff-core-canonical-postcard-and-sha",
 ]
-forbidden_protocol_dependencies = ["varlink", "zlink", "tarpc", "tonic"]
+service_name_policy = "request-name-do-not-queue-no-replace-no-activation-files"
+sender_identity = "bus-controlled-unique-name-get-connection-credentials-unix-user-id-and-process-id"
+process_handle_admission = "prefer-credentials-processfd-else-query-unique-name-uid-pid-pidfd-open-requery-same-unique-name-same-uid-pid-any-change-fail-closed"
+well_known_owner_recheck = "client-requires-same-unique-name-remains-current-well-known-owner-after-process-handle-admission"
+peer_executable_identity = "pidfd-and-secure-proc-exe-file-identity-plus-sha256-must-match-exact-artifact-inventory"
+client_service_identity = "resolve-current-well-known-name-owner-and-verify-owner-uid-pid-exe-before-call"
+credential_cache = "keyed-by-bus-guid-unique-name-pid-and-exe-identity-invalidated-on-name-owner-changed-or-bus-restart"
+user_bus_tcb = "session-bus-daemon-zbus-systemd-user-manager-and-same-uid-processes-in-local-tcb"
+bus_loss = "application-fence-first-same-process-reconnect-and-name-reacquire-rpc-outcome-unknown-query-or-exact-replay"
+readiness_order = "initialize-and-validate-store-cohort-and-fences-register-interface-acquire-name-then-sd-notify-ready"
+golden_boundary = "well-known-name-interface-object-path-method-signature-and-inner-postcard-bytes-outer-dbus-bytes-not-locked"
+forbidden_protocol_dependencies = ["handwritten-dbus-wire", "varlink", "zlink", "tarpc", "tonic"]
 compression = false
-multiplexing = false
-fd_passing = false
+unix_fd_passing = false
 in_band_upgrade = false
-runtime_directory = "${XDG_RUNTIME_DIR}/visa/0.1"
-runtime_directory_mode = "0700"
-socket_mode = "0600"
-peer_identity = "linux-so-peercred-same-uid"
-security_boundary = "local-tcb-admission-and-integrity-not-malicious-same-uid-authentication-or-tenant-isolation"
-socket_path_policy = "short-role-name-and-platform-sun-path-preflight"
-symlink_policy = "reject-runtime-dir-and-socket-symlinks"
+security_boundary = "local-tcb-admission-and-integrity-not-hostile-same-uid-ptrace-pid-namespace-or-allocation-dos-protection"
 network_transport = false
 
 [cli_agent_rpc_v1]
 schema = "visa.agent.control.v1"
 protocol_major = 1
 protocol_minor = 0
-magic = "VISACTL1"
-framing_profile = "visa.local-uds-postcard.v1"
+framing_profile = "visa.local-user-bus-dbus-postcard.v1"
+well_known_names = ["io.github.chenty2333.vISA.Agent.Source1", "io.github.chenty2333.vISA.Agent.Destination1"]
+object_paths = ["/io/github/chenty2333/vISA/Agent/Source", "/io/github/chenty2333/vISA/Agent/Destination"]
+interface = "io.github.chenty2333.vISA.AgentControl1"
+method = "Execute"
+request_signature = "ay"
+response_signature = "ay"
 request_enum_namespace = "visa.agent.control.request.v1"
 response_enum_namespace = "visa.agent.control.response.v1"
 error_namespace = "visa.agent.control.error.v1"
 replay_namespace = "visa.agent.control.replay.v1"
 golden_corpus_id = "visa.agent.control.golden.v1"
+owned_schema_artifact_id = "visa.agent.control.owned-schema.v1"
 client = "visa-controller"
 servers = ["source-visa-agent", "destination-visa-agent"]
 required_operations = ["status", "run", "handoff", "reconcile", "verify-evidence"]
-handshake = "exact-product-protocol-role-and-executable-sha256-before-mutation"
+handshake = "credential-bound-bus-guid-unique-name-uid-pid-pidfd-proc-exe-sha256-product-role-logical-incarnation-process-nonce-generation-cohort-and-boot-before-mutation"
 request_replay = "same-id-same-canonical-bytes-same-response-conflicting-bytes-rejected"
 timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort"
 
@@ -122,18 +254,24 @@ timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort"
 schema = "visa.ownership.local.v1"
 protocol_major = 1
 protocol_minor = 0
-magic = "VISAOWN1"
-framing_profile = "visa.local-uds-postcard.v1"
+framing_profile = "visa.local-user-bus-dbus-postcard.v1"
+well_known_name = "io.github.chenty2333.vISA.Ownership1"
+object_path = "/io/github/chenty2333/vISA/Ownership"
+interface = "io.github.chenty2333.vISA.Ownership1"
+method = "Execute"
+request_signature = "ay"
+response_signature = "ay"
 request_enum_namespace = "visa.ownership.local.request.v1"
 response_enum_namespace = "visa.ownership.local.response.v1"
 error_namespace = "visa.ownership.local.error.v1"
 replay_namespace = "visa.ownership.local.replay.v1"
 golden_corpus_id = "visa.ownership.local.golden.v1"
+owned_schema_artifact_id = "visa.ownership.local.owned-schema.v1"
 clients = ["source-visa-agent", "destination-visa-agent"]
 server = "visa-ownershipd"
 client_authority = "submit-idempotent-proposals-and-query-only-no-receipt-issuance-or-local-decision"
 required_operations = ["initialize-unit", "reserve", "seal", "abort", "commit", "query"]
-handshake = "exact-product-protocol-role-service-incarnation-and-executable-sha256-before-mutation"
+handshake = "credential-bound-bus-guid-unique-name-uid-pid-pidfd-proc-exe-sha256-product-role-logical-incarnation-process-nonce-generation-cohort-boot-and-service-incarnation-before-mutation"
 request_replay = "same-id-same-canonical-bytes-same-receipt-conflicting-bytes-rejected"
 timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort"
 
@@ -141,13 +279,19 @@ timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort"
 schema = "visa.nexus-adapter.local.v1"
 protocol_major = 1
 protocol_minor = 0
-magic = "VISANEX1"
-framing_profile = "visa.local-uds-postcard.v1"
+framing_profile = "visa.local-user-bus-dbus-postcard.v1"
+well_known_name = "io.github.chenty2333.vISA.NexusAdapter1"
+object_path = "/io/github/chenty2333/vISA/NexusAdapter"
+interface = "io.github.chenty2333.vISA.NexusAdapter1"
+method = "Execute"
+request_signature = "ay"
+response_signature = "ay"
 request_enum_namespace = "visa.nexus-adapter.local.request.v1"
 response_enum_namespace = "visa.nexus-adapter.local.response.v1"
 error_namespace = "visa.nexus-adapter.local.error.v1"
 replay_namespace = "visa.nexus-adapter.local.replay.v1"
 golden_corpus_id = "visa.nexus-adapter.local.golden.v1"
+owned_schema_artifact_id = "visa.nexus-adapter.local.owned-schema.v1"
 clients = ["source-visa-agent", "destination-visa-agent"]
 server = "visa-nexusd"
 required_operations = [
@@ -162,7 +306,7 @@ required_operations = [
   "close-step",
   "query",
 ]
-handshake = "exact-product-protocol-role-native-wire-family-service-incarnation-and-executable-sha256-before-mutation"
+handshake = "credential-bound-bus-guid-unique-name-uid-pid-pidfd-proc-exe-sha256-product-role-native-wire-family-logical-incarnation-process-nonce-generation-cohort-boot-and-service-incarnation-before-mutation"
 request_replay = "same-id-same-canonical-bytes-byte-identical-response-or-grant-conflicting-bytes-rejected"
 timeout_disposition = "unknown-query-or-exact-replay-never-inferred-abort-or-dispatch"
 agent_crash_after_grant = "durable-armed-or-started-state-then-unknown-query-reconcile-never-grant-triggered-redispatch"
@@ -180,6 +324,7 @@ database_mode = "0600"
 controller_store_access = "none"
 agent_store_access = "none-rpc-only"
 nexus_store_access = "none"
+boot_cohort_binding = "persist-exact-cohort-and-boot-id-refuse-mismatch-before-write"
 
 [portable_contract]
 schema_major = 1
@@ -221,14 +366,42 @@ release_disposition = "required"
 
 [release_dependency_constraints]
 classification = "selected-target-constraints-not-complete-build-provenance"
-postcard_wire_codec = "1.1.3"
-rustix_local_ipc = "1.1.4-fs-net-process"
-wasmtime_release_choice = "43.0.2"
-rusqlite_release_choice = "0.40.1-bundled"
+direct_dependency_policy = "every-third-party-direct-dependency-of-each-release-product-root-uses-an-exact-equals-version-requirement"
+postcard_wire_codec = "=1.1.3"
+postcard_schema_reflection = "=0.2.5"
+zbus_user_bus = "=5.18.0"
+sd_notify_readiness = "=0.5.0"
+rustix_secure_host = "=1.1.4-fs-process"
+wasmtime_release_choice = "=43.0.2"
+rusqlite_release_choice = "=0.40.1-bundled"
+resolved_graph_policy = "cargo-metadata-locked-per-product-root-target-profile-and-feature-set-reachable-graph-only"
 complete_workspace_package_version_source_license_inventory = "external-evidence-index-only-at-exact-tag"
 cargo_lock_digest = "external-evidence-index-only-at-exact-tag"
 rust_toolchain_digest = "external-evidence-index-only-at-exact-tag"
 rust_trait_abi = "not-promised"
+
+[supply_chain_tool_selection]
+policy = "maintained-exact-version-producers-feed-vISA-owned-typed-evidence-and-never-decide-release-admission"
+docker_buildx = "=0.35.0"
+docker_buildx_role = "exact-oci-directory-export-and-raw-build-result-metadata-producer"
+moby_buildkit = "=0.31.2"
+moby_buildkit_role = "docker-container-builder-backend-for-the-pinned-buildx-producer"
+cargo_deny = "=0.20.2"
+cargo_deny_role = "license-source-ban-and-rustsec-policy-report-with-exact-advisory-db-revision-digest-and-observation-time"
+cargo_auditable = "=0.7.5"
+cargo_auditable_role = "embed-dep-v0-in-every-final-rust-binary-and-export-a-binary-bound-inventory"
+cargo_about = "=0.9.1"
+cargo_about_role = "generate-raw-license-inventory-and-third-party-notice-from-archived-config-template-lock-and-clarifications"
+cargo_cyclonedx = "=0.5.9"
+cargo_cyclonedx_role = "generate-exact-target-and-feature-resolved-cyclonedx-sbom-set"
+syft = "=1.48.0"
+syft_role = "observe-final-binaries-oci-layout-and-release-tree-into-native-json"
+inventory_reconciliation = "expected-cargo-graph-versus-dep-v0-and-syft-name-version-sets-must-match-or-have-a-typed-reviewed-explanation"
+cargo_vet = "=0.10.2"
+cargo_vet_disposition = "phased-nonblocking-framework-exemptions-must-remain-counted-owned-reasoned-and-expiring"
+cargo_dist = "=0.32.0"
+cargo_dist_disposition = "optional-packager-and-manifest-producer-only-never-release-admission-or-tool-installer"
+excluded = ["askalono-archived-unmaintained", "cargo-native-sbom-nightly-unstable", "cargo-sbom-overlaps-selected-cyclonedx-path-unless-external-spdx-2.3-demand"]
 
 [[wit_lock]]
 id = "cooperative-handoff"
@@ -303,16 +476,66 @@ canonical_encoding = "postcard-1.1.3"
 bytes_hex = "0100010001000000000000000000000000000000000700000000000000000000000000000008090000000000000000000000000000000a020a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0000000000000000000000000000000c0000000000000000000000000000000d010e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0202aa550000000000000000000000000000001001000100000000000000000000000000000011010000000000000000000000000000001204000105000000000000000000000000000000130107010000000000000000000000000000001400000064f953e59559e19d0bd4822984b470d2ad2d6dad6e120f1eefb26f4939b35a7e"
 sha256 = "001ef85c3a98b842f2e817e263985fa533847e254e65d62403919ea5ac235d2f"
 
+[[required_owned_schema_artifact]]
+id = "visa.agent.control.owned-schema.v1"
+rpc_contract = "cli_agent_rpc_v1"
+path = "schemas/local-rpc/visa-agent-control-v1.owned-schema.json"
+schema_format = "postcard-schema-owned-json.v1"
+schema_envelope = "visa.postcard-owned-schema-artifact.v1"
+canonical_json = "rfc8785-jcs-utf8-no-duplicate-keys-no-trailing-bytes"
+postcard_schema_version = "0.2.5"
+digest_algorithm = "sha-256"
+digest_scope = "entire-artifact-exact-bytes-not-postcard-schema-fnv-key"
+corpus_id = "visa.agent.control.golden.v1"
+readiness_id = "cli-agent-rpc-v1"
+variant_coverage = "request-response-error-all-variants-fields-bounds-and-discriminants"
+serde_attribute_policy = "simple-rename-only-when-artifact-and-corpus-lock-it-rename-all-directional-rename-flatten-with-skip-default-and-custom-shapes-forbidden"
+
+[[required_owned_schema_artifact]]
+id = "visa.ownership.local.owned-schema.v1"
+rpc_contract = "agent_ownership_rpc_v1"
+path = "schemas/local-rpc/visa-ownership-local-v1.owned-schema.json"
+schema_format = "postcard-schema-owned-json.v1"
+schema_envelope = "visa.postcard-owned-schema-artifact.v1"
+canonical_json = "rfc8785-jcs-utf8-no-duplicate-keys-no-trailing-bytes"
+postcard_schema_version = "0.2.5"
+digest_algorithm = "sha-256"
+digest_scope = "entire-artifact-exact-bytes-not-postcard-schema-fnv-key"
+corpus_id = "visa.ownership.local.golden.v1"
+readiness_id = "agent-ownership-rpc-v1"
+variant_coverage = "request-response-error-all-variants-fields-bounds-and-discriminants"
+serde_attribute_policy = "simple-rename-only-when-artifact-and-corpus-lock-it-rename-all-directional-rename-flatten-with-skip-default-and-custom-shapes-forbidden"
+
+[[required_owned_schema_artifact]]
+id = "visa.nexus-adapter.local.owned-schema.v1"
+rpc_contract = "agent_nexus_rpc_v1"
+path = "schemas/local-rpc/visa-nexus-adapter-local-v1.owned-schema.json"
+schema_format = "postcard-schema-owned-json.v1"
+schema_envelope = "visa.postcard-owned-schema-artifact.v1"
+canonical_json = "rfc8785-jcs-utf8-no-duplicate-keys-no-trailing-bytes"
+postcard_schema_version = "0.2.5"
+digest_algorithm = "sha-256"
+digest_scope = "entire-artifact-exact-bytes-not-postcard-schema-fnv-key"
+corpus_id = "visa.nexus-adapter.local.golden.v1"
+readiness_id = "agent-nexus-rpc-v1"
+variant_coverage = "request-response-error-all-variants-fields-bounds-and-discriminants"
+serde_attribute_policy = "simple-rename-only-when-artifact-and-corpus-lock-it-rename-all-directional-rename-flatten-with-skip-default-and-custom-shapes-forbidden"
+
 [release_semantic_corpus]
 seed_baseline = "representative-seeds-only-not-release-closure"
 inventory_schema = "visa.release-semantic-type-inventory.v1"
 corpus_schema = "visa.release-semantic-golden-corpus.v1"
 required_crates = ["contract_core", "joint_handoff_core", "visa_profile"]
+required_local_rpc_corpora = ["visa.agent.control.golden.v1", "visa.ownership.local.golden.v1", "visa.nexus-adapter.local.golden.v1"]
+required_owned_schema_artifact_ids = ["visa.agent.control.owned-schema.v1", "visa.ownership.local.owned-schema.v1", "visa.nexus-adapter.local.owned-schema.v1"]
 coverage_rule = "every-durable-or-public-serialized-type-and-every-enum-variant"
 required_checks = [
   "exact-canonical-encode",
   "decode-round-trip",
+  "decode-reencode-byte-identity",
+  "non-minimal-varint-rejection",
   "unknown-and-trailing-byte-rejection",
+  "ordered-map-set-and-no-float-domain",
   "optional-empty-nonempty-and-bounded-extrema",
   "rust-constructed-corpus-not-source-literal-presence",
 ]
@@ -367,24 +590,57 @@ freeze_contract_id = "nexus-effect-peer-native-v1"
 license = "MPL-2.0"
 portal_v2_eligible = false
 freeze_origin_revision = "cb773539401107efe7a7ad036b80ff40d8ec305c"
-identity_requirement = "artifact-id-source-revision-and-sha256-in-exact-tag-external-evidence"
+release_component_revision = "1e49cca428cff39961fd79cadd833ffe0f7365f5"
+release_component_entry_paths = ["crates/nexus-effect-peer", "crates/nexus-effect-peer-wire"]
+release_component_relation_to_freeze = "exact-descendant-preserving-byte-identical-native-v1-freeze"
+release_component_compatibility_requirement = "verify-git-ancestry-freeze-json-canonical-corpus-exported-wire-v1-equivalence-and-complete-nexus-build-source-graph"
+source_graph_requirement = "closed-root-package-target-features-build-argv-build-record-workspace-manifest-lock-reachable-packages-path-dependencies-build-scripts-include-inputs-and-source-file-path-sha256-graph"
+producer_source_bundle_requirement = "git-bundle-includes-attestation-producer-revision-exact-tag-component-revision-freeze-origin-workflow-source-and-pinned-actions-attest-sha"
+attested_subject_name = "nexus-effect-peer"
+build_provenance_predicate_type = "https://slsa.dev/provenance/v1"
+build_provenance_build_type = "https://actions.github.io/buildtypes/workflow/v1"
+build_provenance_workflow_path = ".github/workflows/release-effect-peer-wire.yml"
+build_provenance_event_name = "push"
+build_provenance_runner_environment = "github-hosted"
+actions_attest_revision = "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"
+producer_workflow_job_isolation = "build-and-qualification-job-exact-permissions-contents-read-all-artifact-influencing-jobs-github-hosted-attest-only-job-exact-permissions-contents-read-id-token-write-attestations-write-and-no-component-code-execution"
+producer_workflow_action_policy = "every-third-party-action-pinned-by-full-commit-sha"
+build_provenance_requirement = "authenticated-exact-binary-subject-standard-actions-workflow-v1-exact-tag-producer-source-and-certificate-cross-check"
+release_link_predicate_type = "https://in-toto.io/attestation/link/v0.3"
+release_link_name = "nexus-effect-peer-native-v1-release-build-and-qualification"
+release_link_material_names = ["nexus-component-source-revision", "nexus-component-source-bundle", "nexus-component-source-graph", "nexus-native-v1-exported-corpus"]
+release_link_build_record_byproduct = "buildRecordId"
+release_link_environment = "empty-object"
+release_link_step_semantics = "source-bundle-source-graph-and-exported-corpus-are-prebuilt-validated-materials-consumed-by-the-attested-release-build-and-qualification-step"
+release_link_requirement = "authenticated-same-binary-subject-same-run-invocation-exact-build-command-build-record-and-component-source-bundle-source-graph-corpus-materials"
+producer_workflow_tcb = "exact-tag-push-without-caller-inputs-isolated-unprivileged-build-and-qualification-jobs-minimal-attest-only-job-nexus-workflow-source-full-action-sha-pins-github-hosted-runners-sigstore-and-verifiers-no-slsa-level-claimed"
+typed_verifier_requirement = "verify-producer-tag-workflow-job-permissions-hosted-runners-artifact-handoff-no-component-execution-in-attest-job-and-action-pins-source-bundle-component-and-freeze-ancestry-byte-identical-freeze-closed-source-graph-exported-corpus-artifact-inventory-build-record-binary-subject-standard-build-provenance-release-link-and-certificate-run-cross-pins"
+required_negative_cases = ["standard-build-provenance-with-wrong-build-type-builder-workflow-or-certificate-cross-pin", "authenticated-release-link-without-pinned-component-material", "pinned-component-link-with-substituted-source-graph-build-record-or-corpus", "same-signer-release-link-from-different-run-invocation", "producer-workflow-job-permission-runner-execution-boundary-or-action-pin-drift"]
+identity_requirement = "inventory-component-pin-plus-standard-producer-provenance-plus-authenticated-same-run-release-link-material-cross-pin-plus-closed-source-graph-and-corpus-evidence"
 
 [required_nexus_mapping_v2]
 schema = "visa-nexus-handoff.nexus-effect-peer-native-v1-refinement.v2"
 contract_id = "current-nexus-effect-peer-native-v1-to-neutral-wire-v1"
 repository = "https://github.com/chenty2333/visa-nexus-handoff"
 source_path = "specs/joint-handoff/nexus-effect-peer-native-v1-refinement-v2.toml"
+source_revision = "8983e5396ede187ef8c2e58ce09cce0ba77e2e25"
+source_sha256 = "18e66054d7a76004d7df19e7137a7c8e36749abd3cdcef0e93b21f4596f788d9"
 freeze_source_lock_path = "specs/joint-handoff/nexus-effect-peer-native-v1-freeze.json"
 neutral_wire_schema = "visa-nexus-handoff.wire-contract.v1"
 nexus_freeze_contract_id = "nexus-effect-peer-native-v1"
 nexus_canonical_snapshot_sha256 = "036bfa21c9c1359755d9cf9a8223e39b7ea1d4793bf4fa948efbf75c9fa52b08"
 qualification_requirement = "exact-tag-source-revision-sha256-local-lock-and-verifier-receipt"
+release_component_compatibility_requirement = "prove-release-component-revision-descends-from-freeze-origin-revision-and-preserves-freeze-json-canonical-corpus-and-exported-native-v1-contract-without-claiming-mapping-adapter-qualification"
 
 [provider_spi]
 provenance = "in-tree-preview-not-public-0.1-abi"
 trait = "substrate_api::EffectClosureProvider"
 protocol_major = 2
-protocol_minor = 0
+historical_protocol_minor = 0
+protocol_minor = 1
+historical_fault_matrix_schema = "visa.effect-closure-provider-fault-matrix.v1"
+required_fault_matrix_schema = "visa.effect-closure-provider-fault-matrix.v2"
+required_admission_profile = "admission-required"
 stability = "rust-source-preview"
 provider_identity_in_trait = false
 release_adapter_identity = "exact-visa-nexusd-revision-and-executable-plus-exact-nexus-revision-and-observed-child-executable"
@@ -405,10 +661,10 @@ native_commit_validation = "visa-nexusd-validates-exact-native-v1-commit-receipt
 central_grant_rule = "visa-nexusd-atomically-consumes-one-exact-native-commit-into-one-exact-dispatch-grant"
 central_grant_replay = "same-request-id-and-bytes-return-byte-identical-grant-never-a-different-grant"
 serializable_grant_boundary = "commit-evidence-for-agent-validation-not-a-same-process-dispatch-permit"
-grant_binding = "effect-operation-id-idempotency-key-agent-role-agent-incarnation-native-receipt-and-request-digests"
+grant_binding = "effect-operation-id-idempotency-key-agent-role-slot-logical-incarnation-cohort-boot-projection-native-receipt-and-request-digests"
 agent_local_validation = "exact-grant-and-durable-local-projection-must-match-before-mint"
 agent_local_authorization = "private-non-clone-ProfileDispatchAuthorization-minted-and-consumed-in-one-agent-process"
-agent_local_recovery = "persist-grant-and-armed-or-started-before-sink-after-crash-unknown-query-reconcile-never-grant-triggered-redispatch"
+agent_local_recovery = "persist-grant-and-armed-or-started-before-sink-armed-authoritative-query-may-resume-started-without-outcome-is-unknown-never-grant-triggered-redispatch"
 regular_file_sink_process = "corresponding-visa-agent"
 logical_request_sink_process = "corresponding-visa-agent"
 controller_sink_access = "none"
@@ -421,7 +677,10 @@ grant_security_claim = "same-uid-local-tcb-replay-and-bypass-control-not-cryptog
 id = "visa-cli"
 binary = "visa"
 frozen_boundary = "binary-name-and-role"
-required_responsibilities = ["status", "run", "handoff", "reconcile", "verify-evidence"]
+required_responsibilities = ["cohort-create", "cohort-retire", "status", "run", "handoff", "reconcile", "verify-evidence"]
+bootstrap_boundary = "cohort-create-is-local-pre-agent-rpc-non-authoritative-launch-config-plus-user-dbus-activation"
+bootstrap_conflict_policy = "exact-manifest-retry-only-existing-id-boot-session-path-or-role-store-mismatch-fails-conflict"
+operation_admission = "mutating-responsibilities-require-exclusive-controller-operation-lease-readonly-responsibilities-never-mutate-or-count-as-controller-role"
 typed_outcome_requirement = "versioned-total-success-rejected-unknown-operator-and-internal-classes"
 exit_code_requirement = "documented-stable-nonoverlapping-mapping-for-every-typed-outcome"
 
@@ -434,7 +693,7 @@ required_responsibilities = [
   "in-process-wasmtime-runtime",
   "in-process-local-provider-and-profile-sink",
   "durable-local-projection",
-  "same-uid-filesystem-uds-service",
+  "credential-bound-user-bus-dbus-service",
 ]
 typed_outcome_requirement = "rpc-schema-total-success-rejected-unknown-and-internal-classes"
 exit_code_requirement = "documented-stable-clean-config-integrity-temporary-and-internal-classes"
@@ -447,7 +706,7 @@ required_responsibilities = [
   "exclusive-ownership-store",
   "reserve-seal-abort-commit-query",
   "restart-and-exact-request-replay",
-  "same-uid-filesystem-uds-service",
+  "credential-bound-user-bus-dbus-service",
 ]
 typed_outcome_requirement = "rpc-schema-total-success-rejected-unknown-and-internal-classes"
 exit_code_requirement = "documented-stable-clean-config-integrity-temporary-and-internal-classes"
@@ -460,10 +719,83 @@ required_responsibilities = [
   "exclusive-nexus-effect-peer-child-supervision",
   "native-v1-validation-and-neutral-v2-mapping",
   "single-exact-dispatch-grant-ledger",
-  "same-uid-filesystem-uds-service",
+  "credential-bound-user-bus-dbus-service",
 ]
 typed_outcome_requirement = "rpc-schema-total-success-rejected-unknown-and-internal-classes"
 exit_code_requirement = "documented-stable-clean-config-integrity-temporary-and-internal-classes"
+
+[[release_artifact]]
+id = "visa-cli-binary"
+kind = "executable"
+archive_path = "artifacts/bin/visa"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = ["cli-agent-client"]
+
+[[release_artifact]]
+id = "visa-agent-binary"
+kind = "executable"
+archive_path = "artifacts/bin/visa-agent"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = ["cli-agent-server", "ownership-client", "nexus-adapter-client"]
+
+[[release_artifact]]
+id = "visa-ownershipd-binary"
+kind = "executable"
+archive_path = "artifacts/bin/visa-ownershipd"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = ["ownership-server"]
+
+[[release_artifact]]
+id = "visa-nexusd-binary"
+kind = "executable"
+archive_path = "artifacts/bin/visa-nexusd"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = ["nexus-adapter-server", "native-peer-supervisor"]
+
+[[release_artifact]]
+id = "nexus-effect-peer-binary"
+kind = "executable"
+archive_path = "artifacts/bin/nexus-effect-peer"
+source_repository = "chenty2333/Nexus"
+component_source_revision = "1e49cca428cff39961fd79cadd833ffe0f7365f5"
+signer_workflow = "chenty2333/Nexus/.github/workflows/release-effect-peer-wire.yml"
+handshake_roles = ["native-peer"]
+
+[[release_artifact]]
+id = "visa-local-target-unit"
+kind = "systemd-user-unit"
+archive_path = "artifacts/systemd/user/visa-local.target"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = []
+
+[[release_artifact]]
+id = "visa-agent-template-unit"
+kind = "systemd-user-unit"
+archive_path = "artifacts/systemd/user/visa-agent@.service"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = []
+
+[[release_artifact]]
+id = "visa-ownershipd-unit"
+kind = "systemd-user-unit"
+archive_path = "artifacts/systemd/user/visa-ownershipd.service"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = []
+
+[[release_artifact]]
+id = "visa-nexusd-unit"
+kind = "systemd-user-unit"
+archive_path = "artifacts/systemd/user/visa-nexusd.service"
+source_repository = "chenty2333/vISA"
+signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+handshake_roles = []
 
 [support_policy]
 required_release_cells = [
@@ -489,13 +821,22 @@ reject_at_admission = [
   "serialized-dispatch-proof-used-directly-as-local-sink-permit",
   "respawned-nexus-peer-presented-as-the-original-registry",
   "stdio-agent-worker-or-controller-owned-agent-topology",
+  "self-daemonizing-socket-activated-or-non-systemd-user-release-topology",
+  "persisted-boot-id-cohort-or-logical-agent-incarnation-mismatch",
+  "runtime-session-id-or-active-launch-manifest-mismatch",
+  "unsupported-runtime-baseline-or-missing-systemd-feature-probe",
+  "missing-or-relabelled-old-cohort-state",
   "non-linux-non-x86_64-cross-host-or-cross-boot-request",
   "raw-live-tcp-continuity",
-  "effect-closure-provider-v2-preview-without-the-versioned-nexus-adapter",
+  "effect-closure-provider-protocol-not-exactly-2.1-or-profile-not-admission-required",
+  "effect-closure-provider-2.1-without-fault-matrix-v2-evidence",
+  "effect-closure-provider-2.1-without-versioned-nexus-adapter",
 ]
 non_claims = [
   "cross-host-ownership-or-transport",
   "host-reboot-or-permanent-source-loss-recovery",
+  "logout-user-manager-teardown-or-xdg-runtime-loss-cohort-resume",
+  "untested-linux-distribution-kernel-libc-or-systemd-backport",
   "mtls-cryptographic-receipt-authenticity-freshness-or-anti-rollback",
   "byzantine-ownership-provider-or-host-safety",
   "real-nexus-ostd-irq-smp-or-retained-device-recovery",
@@ -557,12 +898,15 @@ forbidden_fallback = "respawn-replay-as-original-registry-or-infer-effect-closur
 
 [admission]
 schema_check = "python3 scripts/check-release-contract.py"
-release_ready_check = "python3 scripts/check-release-contract.py --release-ready --evidence-index PATH"
+rc_admission_check = "python3 scripts/check-release-contract.py --release-ready --release-stage rc-admitted --archive-root PATH --attestation-verifier-sha256 GH_SHA256 --trusted-root-sha256 TRUSTED_ROOT_SHA256 --expected-source-tag RC_TAG"
+release_ready_check = "python3 scripts/check-release-contract.py --release-ready --release-stage final-release-verified --archive-root PATH --attestation-verifier-sha256 GH_SHA256 --trusted-root-sha256 TRUSTED_ROOT_SHA256 --expected-source-tag RC_TAG"
 fail_closed_dimensions = [
   "product-version",
   "contract-joint-profile-and-resource-versions",
   "release-build-provenance",
   "six-process-role-and-authority-topology",
+  "systemd-user-supervision-units-readiness-and-product-process-count",
+  "same-boot-cohort-and-logical-agent-incarnation",
   "three-independent-local-rpc-schemas-and-golden-corpora",
   "ownership-single-writer-store-issuer-and-replay",
   "provider-dispatch-grant-and-agent-local-sink-authorization",
@@ -574,34 +918,110 @@ fail_closed_dimensions = [
   "nexus-provider-identity",
   "neutral-to-current-nexus-mapping-v2",
   "release-readiness-closure",
+  "closed-typed-verifiers-evidence-self-contained-archive-and-trusted-attestations",
+  "rc-admission-and-post-final-tag-verification",
 ]
 
 [evidence_policy]
-closure_location = "external-immutable-bundle-not-release-source-tree"
+closure_location = "external-evidence-self-contained-immutable-archive-not-release-source-tree"
 development_ledger_schema = "visa.development-readiness-ledger.v1"
 development_ledger_path = "specs/release/visa-0.1-readiness.toml"
-development_receipt_schema = "visa.development-readiness-verifier-receipt.v1"
+development_receipt_schema = "visa.development-readiness-verifier-receipt.v3"
+development_receipt_input_policy = "selected-reproduction-inputs-not-complete-verifier-read-closure-current-checkout-revalidation-required"
 development_path_policy = "repository-relative-regular-file-no-symlink"
 target_path = "specs/release/visa-0.1.toml"
-index_schema = "visa.release-readiness-index.v1"
-receipt_schema = "visa.release-readiness-verifier-receipt.v1"
-build_inventory_schema = "visa.release-build-inventory.v1"
-build_inventory_generation = "cargo-metadata-format-version-1-locked-complete-resolve-plus-license-and-source-normalization"
-build_inventory_verification = "checker-validates-schema-counts-and-bindings-supply-chain-receipt-attests-completeness-against-tagged-workspace-and-cargo-lock"
+index_schema = "visa.release-readiness-index.v2"
+receipt_schema = "visa.release-readiness-verifier-receipt.v2"
+verifier_registry_schema = "visa.release-verifier-registry.v2"
+verifier_dispatcher_path = "scripts/verify-release-readiness.py"
+verifier_policy = "closed-required-id-to-typed-verifier-id-dispatch-no-receipt-command-or-cli-bypass"
+verifier_runtime_input_policy = "per-id-closed-path-sha256-kind-version-inventory-bound-by-receipt-and-archive-manifest"
+verifier_input_snapshot_schema = "visa.release-verifier-input-snapshot.v1"
+verifier_input_snapshot_policy = "outer-checker-generated-explicit-tagged-source-and-archive-namespaces-exact-receipt-path-sha256-closure-private-per-id-copy-and-post-run-rehash"
+archive_file_bytes_limit = 536870912
+archive_aggregate_bytes_limit = 4294967296
+verifier_receipt_bytes_limit = 1048576
+supply_chain_required_input_ids = ["rust-toolchain-archive", "rust-toolchain-inventory", "cargo-vendor-config", "cargo-vendor-inventory", "cargo-vendor-archive", "verifier-host-runtime-inventory", "build-producer-inventory", "buildx-metadata", "oci-layout-inventory", "supply-chain-tool-inventory", "cargo-deny-config", "rustsec-advisory-db", "cargo-deny-report", "cargo-auditable-inventory", "cargo-about-config", "cargo-about-template", "cargo-about-raw", "third-party-notice", "cargo-cyclonedx-sbom-set", "syft-json-set", "dependency-inventory-reconciliation"]
+nexus_wire_required_input_ids = ["nexus-component-source-bundle", "nexus-component-source-graph", "nexus-native-v1-exported-corpus", "release-artifact-inventory", "nexus-effect-peer-binary", "nexus-effect-peer-build-provenance-bundle", "nexus-effect-peer-release-link-bundle"]
+build_producer_inventory_schema = "visa.release-build-producer-inventory.v1"
+build_producer_inventory_path = "build/build-producer-inventory.json"
+build_producer_inventory_policy = "closed-unique-record-id-set-exactly-equals-derived-build-image-plus-every-release-artifact-build-record-id-no-orphan-or-duplicate-and-binds-role-producer-exact-version-binary-sha256-or-action-sha-argv-input-ids-output-ids-and-builder-image-record"
+buildx_metadata_path = "build/buildx-metadata.json"
+buildx_metadata_policy = "preserve-raw-version-bound-docker-buildx-metadata-json-but-use-only-containerimage-descriptor-media-type-digest-size-and-equal-containerimage-digest-as-image-identity"
+oci_layout_inventory_schema = "visa.release-oci-layout-file-set.v1"
+oci_layout_inventory_path = "build/derived-image-oci-inventory.json"
+oci_layout_output_root = "build/derived-image.oci"
+oci_layout_file_count_limit = 4096
+oci_descriptor_depth_limit = 32
+oci_descriptor_count_limit = 8192
+oci_blob_bytes_limit = 536870912
+oci_reachable_bytes_limit = 4294967296
+oci_layout_regular_file_profile = "visa-canonical-profile-allows-only-oci-layout-index-json-and-blobs-sha256-regular-files-empty-producer-internal-directories-have-no-identity"
+oci_layout_runtime_input_policy = "tar-false-output-every-regular-file-is-bound-by-the-owned-sorted-file-set-receipt-input-map-and-archive-manifest-no-derived-tar-or-untyped-dynamic-runtime-ids"
+oci_layout_closure_policy = "typed-verifier-requires-oci-layout-and-index-json-exactly-one-top-level-result-no-subject-or-attestation-walks-index-manifest-config-and-layer-descriptors-verifies-media-type-size-sha256-platform-and-no-missing-external-uninventoried-or-unreferenced-blob-content-with-depth-count-and-byte-bounds"
+supply_chain_tool_inventory_policy = "every-selected-producer-records-id-exact-version-binary-sha256-install-source-or-action-sha-argv-config-and-output-role"
+supply_chain_output_policy = "every-policy-sbom-license-auditable-observation-and-reconciliation-output-is-a-separate-typed-path-and-sha256-bound-input-to-the-supply-chain-verifier"
+advisory_freshness_policy = "exact-rc-scan-records-rustsec-db-revision-digest-and-attested-observation-time-later-database-changes-are-post-release-monitoring-not-retroactive-proof"
+verifier_execution = "release-ready-reruns-byte-identical-tagged-archived-dispatcher-with-python-isolated-no-site-fixed-argv-clean-environment-private-exact-input-snapshot-timeout-and-secure-temp-output"
+verifier_result_schema = "visa.release-verifier-result.v1"
+verifier_tcb = "exact-tag-dispatcher-and-invoked-verifier-code-are-release-tcb-private-snapshot-is-input-closure-not-host-confinement-attestation-alone-does-not-prove-they-ran"
+verifier_host_tcb = "trusted-pre-existing-invoking-python-interpreter-and-stdlib-resolved-git-and-runtime-kernel-filesystem-and-nonhostile-same-uid-processes-recorded-versions-are-audit-observations-plus-operator-pinned-gh-and-trusted-root"
+git_execution = "resolved-absolute-regular-git-private-cwd-home-empty-template-no-system-or-global-config-hooks-replace-objects-network-or-prompt"
+python_execution = "checker-invocation-python-version-recorded-and-dispatcher-runs-same-absolute-sys-executable-with-isolated-no-site-and-clean-environment"
+build_inventory_schema = "visa.release-build-inventory.v4"
+build_inventory_generation = "cargo-metadata-format-version-1-locked-per-product-root-target-profile-feature-set-reachable-resolve-plus-license-source-normalization"
+build_inventory_verification = "typed-supply-chain-verifier-extracts-exact-rust-toolchain-tree-and-vendor-into-private-homes-runs-absolute-cargo-metadata-frozen-offline-and-separately-validates-producer-records-and-oci-closure-without-executing-docker"
+vendor_generation = "cargo-vendor-locked-versioned-dirs-with-source-replacement-config-archive-and-file-inventory"
+oci_build_provenance = "release-time-buildkit-buildx-producer-tcb-records-exact-recipe-context-platform-output-type-oci-tar-false-provenance-disabled-metadata-file-owned-per-file-layout-set-descriptor-closure-builder-version-binary-or-action-sha-argv-and-build-record-id-offline-checker-does-not-rerun-build"
+source_to_binary_reproducibility = "not-claimed-artifact-attestation-and-byte-identity-only"
+artifact_inventory_schema = "visa.release-artifact-inventory.v3"
+artifact_inventory_verification = "records-component-source-and-attestation-producer-identities-and-verifies-artifact-subject-attestation;relationship-is-proved-only-by-nexus-native-v1-wire-artifact-typed-verifier-with-authenticated-component-material-and-closed-source-graph"
 hash_algorithm = "sha-256"
-contract_binding = "repository-path-sha256-exact-40-hex-source-revision-and-rc-tag"
+contract_binding = "archived-source-bundle-path-sha256-exact-40-hex-source-revision-annotated-rc-tag-and-out-of-band-exact-rc-tag-object"
 release_candidate_tag = "v0.1.0-rc.<positive-integer>"
 final_tag = "v0.1.0"
-candidate_final_relationship = "rc-and-final-tags-may-point-to-the-same-source-commit"
+candidate_final_relationship = "annotated-final-tag-must-peel-to-the-exact-rc-admitted-source-commit"
+closure_states = ["rc-admitted", "final-release-verified"]
+archive_stage_policy = "separate-immutable-rc-and-final-roots-final-reruns-complete-rc-validation-no-in-place-append"
+final_archive_validation = "final-stage-command-only-rc-stage-command-targets-the-preserved-rc-root"
+finalization_schema = "visa.release-finalization-receipt.v1"
+finalization_policy = "post-tag-attested-receipt-binds-immutable-index-digest-and-annotated-final-tag-object-exactly-matching-the-out-of-band-trusted-checkout-at-the-rc-admitted-commit"
 target_commit_mutation = "forbidden-after-evidence-generation"
 required_for_every_id = [
   "evidence-path",
   "evidence-sha256",
   "verifier-receipt-path",
   "verifier-receipt-sha256",
+  "typed-verifier-id",
+  "verifier-source-path-and-sha256",
+  "exact-input-digests-exit-code-and-output-digest",
+  "typed-verifier-result-sha256",
+  "private-origin-separated-input-snapshot-and-post-run-rehash",
 ]
-path_policy = "index-directory-relative-regular-file-no-symlink"
-receipt_policy = "machine-readable-verifier-command-result-input-digests-and-contract-tag-binding"
+archive_root_policy = "explicit-root-for-archive-content-clean-trusted-checkout-only-for-out-of-band-head-and-tag-objects-no-ambient-cargo-state"
+source_bundle_path = "source/visa-v0.1.0-rc.bundle"
+source_bundle_policy = "complete-prerequisite-git-bundle-with-annotated-rc-tag-exact-source-commit-and-out-of-band-matching-tag-object"
+final_source_bundle_path = "source/visa-v0.1.0-final.bundle"
+final_source_bundle_policy = "post-tag-complete-git-bundle-with-annotated-rc-and-final-tags-peeling-to-same-commit-and-out-of-band-matching-tag-objects"
+archived_lock_path = "source/Cargo.lock"
+archived_toolchain_path = "source/rust-toolchain.toml"
+archive_manifest_path = "archive/manifest.json"
+sha256sums_path = "archive/SHA256SUMS"
+offline_reverify_path = "REVERIFY.md"
+archive_inventory_policy = "canonical-posix-relative-paths-unique-regular-single-link-files-no-symlink-device-or-fifo-exact-manifest-and-sha256sums"
+reader_limits = "duplicate-json-keys-rejected-per-file-536870912-bytes-aggregate-4294967296-bytes"
+path_policy = "canonical-posix-index-directory-relative-regular-single-link-file-no-symlink-or-alias"
+receipt_policy = "closed-set-typed-verifier-id-source-digest-input-digests-exit-code-and-output-digest-no-command-string"
+attestation_repository = "chenty2333/vISA"
+attestation_signer_workflow = "chenty2333/vISA/.github/workflows/release-evidence.yml"
+attestation_predicate_type = "https://slsa.dev/provenance/v1"
+attestation_verification = "exact-gh-binary-at-or-above-2.93.0-offline-bundle-custom-trusted-root-repo-signer-workflow-signer-digest-source-digest-source-ref-deny-self-hosted"
+attestation_bootstrap = "trusted-checker-clean-tracked-checkout-head-and-operator-supplied-annotated-rc-tag-gh-binary-sha256-and-trusted-root-sha256-index-and-archive-may-select-none-of-these-values"
+attestation_verifier_path = "tools/gh"
+attestation_verifier_minimum_version = "2.93.0"
+index_attestation_bundle_path = "attestations/index.provenance.sigstore.jsonl"
+finalization_attestation_bundle_path = "attestations/finalization.provenance.sigstore.jsonl"
+attestation_trusted_root_path = "attestations/trusted_root.jsonl"
 post_release_claims_ledger = "may-be-committed-after-release-without-moving-the-release-tag"
 
 [release_closure]

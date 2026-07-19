@@ -97,7 +97,7 @@ visa_jco_node = { path = "crates/runtime/visa_jco_node" }
 visa_wacogo = { path = "crates/runtime/visa_wacogo" }
 visa_wasmtime = { path = "crates/runtime/visa_wasmtime" }
 visa_abi = { path = "crates/abi/abi" }
-wasmtime = { version = "43.0.2", default-features = false }
+wasmtime = { version = "=43.0.2", default-features = false }
 x86_64 = { version = "0.15.4", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
 xmas-elf = { version = "0.10.0", default-features = false }
 

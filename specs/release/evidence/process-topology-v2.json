@@ -1,0 +1,42 @@
+{
+  "schema": "visa.development-readiness-evidence.v1",
+  "readiness_id": "process-topology-frozen",
+  "target_path": "specs/release/visa-0.1.toml",
+  "target_sha256": "6cb7be12504297bf633ca7f90b845fdd76023517b85d6cc8064035c5aea18209",
+  "claim": "the vISA 0.1 target admits five resident product-role processes plus one exclusive-lease mutating CLI controller, uses systemd user supervision with no helper product child, and keeps three independent user-bus D-Bus RPC namespaces",
+  "processes": {
+    "visa-controller": 1,
+    "visa-agent": 2,
+    "visa-ownershipd": 1,
+    "visa-nexusd": 1,
+    "nexus-effect-peer": 1,
+    "maximum_admitted_roles": 6,
+    "controller_lease": "exclusive-before-mutation",
+    "concurrent_readonly_cli": "diagnostic-not-controller-role"
+  },
+  "supervision": {
+    "kind": "systemd-user",
+    "target": "visa-local.target",
+    "nexus_peer": "sole-child-of-visa-nexusd",
+    "socket_activation": false,
+    "cli": "direct-user-dbus-no-helper-child"
+  },
+  "same_boot": {
+    "boot_id": "/proc/sys/kernel/random/boot_id",
+    "runtime_session": "same-systemd-user-manager-and-xdg-runtime-directory-lifetime",
+    "bootstrap": "cohort-create-local-non-authoritative-manifest-before-dbus-startunit",
+    "retire": "clean-or-explicit-abandon-never-reset-role-stores",
+    "cohort_mismatch": "fail-closed-audit-only",
+    "agent_identity": "logical-incarnation-stable-across-process-restart"
+  },
+  "local_rpc": {
+    "transport": "three-independent-user-bus-dbus-interfaces-via-zbus-5.18.0",
+    "method_signature": "Execute(ay)-to-ay",
+    "inner_encoding": "canonical-postcard-1.1.3",
+    "max_inner_request_bytes": 1048576,
+    "max_inner_response_bytes": 1048576,
+    "credential_binding": "bus-guid-unique-name-uid-pid-pidfd-proc-exe-sha256",
+    "outer_dbus_bytes": "not-release-byte-locked"
+  },
+  "nexus_child_transport": "bounded-json-lines-lf-native-v1"
+}
