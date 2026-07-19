@@ -7,7 +7,10 @@ use visa_local_rpc::common::{
     RuntimeSessionId, StableAgentIdentity,
 };
 
-use super::{AgentStore, AgentStoreError, audit_unstarted, inspect_existing, publish_new};
+use super::{
+    AgentStore, AgentStoreError, audit_unstarted, inspect_existing, inspect_existing_read_only,
+    publish_new,
+};
 
 fn identity(role: AgentRole, seed: u128) -> StableAgentIdentity {
     StableAgentIdentity {
@@ -123,4 +126,17 @@ fn existing_sidecars_and_extra_schema_objects_fail_closed() {
         audit_unstarted(&database, expected),
         Err(AgentStoreError::Integrity) | Err(AgentStoreError::StoreMismatch)
     ));
+}
+
+#[test]
+fn read_only_inspection_does_not_contend_with_a_live_process_lock() {
+    let (_directory, database) = path();
+    let expected = identity(AgentRole::Source, 60);
+    publish_new(&database, expected, ProcessNonce::from_u128(601)).expect("publish");
+    let live = AgentStore::reopen_existing(&database, expected, ProcessNonce::from_u128(602))
+        .expect("open live process");
+    let audit = inspect_existing_read_only(&database).expect("read-only audit");
+    assert_eq!(audit.stable_identity, expected);
+    assert_eq!(audit.process_generation, 1);
+    drop(live);
 }

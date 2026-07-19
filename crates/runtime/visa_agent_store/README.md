@@ -11,6 +11,9 @@ The three operations have intentionally different authority:
   initialization;
 * `audit_unstarted` checks that an existing store is exact without creating a
   process generation; and
+* `inspect_existing_read_only` audits one stable SQLite snapshot without
+  taking the live process lock, so a controller can exact-retry while the role
+  process is running; and
 * `reopen_existing` is the only runtime-open operation and durably allocates a
   fresh process nonce/generation in one `BEGIN IMMEDIATE` transaction.
 

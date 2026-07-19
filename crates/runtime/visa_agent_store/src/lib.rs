@@ -247,6 +247,35 @@ pub fn inspect_existing(
     Ok(AgentStoreAudit { stable_identity, process_generation })
 }
 
+/// Audits an existing store without taking the process-generation lock.
+///
+/// This is the controller-side path used for an exact retry while the role
+/// process is already running. SQLite's deferred read transaction pins one
+/// WAL snapshot for the complete schema/identity/history audit; it never
+/// creates a generation, changes the projection, or adopts a missing store.
+pub fn inspect_existing_read_only(
+    database_path: impl AsRef<Path>,
+) -> Result<AgentStoreAudit, AgentStoreError> {
+    let database_path = database_path.as_ref();
+    let database_guard =
+        DatabaseGuard::open_existing(database_path).map_err(AgentStoreError::from)?;
+    let connection = open_read_only_connection(database_path)?;
+    configure_read_only_session(&connection)?;
+    connection.execute_batch("BEGIN DEFERRED").map_err(|_| AgentStoreError::Storage)?;
+    let result = (|| {
+        audit_schema(&connection)?;
+        let stable_identity = load_identity(&connection)?;
+        let process_generation = audit_process_history(&connection)?;
+        Ok(AgentStoreAudit { stable_identity, process_generation })
+    })();
+    let rollback = connection.execute_batch("ROLLBACK");
+    if result.is_ok() && rollback.is_err() {
+        return Err(AgentStoreError::Storage);
+    }
+    drop(database_guard);
+    result
+}
+
 fn validate_identity(identity: StableAgentIdentity) -> Result<(), AgentStoreError> {
     identity.validate().map_err(|_| AgentStoreError::InvalidRequest)
 }
@@ -271,6 +300,16 @@ fn open_connection(database_path: &Path) -> Result<Connection, AgentStoreError> 
     .map_err(|_| AgentStoreError::Storage)
 }
 
+fn open_read_only_connection(database_path: &Path) -> Result<Connection, AgentStoreError> {
+    Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|_| AgentStoreError::Storage)
+}
+
 fn configure_session(connection: &Connection) -> Result<(), AgentStoreError> {
     connection.busy_timeout(Duration::from_secs(5)).map_err(|_| AgentStoreError::Storage)?;
     connection
@@ -283,6 +322,22 @@ fn configure_session(connection: &Connection) -> Result<(), AgentStoreError> {
         .map_err(|_| AgentStoreError::Storage)?;
     if pragma_i64(connection, "synchronous")? != 2
         || pragma_i64(connection, "foreign_keys")? != 1
+        || pragma_i64(connection, "trusted_schema")? != 0
+    {
+        return Err(AgentStoreError::Integrity);
+    }
+    Ok(())
+}
+
+fn configure_read_only_session(connection: &Connection) -> Result<(), AgentStoreError> {
+    connection.busy_timeout(Duration::from_secs(5)).map_err(|_| AgentStoreError::Storage)?;
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA trusted_schema = OFF;",
+        )
+        .map_err(|_| AgentStoreError::Storage)?;
+    if pragma_i64(connection, "foreign_keys")? != 1
         || pragma_i64(connection, "trusted_schema")? != 0
     {
         return Err(AgentStoreError::Integrity);
