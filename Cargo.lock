@@ -2743,7 +2743,6 @@ dependencies = [
  "contract_core",
  "joint_handoff_core",
  "rusqlite",
- "rustix",
  "serde",
  "tempfile",
  "visa_durable_sqlite",

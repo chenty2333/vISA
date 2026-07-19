@@ -10,7 +10,6 @@ publish = false
 contract_core.workspace = true
 joint_handoff_core.workspace = true
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
-rustix = { version = "=1.1.4", features = ["fs", "process"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 visa_local_rpc = { path = "../../core/visa_local_rpc" }
 visa_durable_sqlite = { path = "../visa_durable_sqlite" }
