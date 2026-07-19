@@ -30,7 +30,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "visa_durable_sqlite": frozenset(),
     "visa_agent_store": frozenset({"visa_durable_sqlite", "visa_local_rpc"}),
     "visa_ownership_service": frozenset(
-        {"contract_core", "joint_handoff_core", "visa_local_rpc"}
+        {"contract_core", "joint_handoff_core", "visa_durable_sqlite", "visa_local_rpc"}
     ),
     "visa-ownershipd": frozenset(
         {

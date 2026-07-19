@@ -2746,6 +2746,7 @@ dependencies = [
  "rustix",
  "serde",
  "tempfile",
+ "visa_durable_sqlite",
  "visa_local_rpc",
 ]
 

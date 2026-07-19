@@ -1,6 +1,4 @@
 use std::{
-    fs::{self, File},
-    os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -9,12 +7,13 @@ use joint_handoff_core::{Digest, Identity, ReceiptIssuerIdentity};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
-use rustix::{
-    fs::{
-        CWD, FileType, FlockOperation, Mode, OFlags, RenameFlags, flock, fstat, fsync, open,
-        renameat_with,
-    },
-    process::geteuid,
+use visa_durable_sqlite::{
+    DatabaseGuard, DurableStoreError, StoreLock, checkpoint_truncate,
+    cleanup_owned_initialization_files, ensure_private_parent as ensure_durable_private_parent,
+    ensure_sqlite_sidecars_absent as ensure_durable_sidecars_absent,
+    initialization_path as durable_initialization_path,
+    publish_noreplace as publish_durable_noreplace, sync_file as sync_durable_file,
+    sync_parent_directory as sync_durable_parent,
 };
 use visa_local_rpc::{
     WireValidation,
@@ -34,7 +33,6 @@ use crate::{
 const SCHEMA_VERSION: i64 = 1;
 const APPLICATION_ID: i64 = 0x5649_5341;
 const SQLITE_PAGE_SIZE: u64 = 4096;
-const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
 const STORE_META_TABLE_SQL: &str = "CREATE TABLE store_meta (
                  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -245,8 +243,8 @@ fn same_stable_agent(left: AgentBinding, right: AgentBinding) -> bool {
 
 pub struct AuthorityStore {
     connection: Connection,
-    _database_guard: File,
-    _lock: File,
+    _database_guard: DatabaseGuard,
+    _lock: StoreLock,
     authenticator: PinnedLocalReceiptAuthenticator,
     binding: StoreBinding,
     identity: OwnershipServiceIdentity,
@@ -279,7 +277,6 @@ impl AuthorityStore {
             initialize_and_publish_database(database_path, bootstrap, &authenticator)?;
         }
         let database_guard = open_database_guard(database_path, false)?;
-        verify_database_file(&database_guard)?;
         let connection = Connection::open_with_flags(
             database_path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -327,8 +324,8 @@ impl AuthorityStore {
             process_generation,
         };
         server_binding.validate().map_err(|_| OwnershipServiceError::Integrity)?;
-        verify_database_file(&database_guard)?;
-        fsync(&database_guard).map_err(|_| OwnershipServiceError::Storage)?;
+        database_guard.verify_sqlite_header().map_err(map_durable_error)?;
+        sync_durable_file(database_guard.file()).map_err(map_durable_error)?;
         sync_parent_directory(database_path)?;
         Ok(Self {
             connection,
@@ -667,18 +664,9 @@ pub(crate) fn initialize_and_publish_database(
 
         ensure_sqlite_sidecars_absent(&temporary_path, OwnershipServiceError::Storage)?;
         ensure_sqlite_sidecars_absent(database_path, OwnershipServiceError::StoreMismatch)?;
-        verify_database_file(&database_guard)?;
-        fsync(&database_guard).map_err(|_| OwnershipServiceError::Storage)?;
-        renameat_with(CWD, &temporary_path, CWD, database_path, RenameFlags::NOREPLACE).map_err(
-            |error| {
-                if error == rustix::io::Errno::EXIST {
-                    OwnershipServiceError::StoreMismatch
-                } else {
-                    OwnershipServiceError::Storage
-                }
-            },
-        )?;
-        sync_parent_directory(database_path)?;
+        database_guard.verify_sqlite_header().map_err(map_durable_error)?;
+        publish_durable_noreplace(&temporary_path, database_path, database_guard.file())
+            .map_err(map_durable_error)?;
         Ok(())
     })();
     if result.is_err() {
@@ -688,29 +676,21 @@ pub(crate) fn initialize_and_publish_database(
 }
 
 fn checkpoint_for_publish(connection: &Connection) -> Result<(), OwnershipServiceError> {
-    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) = connection
-        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .map_err(|_| OwnershipServiceError::Storage)?;
-    if busy != 0 || log_frames != 0 || checkpointed_frames != 0 {
-        return Err(OwnershipServiceError::Storage);
-    }
-    Ok(())
+    checkpoint_truncate(connection).map_err(|error| match error {
+        DurableStoreError::Busy | DurableStoreError::Integrity => OwnershipServiceError::Storage,
+        other => map_durable_error(other),
+    })
 }
 
 fn ensure_sqlite_sidecars_absent(
     database_path: &Path,
     existing_error: OwnershipServiceError,
 ) -> Result<(), OwnershipServiceError> {
-    for suffix in ["-wal", "-shm", "-journal"] {
-        match fs::symlink_metadata(sqlite_sidecar_path(database_path, suffix)) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(OwnershipServiceError::Storage),
-            Ok(_) => return Err(existing_error),
-        }
+    match ensure_durable_sidecars_absent(database_path) {
+        Ok(()) => Ok(()),
+        Err(DurableStoreError::SidecarExists) => Err(existing_error),
+        Err(error) => Err(map_durable_error(error)),
     }
-    Ok(())
 }
 
 fn initialize_storage_mode(connection: &Connection) -> Result<(), OwnershipServiceError> {
@@ -1136,144 +1116,56 @@ fn set_max_page_count(
 }
 
 fn ensure_private_parent(database_path: &Path) -> Result<(), OwnershipServiceError> {
-    let parent = database_path.parent().ok_or(OwnershipServiceError::InvalidRequest)?;
-    if !parent.exists() {
-        let mut builder = fs::DirBuilder::new();
-        builder.mode(0o700);
-        builder.create(parent).map_err(|_| OwnershipServiceError::Storage)?;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|_| OwnershipServiceError::Storage)?;
-    }
-    let metadata = fs::symlink_metadata(parent).map_err(|_| OwnershipServiceError::Storage)?;
-    if !metadata.file_type().is_dir()
-        || metadata.uid() != geteuid().as_raw()
-        || metadata.mode() & 0o777 != 0o700
-    {
-        return Err(OwnershipServiceError::StoreMismatch);
-    }
-    Ok(())
+    ensure_durable_private_parent(database_path).map_err(map_durable_error)
 }
 
-fn acquire_process_lock(path: &Path) -> Result<File, OwnershipServiceError> {
-    let fd = open(
-        path,
-        OFlags::CREATE | OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-        Mode::RUSR | Mode::WUSR,
-    )
-    .map_err(|_| OwnershipServiceError::Storage)?;
-    verify_regular_private_fd(&fd)?;
-    flock(&fd, FlockOperation::NonBlockingLockExclusive).map_err(|error| {
-        if error == rustix::io::Errno::WOULDBLOCK {
-            OwnershipServiceError::StoreBusy
-        } else {
-            OwnershipServiceError::Storage
-        }
-    })?;
-    Ok(fd.into())
+fn acquire_process_lock(path: &Path) -> Result<StoreLock, OwnershipServiceError> {
+    StoreLock::acquire(path).map_err(map_durable_error)
 }
 
-fn open_database_guard(path: &Path, create_new: bool) -> Result<File, OwnershipServiceError> {
-    let opened = if create_new {
-        open(
-            path,
-            OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::RUSR | Mode::WUSR,
-        )
-    } else {
-        open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW, Mode::empty())
-    };
-    let fd = opened.map_err(|error| {
-        if matches!(error, rustix::io::Errno::EXIST | rustix::io::Errno::NOENT) {
-            OwnershipServiceError::StoreMismatch
-        } else {
-            OwnershipServiceError::Storage
-        }
-    })?;
-    verify_regular_private_fd(&fd)?;
-    Ok(fd.into())
-}
-
-fn verify_database_file(file: &File) -> Result<(), OwnershipServiceError> {
-    verify_regular_private_fd(file)?;
-    let stat = fstat(file).map_err(|_| OwnershipServiceError::Storage)?;
-    if stat.st_size < SQLITE_HEADER.len() as i64 {
-        return Err(OwnershipServiceError::StoreMismatch);
-    }
-    let mut header = [0_u8; SQLITE_HEADER.len()];
-    file.read_exact_at(&mut header, 0).map_err(|_| OwnershipServiceError::Storage)?;
-    if &header != SQLITE_HEADER {
-        return Err(OwnershipServiceError::StoreMismatch);
-    }
-    Ok(())
-}
-
-fn verify_regular_private_fd(fd: &impl std::os::fd::AsFd) -> Result<(), OwnershipServiceError> {
-    let stat = fstat(fd).map_err(|_| OwnershipServiceError::Storage)?;
-    let permissions = Mode::from_raw_mode(stat.st_mode) & (Mode::RWXU | Mode::RWXG | Mode::RWXO);
-    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
-        || stat.st_uid != geteuid().as_raw()
-        || stat.st_nlink != 1
-        || permissions != Mode::RUSR | Mode::WUSR
-    {
-        return Err(OwnershipServiceError::StoreMismatch);
-    }
-    Ok(())
+fn open_database_guard(
+    path: &Path,
+    create_new: bool,
+) -> Result<DatabaseGuard, OwnershipServiceError> {
+    if create_new { DatabaseGuard::create_new(path) } else { DatabaseGuard::open_existing(path) }
+        .map_err(map_durable_error)
 }
 
 fn sync_parent_directory(database_path: &Path) -> Result<(), OwnershipServiceError> {
-    let parent = database_path.parent().ok_or(OwnershipServiceError::InvalidRequest)?;
-    let directory = open(
-        parent,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-        Mode::empty(),
-    )
-    .map_err(|_| OwnershipServiceError::Storage)?;
-    let stat = fstat(&directory).map_err(|_| OwnershipServiceError::Storage)?;
-    let permissions = Mode::from_raw_mode(stat.st_mode) & (Mode::RWXU | Mode::RWXG | Mode::RWXO);
-    if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
-        || stat.st_uid != geteuid().as_raw()
-        || permissions != Mode::RWXU
-    {
-        return Err(OwnershipServiceError::StoreMismatch);
-    }
-    fsync(&directory).map_err(|_| OwnershipServiceError::Storage)
+    sync_durable_parent(database_path).map_err(map_durable_error)
 }
 
 pub(crate) fn initialization_path(database_path: &Path, process_nonce: ProcessNonce) -> PathBuf {
-    let nonce = u128::from_be_bytes(process_nonce.0);
-    let mut value = database_path.as_os_str().to_os_string();
-    value.push(format!(".init-{nonce:032x}"));
-    PathBuf::from(value)
+    durable_initialization_path(database_path, process_nonce.0)
 }
 
+#[cfg(test)]
 pub(crate) fn sqlite_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
-    let mut value = database_path.as_os_str().to_os_string();
-    value.push(suffix);
-    PathBuf::from(value)
+    visa_durable_sqlite::sqlite_sidecar_path(database_path, suffix)
 }
 
-fn remove_owned_initialization_files(temporary_path: &Path, database_guard: &File) {
-    let Ok(guard_stat) = fstat(database_guard) else {
-        return;
-    };
-    let Ok(path_metadata) = fs::symlink_metadata(temporary_path) else {
-        return;
-    };
-    if !path_metadata.file_type().is_file()
-        || path_metadata.dev() != guard_stat.st_dev
-        || path_metadata.ino() != guard_stat.st_ino
-    {
-        return;
-    }
-    for suffix in ["-wal", "-shm", "-journal", ""] {
-        let _ = fs::remove_file(sqlite_sidecar_path(temporary_path, suffix));
-    }
+fn remove_owned_initialization_files(temporary_path: &Path, database_guard: &DatabaseGuard) {
+    cleanup_owned_initialization_files(temporary_path, database_guard.file())
 }
 
 fn lock_path(database_path: &Path) -> PathBuf {
     let mut value = database_path.as_os_str().to_os_string();
     value.push(".lock");
     PathBuf::from(value)
+}
+
+fn map_durable_error(error: DurableStoreError) -> OwnershipServiceError {
+    match error {
+        DurableStoreError::InvalidPath => OwnershipServiceError::InvalidRequest,
+        DurableStoreError::Busy => OwnershipServiceError::StoreBusy,
+        DurableStoreError::AlreadyExists
+        | DurableStoreError::Missing
+        | DurableStoreError::Insecure
+        | DurableStoreError::NotSqlite
+        | DurableStoreError::SidecarExists => OwnershipServiceError::StoreMismatch,
+        DurableStoreError::Io(_) | DurableStoreError::Sqlite(_) => OwnershipServiceError::Storage,
+        DurableStoreError::Integrity => OwnershipServiceError::Integrity,
+    }
 }
 
 fn map_transaction_error(error: rusqlite::Error) -> OwnershipServiceError {
