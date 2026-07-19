@@ -153,7 +153,9 @@ impl UnitSnapshot {
 
     pub fn healthy(&self) -> bool {
         self.state() == UnitState::Active
-            && (!self.unit.is_service() || self.main_pid.unwrap_or(0) != 0)
+            && (!self.unit.is_service()
+                || (self.main_pid.unwrap_or(0) != 0
+                    && self.invocation_id.as_deref().is_some_and(|value| value.len() == 16)))
             && self.result.as_deref().is_none_or(|value| value == "success")
     }
 }
@@ -490,9 +492,21 @@ impl ActivationSession {
     }
 
     pub async fn prepare(&self) -> Result<PreparedActivation<'_>, ActivationError> {
-        if self.prepared.swap(true, Ordering::AcqRel) {
+        if self.prepared.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err()
+        {
             return Err(ActivationError::AlreadyPrepared);
         }
+        let result = self.prepare_inner().await;
+        if result.is_err() {
+            // A failed setup did not leave a usable stream.  Permit a retry
+            // on the same connection; once setup succeeds the gate remains
+            // closed for the lifetime of that connection.
+            self.prepared.store(false, Ordering::Release);
+        }
+        result
+    }
+
+    async fn prepare_inner(&self) -> Result<PreparedActivation<'_>, ActivationError> {
         self.require_manager_owner().await?;
         let manager = SystemdManagerProxy::builder(&self.connection)
             .destination(self.manager_owner.clone())
@@ -664,6 +678,7 @@ mod tests {
         value.sub_state = sub.to_owned();
         value.main_pid = unit.is_service().then_some(42);
         value.result = unit.is_service().then(|| "success".to_owned());
+        value.invocation_id = unit.is_service().then(|| vec![0x42; 16]);
         value
     }
 
