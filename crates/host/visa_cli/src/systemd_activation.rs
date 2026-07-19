@@ -39,6 +39,8 @@ pub const STOP_MODE: &str = "replace";
 /// must query/reconcile that state rather than leaving the controller lease
 /// blocked indefinitely.
 pub const JOB_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Maximum wall-clock time for one stable five-unit observation.
+pub const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 const FROZEN_UNITS: [FrozenUnit; 5] = [
     FrozenUnit::Target,
@@ -246,6 +248,7 @@ pub enum ActivationDecision {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActivationConflict {
     DifferentCohort,
+    MalformedObservation,
     UnitBusy(FrozenUnit),
     FailedUnit(FrozenUnit),
     UnhealthyUnit(FrozenUnit),
@@ -262,6 +265,23 @@ pub fn evaluate_activation(
     snapshots: &[UnitSnapshot],
     context: ActivationContext,
 ) -> ActivationDecision {
+    let mut seen = [false; 5];
+    let valid_set = snapshots.len() == FrozenUnit::all().len()
+        && snapshots.iter().all(|snapshot| {
+            let Some(index) = FrozenUnit::all().iter().position(|unit| *unit == snapshot.unit)
+            else {
+                return false;
+            };
+            if seen[index] {
+                return false;
+            }
+            seen[index] = true;
+            true
+        })
+        && seen.into_iter().all(|value| value);
+    if !valid_set {
+        return ActivationDecision::Conflict(ActivationConflict::MalformedObservation);
+    }
     let mut ordered = Vec::with_capacity(FrozenUnit::all().len());
     for unit in FrozenUnit::all() {
         let Some(snapshot) = snapshots.iter().find(|value| value.unit == *unit) else {
@@ -449,11 +469,15 @@ pub enum ActivationError {
     BusChanged,
     ManagerChanged,
     ObservationChanged,
+    ObservationTimeout,
     PendingJob(FrozenUnit),
     UnitPathChanged(FrozenUnit),
     /// The method reply or terminal signal was not observed. The operation is
     /// unknown; call `PreparedActivation::query_unit` before any retry.
     JobTimeout,
+    /// A previous mutating call may have been accepted, but its terminal
+    /// outcome is not known yet. Reconciliation is required before mutation.
+    OutcomeUnknown(FrozenUnit),
     JobFailed {
         unit: FrozenUnit,
         result: String,
@@ -487,6 +511,9 @@ impl fmt::Display for ActivationError {
             Self::ObservationChanged => {
                 formatter.write_str("systemd unit observation changed during activation")
             }
+            Self::ObservationTimeout => {
+                write!(formatter, "systemd unit observation exceeded {OBSERVATION_TIMEOUT:?}")
+            }
             Self::PendingJob(unit) => {
                 write!(formatter, "systemd unit {unit:?} has a pending job")
             }
@@ -495,6 +522,9 @@ impl fmt::Display for ActivationError {
             }
             Self::JobTimeout => {
                 write!(formatter, "systemd job did not complete within {JOB_WAIT_TIMEOUT:?}")
+            }
+            Self::OutcomeUnknown(unit) => {
+                write!(formatter, "systemd activation outcome for {unit:?} is unknown")
             }
             Self::JobFailed { unit, result } => {
                 write!(formatter, "systemd job for {unit:?} failed with result {result:?}")
@@ -672,6 +702,7 @@ impl ActivationSession {
             manager,
             manager_owner: self.manager_owner.clone(),
             jobs,
+            unknown_unit: None,
         })
     }
 
@@ -700,6 +731,7 @@ pub struct PreparedActivation<'a> {
     manager: SystemdManagerProxy<'a>,
     manager_owner: OwnedUniqueName,
     jobs: JobRemovedStream,
+    unknown_unit: Option<FrozenUnit>,
 }
 
 impl<'a> PreparedActivation<'a> {
@@ -707,12 +739,16 @@ impl<'a> PreparedActivation<'a> {
     /// cohort/manifest evaluation. A timeout is unknown and must be queried
     /// before another mutation.
     pub async fn start_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
+        self.require_known_outcome()?;
         self.require_manager_owner().await?;
-        let job = self
-            .manager
-            .start_unit(unit.name().to_owned(), START_MODE.to_owned())
-            .await
-            .map_err(ActivationError::Bus)?;
+        let job = match self.manager.start_unit(unit.name().to_owned(), START_MODE.to_owned()).await
+        {
+            Ok(job) => job,
+            Err(error) => {
+                self.unknown_unit = Some(unit);
+                return Err(ActivationError::Bus(error));
+            }
+        };
         self.wait_for_job(job, unit).await
     }
 
@@ -720,13 +756,24 @@ impl<'a> PreparedActivation<'a> {
     /// retirement evaluation. A timeout is unknown and must be queried before
     /// another mutation.
     pub async fn stop_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
+        self.require_known_outcome()?;
         self.require_manager_owner().await?;
-        let job = self
-            .manager
-            .stop_unit(unit.name().to_owned(), STOP_MODE.to_owned())
-            .await
-            .map_err(ActivationError::Bus)?;
+        let job = match self.manager.stop_unit(unit.name().to_owned(), STOP_MODE.to_owned()).await {
+            Ok(job) => job,
+            Err(error) => {
+                self.unknown_unit = Some(unit);
+                return Err(ActivationError::Bus(error));
+            }
+        };
         self.wait_for_job(job, unit).await
+    }
+
+    fn require_known_outcome(&self) -> Result<(), ActivationError> {
+        self.unknown_unit.map_or(Ok(()), |unit| Err(ActivationError::OutcomeUnknown(unit)))
+    }
+
+    fn mark_unknown(&mut self, unit: FrozenUnit) {
+        self.unknown_unit = Some(unit);
     }
 
     async fn wait_for_job(
@@ -744,6 +791,7 @@ impl<'a> PreparedActivation<'a> {
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                self.mark_unknown(unit);
                 self.require_manager_owner().await?;
                 return Err(ActivationError::JobTimeout);
             }
@@ -755,19 +803,37 @@ impl<'a> PreparedActivation<'a> {
                 .await;
             match wait {
                 WaitResult::Timeout => {
+                    self.mark_unknown(unit);
                     self.require_manager_owner().await?;
                     return Err(ActivationError::JobTimeout);
                 }
                 WaitResult::Event(None) => {
+                    self.mark_unknown(unit);
                     self.require_manager_owner().await?;
                     return Err(ActivationError::Bus(zbus::Error::Failure(
                         "JobRemoved stream ended before the matching job".to_owned(),
                     )));
                 }
                 WaitResult::Event(Some(message)) => {
-                    let event = decode_job_removed(message).map_err(ActivationError::JobMessage)?;
-                    if let Some(outcome) = tracker.observe(event).map_err(ActivationError::Job)? {
-                        self.require_manager_owner().await?;
+                    let event = match decode_job_removed(message) {
+                        Ok(event) => event,
+                        Err(error) => {
+                            self.mark_unknown(unit);
+                            return Err(ActivationError::JobMessage(error));
+                        }
+                    };
+                    let outcome = match tracker.observe(event) {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            self.mark_unknown(unit);
+                            return Err(ActivationError::Job(error));
+                        }
+                    };
+                    if let Some(outcome) = outcome {
+                        if let Err(error) = self.require_manager_owner().await {
+                            self.mark_unknown(unit);
+                            return Err(error);
+                        }
                         return match outcome {
                             JobOutcome::Done => Ok(JobOutcome::Done),
                             JobOutcome::Failed(result) => {
@@ -781,27 +847,54 @@ impl<'a> PreparedActivation<'a> {
     }
 
     pub async fn list_units(&self) -> Result<Vec<UnitSnapshot>, ActivationError> {
-        let first = self.list_units_once().await?;
-        let second = self.list_units_once().await?;
+        let (first, second) = self.stable_unit_observation(true).await?;
         if first != second {
             return Err(ActivationError::ObservationChanged);
         }
-        self.require_manager_owner().await?;
         Ok(second)
+    }
+
+    async fn stable_unit_observation(
+        &self,
+        reject_pending: bool,
+    ) -> Result<(Vec<UnitSnapshot>, Vec<UnitSnapshot>), ActivationError> {
+        let observation = async {
+            let first = self.list_units_once(reject_pending).await?;
+            let second = self.list_units_once(reject_pending).await?;
+            self.require_manager_owner().await?;
+            Ok::<_, ActivationError>((first, second))
+        };
+        observation
+            .or(async {
+                Timer::after(OBSERVATION_TIMEOUT).await;
+                Err(ActivationError::ObservationTimeout)
+            })
+            .await
     }
 
     /// Re-observe one unit through the same stable two-pass check used by the
     /// activation preflight. This is the required read path after a lost
-    /// JobRemoved outcome.
-    pub async fn query_unit(&self, unit: FrozenUnit) -> Result<UnitSnapshot, ActivationError> {
-        self.list_units()
-            .await?
+    /// JobRemoved outcome. Pending jobs are returned as evidence instead of
+    /// being treated as an idle unit.
+    pub async fn query_unit(&mut self, unit: FrozenUnit) -> Result<UnitSnapshot, ActivationError> {
+        let (first, second) = self.stable_unit_observation(false).await?;
+        if first != second {
+            return Err(ActivationError::ObservationChanged);
+        }
+        let snapshot = second
             .into_iter()
             .find(|snapshot| snapshot.unit == unit)
-            .ok_or(ActivationError::ObservationChanged)
+            .ok_or(ActivationError::ObservationChanged)?;
+        if !snapshot.has_pending_job() && self.unknown_unit == Some(unit) {
+            self.unknown_unit = None;
+        }
+        Ok(snapshot)
     }
 
-    async fn list_units_once(&self) -> Result<Vec<UnitSnapshot>, ActivationError> {
+    async fn list_units_once(
+        &self,
+        reject_pending: bool,
+    ) -> Result<Vec<UnitSnapshot>, ActivationError> {
         self.require_manager_owner().await?;
         let names = FrozenUnit::all().iter().map(|unit| unit.name()).collect::<Vec<_>>();
         let rows = self.manager.list_units_by_names(&names).await.map_err(ActivationError::Bus)?;
@@ -816,13 +909,19 @@ impl<'a> PreparedActivation<'a> {
         let mut result = Vec::with_capacity(names.len());
         for unit in FrozenUnit::all() {
             let Some(row) = rows.iter().find(|row| row.0 == unit.name()) else {
+                // ListUnitsByNames omits names that are not loaded; this is
+                // the systemd-defined representation of a missing unit.
                 result.push(UnitSnapshot::missing(*unit));
                 continue;
             };
-            if row.7 != 0 || !row.8.is_empty() || row.9.as_str() != "/" {
+            let pending = row.7 != 0 || !row.8.is_empty() || row.9.as_str() != "/";
+            if reject_pending && pending {
                 return Err(ActivationError::PendingJob(*unit));
             }
             if row.2 == "not-found" {
+                if pending || row.6.as_str() != "/" || row.3 != "inactive" || row.4 != "dead" {
+                    return Err(ActivationError::ObservationChanged);
+                }
                 result.push(UnitSnapshot::missing(*unit));
                 continue;
             }
@@ -1021,6 +1120,36 @@ mod tests {
     }
 
     #[test]
+    fn evaluator_rejects_duplicate_or_missing_unit_entries() {
+        let mut duplicate = healthy_set();
+        duplicate[4] = duplicate[3].clone();
+        assert_eq!(
+            evaluate_activation(
+                &duplicate,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort: CohortMatch::Exact,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::MalformedObservation)
+        );
+
+        let missing = healthy_set();
+        assert_eq!(
+            evaluate_activation(
+                &missing[..4],
+                ActivationContext {
+                    exact_retry: true,
+                    cohort: CohortMatch::Exact,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::MalformedObservation)
+        );
+    }
+
+    #[test]
     fn partial_exact_retry_starts_authorities_before_agents() {
         let mut values = healthy_set();
         values
@@ -1166,6 +1295,26 @@ mod tests {
         let mut values = healthy_set();
         let source = values.iter_mut().find(|value| value.unit == FrozenUnit::SourceAgent).unwrap();
         source.main_pid = Some(0);
+        assert_eq!(
+            evaluate_activation(
+                &values,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort: CohortMatch::Exact,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::UnhealthyUnit(
+                FrozenUnit::SourceAgent
+            ))
+        );
+    }
+
+    #[test]
+    fn zero_invocation_id_is_not_healthy() {
+        let mut values = healthy_set();
+        let source = values.iter_mut().find(|value| value.unit == FrozenUnit::SourceAgent).unwrap();
+        source.invocation_id = Some(vec![0; 16]);
         assert_eq!(
             evaluate_activation(
                 &values,

@@ -9,8 +9,8 @@ pub use cohort::{CohortManager, CohortPlan, CohortRoots};
 pub use systemd_activation::{
     ActivationConflict, ActivationContext, ActivationDecision, ActivationError, ActivationSession,
     CohortMatch, FrozenUnit, JOB_WAIT_TIMEOUT, JobOutcome, JobRemovedEvent, JobTracker,
-    JobTrackerError, ListUnitRow, NexusMarker, PreparedActivation, START_MODE, STOP_MODE,
-    UnitSnapshot, UnitState,
+    JobTrackerError, ListUnitRow, NexusMarker, OBSERVATION_TIMEOUT, PreparedActivation, START_MODE,
+    STOP_MODE, UnitSnapshot, UnitState,
 };
 
 /// Stable command exit classes. They intentionally match the operational
