@@ -26,6 +26,7 @@ RUN apt-get update \
         clang \
         coreutils \
         curl \
+        dbus-daemon \
         file \
         findutils \
         flex \
