@@ -13,8 +13,11 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
+use async_io::Timer;
+use futures_lite::FutureExt;
 use rustix::process::geteuid;
 use zbus::{
     Connection,
@@ -30,6 +33,12 @@ pub const SYSTEMD_MANAGER_PATH: &str = "/org/freedesktop/systemd1";
 pub const SYSTEMD_MANAGER_INTERFACE: &str = "org.freedesktop.systemd1.Manager";
 pub const START_MODE: &str = "replace";
 pub const STOP_MODE: &str = "replace";
+/// Maximum time to wait for a matching systemd JobRemoved signal.
+///
+/// A missing terminal signal is an unknown activation outcome. The caller
+/// must query/reconcile that state rather than leaving the controller lease
+/// blocked indefinitely.
+pub const JOB_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const FROZEN_UNITS: [FrozenUnit; 5] = [
     FrozenUnit::Target,
@@ -200,6 +209,7 @@ pub enum ActivationConflict {
     UnitBusy(FrozenUnit),
     FailedUnit(FrozenUnit),
     UnhealthyUnit(FrozenUnit),
+    NexusMarkerMismatch,
     NexusMarkerLost,
 }
 
@@ -228,6 +238,22 @@ pub fn evaluate_activation(
         return ActivationDecision::Conflict(ActivationConflict::DifferentCohort);
     }
 
+    let nexusd = ordered
+        .iter()
+        .find(|(snapshot, _)| snapshot.unit == FrozenUnit::Nexusd)
+        .expect("frozen unit list includes nexusd");
+    let nexusd_healthy = nexusd.0.healthy();
+    match (context.nexus_marker, nexusd_healthy) {
+        (NexusMarker::Absent, true) | (NexusMarker::PresentWithoutHealthyProcess, true) => {
+            return ActivationDecision::Conflict(ActivationConflict::NexusMarkerMismatch);
+        }
+        (NexusMarker::PresentWithHealthyProcess, false)
+        | (NexusMarker::PresentWithoutHealthyProcess, false) => {
+            return ActivationDecision::Conflict(ActivationConflict::NexusMarkerLost);
+        }
+        (NexusMarker::Absent, false) | (NexusMarker::PresentWithHealthyProcess, true) => {}
+    }
+
     if let Some((snapshot, _)) = ordered
         .iter()
         .find(|(_, state)| matches!(state, UnitState::Activating | UnitState::Deactivating))
@@ -236,25 +262,13 @@ pub fn evaluate_activation(
     }
     let any_active = ordered.iter().any(|(_, state)| *state == UnitState::Active);
     if any_active && !context.exact_retry {
-        return ActivationDecision::Conflict(if context.cohort_matches {
-            ActivationConflict::UnitBusy(
-                ordered
-                    .iter()
-                    .find(|(_, state)| *state == UnitState::Active)
-                    .map(|(snapshot, _)| snapshot.unit)
-                    .unwrap_or(FrozenUnit::Target),
-            )
-        } else {
-            ActivationConflict::DifferentCohort
-        });
-    }
-
-    let nexusd = ordered
-        .iter()
-        .find(|(snapshot, _)| snapshot.unit == FrozenUnit::Nexusd)
-        .expect("frozen unit list includes nexusd");
-    if context.nexus_marker == NexusMarker::PresentWithoutHealthyProcess && !nexusd.0.healthy() {
-        return ActivationDecision::Conflict(ActivationConflict::NexusMarkerLost);
+        return ActivationDecision::Conflict(
+            ordered
+                .iter()
+                .find(|(_, state)| *state == UnitState::Active)
+                .map(|(snapshot, _)| ActivationConflict::UnitBusy(snapshot.unit))
+                .unwrap_or(ActivationConflict::UnitBusy(FrozenUnit::Target)),
+        );
     }
 
     if let Some((snapshot, _)) =
@@ -267,18 +281,25 @@ pub fn evaluate_activation(
         return ActivationDecision::AlreadyHealthy;
     }
 
-    let mut start = ordered
+    let failed = ordered
         .iter()
-        .filter_map(|(snapshot, state)| {
-            matches!(state, UnitState::Inactive | UnitState::Missing).then_some(snapshot.unit)
-        })
+        .filter_map(|(snapshot, state)| (*state == UnitState::Failed).then_some(snapshot.unit))
         .collect::<Vec<_>>();
-    if let Some(unit) = ordered
-        .iter()
-        .find_map(|(snapshot, state)| (*state == UnitState::Failed).then_some(snapshot.unit))
+    if let Some(unit) = failed.iter().copied().find(|unit| !failed_restart_allowed(*unit, context))
     {
         return ActivationDecision::Conflict(ActivationConflict::FailedUnit(unit));
     }
+
+    let mut start = ordered
+        .iter()
+        .filter_map(|(snapshot, state)| {
+            let restartable_failed =
+                *state == UnitState::Failed && failed_restart_allowed(snapshot.unit, context);
+            matches!(state, UnitState::Inactive | UnitState::Missing)
+                .then_some(snapshot.unit)
+                .or_else(|| restartable_failed.then_some(snapshot.unit))
+        })
+        .collect::<Vec<_>>();
     // Start authorities before agents.  The unit graph still supplies the
     // authoritative ordering; this order only makes partial exact retries
     // deterministic and avoids asking systemd to recover a failed target.
@@ -290,6 +311,14 @@ pub fn evaluate_activation(
         FrozenUnit::Target => 4,
     });
     ActivationDecision::Start(start)
+}
+
+fn failed_restart_allowed(unit: FrozenUnit, context: ActivationContext) -> bool {
+    context.exact_retry
+        && (matches!(
+            unit,
+            FrozenUnit::Ownershipd | FrozenUnit::SourceAgent | FrozenUnit::DestinationAgent
+        ) || (unit == FrozenUnit::Nexusd && context.nexus_marker == NexusMarker::Absent))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -366,6 +395,8 @@ pub enum ActivationError {
     AlreadyPrepared,
     WrongManagerUid,
     ManagerChanged,
+    ObservationChanged,
+    JobTimeout,
     JobMessage(zbus::Error),
     Job(JobTrackerError),
 }
@@ -385,6 +416,12 @@ impl fmt::Display for ActivationError {
             }
             Self::ManagerChanged => {
                 formatter.write_str("systemd user manager owner changed during activation")
+            }
+            Self::ObservationChanged => {
+                formatter.write_str("systemd unit observation changed during activation")
+            }
+            Self::JobTimeout => {
+                write!(formatter, "systemd job did not complete within {JOB_WAIT_TIMEOUT:?}")
             }
             Self::JobMessage(error) => {
                 write!(formatter, "malformed systemd JobRemoved signal: {error}")
@@ -471,7 +508,12 @@ pub struct ActivationSession {
 
 impl ActivationSession {
     pub async fn connect() -> Result<Self, ActivationError> {
-        let connection = Connection::session().await?;
+        let connection = zbus::connection::Builder::session()
+            .map_err(ActivationError::Bus)?
+            .method_timeout(JOB_WAIT_TIMEOUT)
+            .build()
+            .await
+            .map_err(ActivationError::Bus)?;
         let dbus = DBusProxy::new(&connection).await.map_err(ActivationError::Bus)?;
         let systemd_name: WellKnownName<'_> =
             SYSTEMD_SERVICE.try_into().expect("frozen systemd service name is valid");
@@ -577,20 +619,48 @@ impl<'a> PreparedActivation<'a> {
     ) -> Result<JobOutcome, ActivationError> {
         let mut tracker = JobTracker::new(job.as_str(), unit.name());
         loop {
-            let Some(message) = next_stream_item(&mut self.jobs).await else {
-                return Err(ActivationError::Bus(zbus::Error::Failure(
-                    "JobRemoved stream ended before the matching job".to_owned(),
-                )));
-            };
-            let event = decode_job_removed(message).map_err(ActivationError::JobMessage)?;
-            if let Some(outcome) = tracker.observe(event).map_err(ActivationError::Job)? {
-                self.require_manager_owner().await?;
-                return Ok(outcome);
+            enum WaitResult<T> {
+                Event(Option<T>),
+                Timeout,
+            }
+            let wait = async { WaitResult::Event(next_stream_item(&mut self.jobs).await) }
+                .or(async {
+                    Timer::after(JOB_WAIT_TIMEOUT).await;
+                    WaitResult::Timeout
+                })
+                .await;
+            match wait {
+                WaitResult::Timeout => {
+                    self.require_manager_owner().await?;
+                    return Err(ActivationError::JobTimeout);
+                }
+                WaitResult::Event(None) => {
+                    return Err(ActivationError::Bus(zbus::Error::Failure(
+                        "JobRemoved stream ended before the matching job".to_owned(),
+                    )));
+                }
+                WaitResult::Event(Some(message)) => {
+                    let event = decode_job_removed(message).map_err(ActivationError::JobMessage)?;
+                    if let Some(outcome) = tracker.observe(event).map_err(ActivationError::Job)? {
+                        self.require_manager_owner().await?;
+                        return Ok(outcome);
+                    }
+                }
             }
         }
     }
 
     pub async fn list_units(&self) -> Result<Vec<UnitSnapshot>, ActivationError> {
+        let first = self.list_units_once().await?;
+        let second = self.list_units_once().await?;
+        if first != second {
+            return Err(ActivationError::ObservationChanged);
+        }
+        self.require_manager_owner().await?;
+        Ok(second)
+    }
+
+    async fn list_units_once(&self) -> Result<Vec<UnitSnapshot>, ActivationError> {
         self.require_manager_owner().await?;
         let names = FrozenUnit::all().iter().map(|unit| unit.name()).collect::<Vec<_>>();
         let rows = self.manager.list_units_by_names(&names).await.map_err(ActivationError::Bus)?;
@@ -739,6 +809,86 @@ mod tests {
                 },
             ),
             ActivationDecision::Start(vec![FrozenUnit::SourceAgent])
+        );
+    }
+
+    #[test]
+    fn exact_retry_restarts_allowed_failed_roles_but_not_target() {
+        let mut values = healthy_set();
+        values
+            .iter_mut()
+            .find(|value| value.unit == FrozenUnit::Ownershipd)
+            .unwrap()
+            .active_state = "failed".to_owned();
+        values.iter_mut().find(|value| value.unit == FrozenUnit::Ownershipd).unwrap().sub_state =
+            "failed".to_owned();
+        assert_eq!(
+            evaluate_activation(
+                &values,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort_matches: true,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Start(vec![FrozenUnit::Ownershipd])
+        );
+
+        let mut target_failed = healthy_set();
+        target_failed
+            .iter_mut()
+            .find(|value| value.unit == FrozenUnit::Target)
+            .unwrap()
+            .active_state = "failed".to_owned();
+        target_failed
+            .iter_mut()
+            .find(|value| value.unit == FrozenUnit::Target)
+            .unwrap()
+            .sub_state = "failed".to_owned();
+        assert_eq!(
+            evaluate_activation(
+                &target_failed,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort_matches: true,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::FailedUnit(FrozenUnit::Target))
+        );
+    }
+
+    #[test]
+    fn nexus_marker_must_match_live_process_both_directions() {
+        let values = healthy_set();
+        for marker in [NexusMarker::Absent, NexusMarker::PresentWithoutHealthyProcess] {
+            assert_eq!(
+                evaluate_activation(
+                    &values,
+                    ActivationContext {
+                        exact_retry: true,
+                        cohort_matches: true,
+                        nexus_marker: marker
+                    },
+                ),
+                ActivationDecision::Conflict(ActivationConflict::NexusMarkerMismatch)
+            );
+        }
+
+        let mut dead = healthy_set();
+        let nexusd = dead.iter_mut().find(|value| value.unit == FrozenUnit::Nexusd).unwrap();
+        nexusd.active_state = "inactive".to_owned();
+        nexusd.sub_state = "dead".to_owned();
+        assert_eq!(
+            evaluate_activation(
+                &dead,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort_matches: true,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::NexusMarkerLost)
         );
     }
 

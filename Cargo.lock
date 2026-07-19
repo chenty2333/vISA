@@ -2553,6 +2553,8 @@ dependencies = [
 name = "visa-cli"
 version = "0.1.0"
 dependencies = [
+ "async-io",
+ "futures-lite",
  "rustix",
  "serde",
  "serde_json",
