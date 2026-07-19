@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -10,7 +10,10 @@ use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
 use rustix::{
-    fs::{FileType, FlockOperation, Mode, OFlags, flock, fstat, open},
+    fs::{
+        CWD, FileType, FlockOperation, Mode, OFlags, RenameFlags, flock, fstat, fsync, open,
+        renameat_with,
+    },
     process::geteuid,
 };
 use visa_local_rpc::{
@@ -31,6 +34,7 @@ use crate::{
 const SCHEMA_VERSION: i64 = 1;
 const APPLICATION_ID: i64 = 0x5649_5341;
 const SQLITE_PAGE_SIZE: u64 = 4096;
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
 const STORE_META_TABLE_SQL: &str = "CREATE TABLE store_meta (
                  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -234,17 +238,19 @@ impl AuthorityStore {
         ensure_private_parent(database_path)?;
         let lock = acquire_process_lock(&lock_path(database_path))?;
         let create_new = bootstrap.create_identity.is_some();
-        let database_guard = open_database_guard(database_path, create_new)?;
-        let mut connection = Connection::open_with_flags(
+        if create_new {
+            initialize_and_publish_database(database_path, bootstrap, &authenticator)?;
+        }
+        let database_guard = open_database_guard(database_path, false)?;
+        verify_database_file(&database_guard)?;
+        let connection = Connection::open_with_flags(
             database_path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )
         .map_err(|_| OwnershipServiceError::Storage)?;
         configure_session(&connection)?;
-        if create_new {
-            initialize_storage_mode(&connection)?;
-            initialize_schema(&mut connection, bootstrap, authenticator.policy_digest())?;
-        }
         audit_schema(&connection)?;
         let meta = load_meta(&connection)?;
         if meta.binding != bootstrap.binding
@@ -285,6 +291,8 @@ impl AuthorityStore {
         };
         server_binding.validate().map_err(|_| OwnershipServiceError::Integrity)?;
         verify_database_file(&database_guard)?;
+        fsync(&database_guard).map_err(|_| OwnershipServiceError::Storage)?;
+        sync_parent_directory(database_path)?;
         Ok(Self {
             connection,
             _database_guard: database_guard,
@@ -556,6 +564,108 @@ fn configure_session(connection: &Connection) -> Result<(), OwnershipServiceErro
         || pragma_i64(connection, "trusted_schema")? != 0
     {
         return Err(OwnershipServiceError::Integrity);
+    }
+    Ok(())
+}
+
+// Publication deliberately leaves a valid generation-zero store. The caller
+// reopens the final path and durably advances generation before it may serve;
+// a crash between those steps is therefore recoverable rather than ambiguous.
+pub(crate) fn initialize_and_publish_database(
+    database_path: &Path,
+    bootstrap: StoreBootstrap,
+    authenticator: &PinnedLocalReceiptAuthenticator,
+) -> Result<(), OwnershipServiceError> {
+    ensure_sqlite_sidecars_absent(database_path, OwnershipServiceError::StoreMismatch)?;
+    let temporary_path = initialization_path(database_path, bootstrap.process_nonce);
+    ensure_sqlite_sidecars_absent(&temporary_path, OwnershipServiceError::StoreMismatch)?;
+    let database_guard = open_database_guard(&temporary_path, true)?;
+    let result = (|| {
+        let mut connection = Connection::open_with_flags(
+            &temporary_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .map_err(|_| OwnershipServiceError::Storage)?;
+        configure_session(&connection)?;
+        initialize_storage_mode(&connection)?;
+        initialize_schema(&mut connection, bootstrap, authenticator.policy_digest())?;
+        audit_schema(&connection)?;
+
+        let meta = load_meta(&connection)?;
+        if meta.binding != bootstrap.binding
+            || meta.identity
+                != bootstrap.create_identity.ok_or(OwnershipServiceError::StoreMismatch)?
+            || meta.limits != bootstrap.limits
+            || meta.receipt_policy_digest != authenticator.policy_digest()
+        {
+            return Err(OwnershipServiceError::Integrity);
+        }
+        verify_storage_mode(&connection)?;
+        state::audit_authority_state(&connection, meta.identity.issuer_namespace())?;
+        let process_instances =
+            audit_process_instances(&connection, meta.process_generation, meta.last_process_nonce)?;
+        audit_rpc_exchanges(
+            &connection,
+            meta.binding,
+            meta.identity,
+            &process_instances,
+            meta.limits,
+        )?;
+        state::audit_replay_projection(
+            &connection,
+            meta.identity.issuer_namespace(),
+            authenticator,
+        )?;
+        set_max_page_count(&connection, meta.limits)?;
+        checkpoint_for_publish(&connection)?;
+        connection.close().map_err(|_| OwnershipServiceError::Storage)?;
+
+        ensure_sqlite_sidecars_absent(&temporary_path, OwnershipServiceError::Storage)?;
+        ensure_sqlite_sidecars_absent(database_path, OwnershipServiceError::StoreMismatch)?;
+        verify_database_file(&database_guard)?;
+        fsync(&database_guard).map_err(|_| OwnershipServiceError::Storage)?;
+        renameat_with(CWD, &temporary_path, CWD, database_path, RenameFlags::NOREPLACE).map_err(
+            |error| {
+                if error == rustix::io::Errno::EXIST {
+                    OwnershipServiceError::StoreMismatch
+                } else {
+                    OwnershipServiceError::Storage
+                }
+            },
+        )?;
+        sync_parent_directory(database_path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        remove_owned_initialization_files(&temporary_path, &database_guard);
+    }
+    result
+}
+
+fn checkpoint_for_publish(connection: &Connection) -> Result<(), OwnershipServiceError> {
+    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) = connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|_| OwnershipServiceError::Storage)?;
+    if busy != 0 || log_frames != 0 || checkpointed_frames != 0 {
+        return Err(OwnershipServiceError::Storage);
+    }
+    Ok(())
+}
+
+fn ensure_sqlite_sidecars_absent(
+    database_path: &Path,
+    existing_error: OwnershipServiceError,
+) -> Result<(), OwnershipServiceError> {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        match fs::symlink_metadata(sqlite_sidecar_path(database_path, suffix)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(OwnershipServiceError::Storage),
+            Ok(_) => return Err(existing_error),
+        }
     }
     Ok(())
 }
@@ -1038,7 +1148,17 @@ fn open_database_guard(path: &Path, create_new: bool) -> Result<File, OwnershipS
 }
 
 fn verify_database_file(file: &File) -> Result<(), OwnershipServiceError> {
-    verify_regular_private_fd(file)
+    verify_regular_private_fd(file)?;
+    let stat = fstat(file).map_err(|_| OwnershipServiceError::Storage)?;
+    if stat.st_size < SQLITE_HEADER.len() as i64 {
+        return Err(OwnershipServiceError::StoreMismatch);
+    }
+    let mut header = [0_u8; SQLITE_HEADER.len()];
+    file.read_exact_at(&mut header, 0).map_err(|_| OwnershipServiceError::Storage)?;
+    if &header != SQLITE_HEADER {
+        return Err(OwnershipServiceError::StoreMismatch);
+    }
+    Ok(())
 }
 
 fn verify_regular_private_fd(fd: &impl std::os::fd::AsFd) -> Result<(), OwnershipServiceError> {
@@ -1052,6 +1172,56 @@ fn verify_regular_private_fd(fd: &impl std::os::fd::AsFd) -> Result<(), Ownershi
         return Err(OwnershipServiceError::StoreMismatch);
     }
     Ok(())
+}
+
+fn sync_parent_directory(database_path: &Path) -> Result<(), OwnershipServiceError> {
+    let parent = database_path.parent().ok_or(OwnershipServiceError::InvalidRequest)?;
+    let directory = open(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::empty(),
+    )
+    .map_err(|_| OwnershipServiceError::Storage)?;
+    let stat = fstat(&directory).map_err(|_| OwnershipServiceError::Storage)?;
+    let permissions = Mode::from_raw_mode(stat.st_mode) & (Mode::RWXU | Mode::RWXG | Mode::RWXO);
+    if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
+        || stat.st_uid != geteuid().as_raw()
+        || permissions != Mode::RWXU
+    {
+        return Err(OwnershipServiceError::StoreMismatch);
+    }
+    fsync(&directory).map_err(|_| OwnershipServiceError::Storage)
+}
+
+pub(crate) fn initialization_path(database_path: &Path, process_nonce: ProcessNonce) -> PathBuf {
+    let nonce = u128::from_be_bytes(process_nonce.0);
+    let mut value = database_path.as_os_str().to_os_string();
+    value.push(format!(".init-{nonce:032x}"));
+    PathBuf::from(value)
+}
+
+pub(crate) fn sqlite_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
+    let mut value = database_path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+fn remove_owned_initialization_files(temporary_path: &Path, database_guard: &File) {
+    let Ok(guard_stat) = fstat(database_guard) else {
+        return;
+    };
+    let Ok(path_metadata) = fs::symlink_metadata(temporary_path) else {
+        return;
+    };
+    if !path_metadata.file_type().is_file()
+        || path_metadata.dev() != guard_stat.st_dev
+        || path_metadata.ino() != guard_stat.st_ino
+    {
+        return;
+    }
+    for suffix in ["-wal", "-shm", "-journal", ""] {
+        let _ = fs::remove_file(sqlite_sidecar_path(temporary_path, suffix));
+    }
 }
 
 fn lock_path(database_path: &Path) -> PathBuf {

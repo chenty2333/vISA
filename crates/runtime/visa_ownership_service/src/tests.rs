@@ -1,4 +1,8 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt, PermissionsExt},
+    path::PathBuf,
+};
 
 use joint_handoff_core::{
     ClassificationCounts, DestinationPreparedReceipt, Digest, FreezeDisposition, IdempotencyKey,
@@ -505,6 +509,198 @@ fn store_is_private_durable_single_writer_and_exactly_bound() {
     ));
     let reopened = fixture.reopen(22);
     assert_eq!(reopened.server_binding().process_generation, 3);
+}
+
+#[test]
+fn first_create_ignores_old_orphans_and_publishes_only_a_complete_database() {
+    let fixture = TestFixture::new();
+    let stale =
+        crate::store::initialization_path(&fixture.database_path, ProcessNonce::from_u128(19));
+    fs::write(&stale, b"interrupted initialization").expect("create stale initialization file");
+    fs::set_permissions(&stale, fs::Permissions::from_mode(0o600))
+        .expect("make stale initialization file private");
+
+    let current =
+        crate::store::initialization_path(&fixture.database_path, ProcessNonce::from_u128(20));
+    let store = fixture.create(20);
+    assert!(fixture.database_path.exists());
+    assert_eq!(fs::read(&stale).expect("retain old orphan"), b"interrupted initialization");
+    let current_prefix =
+        current.file_name().expect("initialization file name").to_string_lossy().into_owned();
+    let current_leftovers =
+        fs::read_dir(fixture.database_path.parent().expect("database parent directory"))
+            .expect("list database parent")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(&current_prefix))
+            .collect::<Vec<_>>();
+    assert!(
+        current_leftovers.is_empty(),
+        "unexpected initialization leftovers: {current_leftovers:?}"
+    );
+    drop(store);
+
+    let reopened = fixture.reopen(21);
+    assert_eq!(reopened.server_binding().process_generation, 2);
+}
+
+#[test]
+fn published_generation_zero_store_converges_to_the_first_process_generation() {
+    let fixture = TestFixture::new();
+    crate::store::initialize_and_publish_database(
+        &fixture.database_path,
+        fixture.bootstrap(Some(fixture.identity), 20),
+        &fixture.authenticator(),
+    )
+    .expect("publish complete generation-zero store");
+
+    let connection = Connection::open(&fixture.database_path).expect("inspect published store");
+    let (generation, nonce): (i64, Vec<u8>) = connection
+        .query_row(
+            "SELECT process_generation, last_process_nonce FROM store_meta WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("published generation-zero metadata");
+    let process_instances: i64 = connection
+        .query_row("SELECT count(*) FROM process_instance", [], |row| row.get(0))
+        .expect("published process history");
+    assert_eq!(generation, 0);
+    assert_eq!(nonce, vec![0_u8; 16]);
+    assert_eq!(process_instances, 0);
+    drop(connection);
+
+    let reopened = fixture.reopen(21);
+    assert_eq!(reopened.server_binding().process_generation, 1);
+    assert_eq!(reopened.server_binding().process_nonce, ProcessNonce::from_u128(21));
+}
+
+#[test]
+fn first_create_never_replaces_an_existing_partial_final_path() {
+    let fixture = TestFixture::new();
+    fs::write(&fixture.database_path, b"partial final database")
+        .expect("create interrupted final database");
+    fs::set_permissions(&fixture.database_path, fs::Permissions::from_mode(0o600))
+        .expect("make interrupted final database private");
+    let before = fs::metadata(&fixture.database_path).expect("partial final metadata");
+
+    assert!(matches!(
+        AuthorityStore::open(
+            &fixture.database_path,
+            fixture.bootstrap(Some(fixture.identity), 20),
+            fixture.authenticator(),
+        ),
+        Err(OwnershipServiceError::StoreMismatch)
+    ));
+    let after = fs::metadata(&fixture.database_path).expect("retained final metadata");
+    assert_eq!(after.ino(), before.ino());
+    assert_eq!(
+        fs::read(&fixture.database_path).expect("retained final bytes"),
+        b"partial final database"
+    );
+    assert!(
+        !crate::store::initialization_path(&fixture.database_path, ProcessNonce::from_u128(20),)
+            .exists()
+    );
+
+    assert!(matches!(
+        AuthorityStore::open(
+            &fixture.database_path,
+            fixture.bootstrap(None, 21),
+            fixture.authenticator(),
+        ),
+        Err(OwnershipServiceError::StoreMismatch)
+    ));
+    let after_reopen = fs::metadata(&fixture.database_path).expect("rejected final metadata");
+    assert_eq!(after_reopen.ino(), before.ino());
+    assert_eq!(
+        fs::read(&fixture.database_path).expect("unmodified rejected final bytes"),
+        b"partial final database"
+    );
+}
+
+#[test]
+fn first_create_never_removes_a_preexisting_same_nonce_initialization_path() {
+    let fixture = TestFixture::new();
+    let preexisting =
+        crate::store::initialization_path(&fixture.database_path, ProcessNonce::from_u128(20));
+    fs::write(&preexisting, b"preexisting same-nonce file")
+        .expect("create same-nonce initialization path");
+    fs::set_permissions(&preexisting, fs::Permissions::from_mode(0o600))
+        .expect("make same-nonce initialization path private");
+    let before = fs::metadata(&preexisting).expect("same-nonce metadata");
+
+    assert!(matches!(
+        AuthorityStore::open(
+            &fixture.database_path,
+            fixture.bootstrap(Some(fixture.identity), 20),
+            fixture.authenticator(),
+        ),
+        Err(OwnershipServiceError::StoreMismatch)
+    ));
+    let after = fs::metadata(&preexisting).expect("retained same-nonce metadata");
+    assert_eq!(after.ino(), before.ino());
+    assert_eq!(
+        fs::read(&preexisting).expect("retained same-nonce bytes"),
+        b"preexisting same-nonce file"
+    );
+    assert!(!fixture.database_path.exists());
+}
+
+#[test]
+fn first_create_never_consumes_or_removes_preexisting_sqlite_sidecars() {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let fixture = TestFixture::new();
+        let temporary =
+            crate::store::initialization_path(&fixture.database_path, ProcessNonce::from_u128(20));
+        let sidecar = crate::store::sqlite_sidecar_path(&temporary, suffix);
+        fs::write(&sidecar, b"preexisting temporary sidecar").expect("create temporary sidecar");
+        fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o600))
+            .expect("make temporary sidecar private");
+        let before = fs::metadata(&sidecar).expect("temporary sidecar metadata");
+
+        assert!(matches!(
+            AuthorityStore::open(
+                &fixture.database_path,
+                fixture.bootstrap(Some(fixture.identity), 20),
+                fixture.authenticator(),
+            ),
+            Err(OwnershipServiceError::StoreMismatch)
+        ));
+        let after = fs::metadata(&sidecar).expect("retained temporary sidecar metadata");
+        assert_eq!(after.ino(), before.ino());
+        assert_eq!(
+            fs::read(&sidecar).expect("retained temporary sidecar bytes"),
+            b"preexisting temporary sidecar"
+        );
+        assert!(!temporary.exists());
+        assert!(!fixture.database_path.exists());
+    }
+
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let fixture = TestFixture::new();
+        let sidecar = crate::store::sqlite_sidecar_path(&fixture.database_path, suffix);
+        fs::write(&sidecar, b"preexisting final sidecar").expect("create final sidecar");
+        fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o600))
+            .expect("make final sidecar private");
+        let before = fs::metadata(&sidecar).expect("final sidecar metadata");
+
+        assert!(matches!(
+            AuthorityStore::open(
+                &fixture.database_path,
+                fixture.bootstrap(Some(fixture.identity), 20),
+                fixture.authenticator(),
+            ),
+            Err(OwnershipServiceError::StoreMismatch)
+        ));
+        let after = fs::metadata(&sidecar).expect("retained final sidecar metadata");
+        assert_eq!(after.ino(), before.ino());
+        assert_eq!(
+            fs::read(&sidecar).expect("retained final sidecar bytes"),
+            b"preexisting final sidecar"
+        );
+        assert!(!fixture.database_path.exists());
+    }
 }
 
 #[test]

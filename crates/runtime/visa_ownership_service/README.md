@@ -25,6 +25,15 @@ runtime session, ownership issuer namespace, receipt-policy digest, quotas,
 and process generation are persisted and must match before the first authority
 write on reopen.
 
+First creation initializes and audits a nonce-named database in the final
+directory, checkpoints and explicitly closes SQLite, requires every temporary
+sidecar to be absent, fsyncs the self-contained database, publishes it with
+Linux `RENAME_NOREPLACE`, and fsyncs the parent directory. A crash before
+publication can leave only an untrusted orphan; a crash after publication
+leaves a complete generation-zero store that the next process can audit and
+advance. Existing malformed final files and preexisting temporary or final
+SQLite sidecars fail closed and are never replaced, consumed, or cleaned up.
+
 Active-cohort RPC exchanges are retained without TTL pruning because local wire
 v1 has no `ReplayExpired` result. Startup audits the exact schema, foreign keys,
 canonical records, authority history, response/service bindings, completion
