@@ -13,7 +13,7 @@ use std::{
         Arc,
         atomic::{AtomicU8, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use async_io::Timer;
@@ -182,8 +182,14 @@ impl UnitSnapshot {
         self.state() == UnitState::Active
             && (!self.unit.is_service()
                 || (self.main_pid.unwrap_or(0) != 0
-                    && self.invocation_id.as_deref().is_some_and(|value| value.len() == 16)))
+                    && self.invocation_id.as_deref().is_some_and(|value| {
+                        value.len() == 16 && value.iter().any(|byte| *byte != 0)
+                    })))
             && (!self.unit.is_service() || self.result.as_deref() == Some("success"))
+    }
+
+    pub fn has_pending_job(&self) -> bool {
+        self.job_id != 0 || !self.job_type.is_empty() || self.job_path.as_str() != "/"
     }
 }
 
@@ -201,15 +207,31 @@ pub enum UnitState {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NexusMarker {
+    /// No registry-attempt marker exists for this cohort.
     Absent,
+    /// The caller has already verified the marker's exact cohort/boot binding
+    /// and the currently observed healthy `visa-nexusd` process identity.
     PresentWithHealthyProcess,
+    /// A marker exists, but the caller has not established a matching healthy
+    /// process.  This is a terminal retry boundary, not a start hint.
     PresentWithoutHealthyProcess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CohortMatch {
+    /// No product cohort is active; a first create may proceed when all units
+    /// are inactive or missing.
+    NoActiveCohort,
+    /// The observed active cohort is the exact manifest being retried.
+    Exact,
+    /// A different active cohort is present.
+    Different,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActivationContext {
     pub exact_retry: bool,
-    pub cohort_matches: bool,
+    pub cohort: CohortMatch,
     pub nexus_marker: NexusMarker,
 }
 
@@ -252,8 +274,20 @@ pub fn evaluate_activation(
         ordered.push((snapshot, state));
     }
 
-    if !context.cohort_matches {
+    if context.cohort == CohortMatch::Different {
         return ActivationDecision::Conflict(ActivationConflict::DifferentCohort);
+    }
+
+    let any_active = ordered.iter().any(|(_, state)| *state == UnitState::Active);
+    if context.exact_retry && context.cohort != CohortMatch::Exact {
+        return ActivationDecision::Conflict(ActivationConflict::DifferentCohort);
+    }
+    if context.cohort == CohortMatch::NoActiveCohort && any_active {
+        return ActivationDecision::Conflict(ActivationConflict::DifferentCohort);
+    }
+
+    if let Some((snapshot, _)) = ordered.iter().find(|(snapshot, _)| snapshot.has_pending_job()) {
+        return ActivationDecision::Conflict(ActivationConflict::UnitBusy(snapshot.unit));
     }
 
     let nexusd = ordered
@@ -278,7 +312,6 @@ pub fn evaluate_activation(
     {
         return ActivationDecision::Conflict(ActivationConflict::UnitBusy(snapshot.unit));
     }
-    let any_active = ordered.iter().any(|(_, state)| *state == UnitState::Active);
     if any_active && !context.exact_retry {
         return ActivationDecision::Conflict(
             ordered
@@ -418,8 +451,13 @@ pub enum ActivationError {
     ObservationChanged,
     PendingJob(FrozenUnit),
     UnitPathChanged(FrozenUnit),
+    /// The method reply or terminal signal was not observed. The operation is
+    /// unknown; call `PreparedActivation::query_unit` before any retry.
     JobTimeout,
-    JobFailed { unit: FrozenUnit, result: String },
+    JobFailed {
+        unit: FrozenUnit,
+        result: String,
+    },
     JobMessage(zbus::Error),
     Job(JobTrackerError),
 }
@@ -483,7 +521,7 @@ impl From<zbus::Error> for ActivationError {
     default_path = "/org/freedesktop/systemd1",
     gen_blocking = false
 )]
-pub trait SystemdManager {
+pub(crate) trait SystemdManager {
     #[zbus(name = "Subscribe", no_autostart)]
     fn subscribe(&self) -> zbus::Result<()>;
 
@@ -574,10 +612,6 @@ impl ActivationSession {
         })
     }
 
-    pub fn connection(&self) -> &Connection {
-        &self.connection
-    }
-
     pub async fn prepare(&self) -> Result<PreparedActivation<'_>, ActivationError> {
         match self.prepare_state.compare_exchange(
             PREPARE_OPEN,
@@ -593,8 +627,8 @@ impl ActivationSession {
         }
         let result = self.prepare_inner().await;
         if result.is_err() {
-            // Before Subscribe, a synchronous setup failure may be retried.
-            // Once Subscribe returned, or if the future is cancelled, the
+            // Failures before the Subscribe call is attempted may be retried.
+            // Once the call is attempted, or if the future is cancelled, the
             // connection is never reused for another subscription.
             let _ = self.prepare_state.compare_exchange(
                 PREPARE_SUBSCRIBED,
@@ -622,8 +656,11 @@ impl ActivationSession {
             .build()
             .await
             .map_err(ActivationError::Bus)?;
-        manager.subscribe().await.map_err(ActivationError::Bus)?;
+        // Mark the connection non-retryable before sending the call. A method
+        // timeout is ambiguous: systemd may have accepted Subscribe even when
+        // its reply was lost, so a second attempt must never be issued.
         self.prepare_state.store(PREPARE_SUBSCRIBED, Ordering::Release);
+        manager.subscribe().await.map_err(ActivationError::Bus)?;
         // `receive_job_removed` awaits AddMatch registration.  Keeping this
         // stream alive is the active subscription required by the contract.
         let jobs = manager.receive_job_removed().await.map_err(ActivationError::Bus)?;
@@ -650,6 +687,9 @@ impl ActivationSession {
         if owner != self.manager_owner {
             return Err(ActivationError::ManagerChanged);
         }
+        if self.connection.server_guid() != &self.server_guid {
+            return Err(ActivationError::BusChanged);
+        }
         Ok(())
     }
 }
@@ -663,6 +703,9 @@ pub struct PreparedActivation<'a> {
 }
 
 impl<'a> PreparedActivation<'a> {
+    /// Issue one low-level start operation after the caller has completed
+    /// cohort/manifest evaluation. A timeout is unknown and must be queried
+    /// before another mutation.
     pub async fn start_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
         self.require_manager_owner().await?;
         let job = self
@@ -673,6 +716,9 @@ impl<'a> PreparedActivation<'a> {
         self.wait_for_job(job, unit).await
     }
 
+    /// Issue one low-level stop operation after the caller has completed
+    /// retirement evaluation. A timeout is unknown and must be queried before
+    /// another mutation.
     pub async fn stop_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
         self.require_manager_owner().await?;
         let job = self
@@ -689,14 +735,21 @@ impl<'a> PreparedActivation<'a> {
         unit: FrozenUnit,
     ) -> Result<JobOutcome, ActivationError> {
         let mut tracker = JobTracker::new(job.as_str(), unit.name());
+        let deadline =
+            Instant::now().checked_add(JOB_WAIT_TIMEOUT).expect("activation job deadline overflow");
         loop {
             enum WaitResult<T> {
                 Event(Option<T>),
                 Timeout,
             }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.require_manager_owner().await?;
+                return Err(ActivationError::JobTimeout);
+            }
             let wait = async { WaitResult::Event(next_stream_item(&mut self.jobs).await) }
-                .or(async {
-                    Timer::after(JOB_WAIT_TIMEOUT).await;
+                .or(async move {
+                    Timer::after(remaining).await;
                     WaitResult::Timeout
                 })
                 .await;
@@ -706,6 +759,7 @@ impl<'a> PreparedActivation<'a> {
                     return Err(ActivationError::JobTimeout);
                 }
                 WaitResult::Event(None) => {
+                    self.require_manager_owner().await?;
                     return Err(ActivationError::Bus(zbus::Error::Failure(
                         "JobRemoved stream ended before the matching job".to_owned(),
                     )));
@@ -736,22 +790,41 @@ impl<'a> PreparedActivation<'a> {
         Ok(second)
     }
 
+    /// Re-observe one unit through the same stable two-pass check used by the
+    /// activation preflight. This is the required read path after a lost
+    /// JobRemoved outcome.
+    pub async fn query_unit(&self, unit: FrozenUnit) -> Result<UnitSnapshot, ActivationError> {
+        self.list_units()
+            .await?
+            .into_iter()
+            .find(|snapshot| snapshot.unit == unit)
+            .ok_or(ActivationError::ObservationChanged)
+    }
+
     async fn list_units_once(&self) -> Result<Vec<UnitSnapshot>, ActivationError> {
         self.require_manager_owner().await?;
         let names = FrozenUnit::all().iter().map(|unit| unit.name()).collect::<Vec<_>>();
         let rows = self.manager.list_units_by_names(&names).await.map_err(ActivationError::Bus)?;
+        for row in &rows {
+            let Some(_) = FrozenUnit::all().iter().find(|unit| unit.name() == row.0) else {
+                return Err(ActivationError::ObservationChanged);
+            };
+            if rows.iter().filter(|candidate| candidate.0 == row.0).count() != 1 {
+                return Err(ActivationError::ObservationChanged);
+            }
+        }
         let mut result = Vec::with_capacity(names.len());
         for unit in FrozenUnit::all() {
             let Some(row) = rows.iter().find(|row| row.0 == unit.name()) else {
                 result.push(UnitSnapshot::missing(*unit));
                 continue;
             };
+            if row.7 != 0 || !row.8.is_empty() || row.9.as_str() != "/" {
+                return Err(ActivationError::PendingJob(*unit));
+            }
             if row.2 == "not-found" {
                 result.push(UnitSnapshot::missing(*unit));
                 continue;
-            }
-            if row.7 != 0 || !row.8.is_empty() || row.9.as_str() != "/" {
-                return Err(ActivationError::PendingJob(*unit));
             }
             let mut snapshot = UnitSnapshot::from_row(*unit, row);
             let path = self
@@ -804,6 +877,9 @@ impl<'a> PreparedActivation<'a> {
             dbus.get_name_owner(BusName::from(systemd_name)).await.map_err(ActivationError::Fdo)?;
         if owner != self.manager_owner {
             return Err(ActivationError::ManagerChanged);
+        }
+        if self.connection.server_guid() != &self.server_guid {
+            return Err(ActivationError::BusChanged);
         }
         Ok(())
     }
@@ -859,7 +935,7 @@ mod tests {
                 &healthy_set(),
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),
@@ -874,11 +950,73 @@ mod tests {
                 &healthy_set(),
                 ActivationContext {
                     exact_retry: false,
-                    cohort_matches: false,
+                    cohort: CohortMatch::Different,
                     nexus_marker: NexusMarker::Absent,
                 },
             ),
             ActivationDecision::Conflict(ActivationConflict::DifferentCohort)
+        );
+    }
+
+    #[test]
+    fn first_create_with_no_active_cohort_can_start_in_order() {
+        let values = FrozenUnit::all()
+            .iter()
+            .map(|unit| snapshot(*unit, "inactive", "dead"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            evaluate_activation(
+                &values,
+                ActivationContext {
+                    exact_retry: false,
+                    cohort: CohortMatch::NoActiveCohort,
+                    nexus_marker: NexusMarker::Absent,
+                },
+            ),
+            ActivationDecision::Start(vec![
+                FrozenUnit::Ownershipd,
+                FrozenUnit::Nexusd,
+                FrozenUnit::SourceAgent,
+                FrozenUnit::DestinationAgent,
+                FrozenUnit::Target,
+            ])
+        );
+    }
+
+    #[test]
+    fn no_active_cohort_with_a_live_unit_is_a_conflict() {
+        assert_eq!(
+            evaluate_activation(
+                &healthy_set(),
+                ActivationContext {
+                    exact_retry: false,
+                    cohort: CohortMatch::NoActiveCohort,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::DifferentCohort)
+        );
+    }
+
+    #[test]
+    fn pending_job_is_busy_even_when_unit_state_is_inactive() {
+        let mut values = healthy_set();
+        let source = values.iter_mut().find(|value| value.unit == FrozenUnit::SourceAgent).unwrap();
+        source.active_state = "inactive".to_owned();
+        source.sub_state = "dead".to_owned();
+        source.job_id = 7;
+        source.job_type = "start".to_owned();
+        source.job_path = "/org/freedesktop/systemd1/job/7".try_into().unwrap();
+        assert_eq!(
+            evaluate_activation(
+                &values,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort: CohortMatch::Exact,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Conflict(ActivationConflict::UnitBusy(FrozenUnit::SourceAgent))
         );
     }
 
@@ -897,7 +1035,7 @@ mod tests {
                 &values,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),
@@ -920,7 +1058,7 @@ mod tests {
                 &values,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),
@@ -943,7 +1081,7 @@ mod tests {
                 &target_failed,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),
@@ -960,7 +1098,7 @@ mod tests {
                     &values,
                     ActivationContext {
                         exact_retry: true,
-                        cohort_matches: true,
+                        cohort: CohortMatch::Exact,
                         nexus_marker: marker
                     },
                 ),
@@ -977,7 +1115,7 @@ mod tests {
                 &dead,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),
@@ -996,7 +1134,7 @@ mod tests {
                 &values,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithoutHealthyProcess,
                 },
             ),
@@ -1015,7 +1153,7 @@ mod tests {
                 &values,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),
@@ -1033,7 +1171,7 @@ mod tests {
                 &values,
                 ActivationContext {
                     exact_retry: true,
-                    cohort_matches: true,
+                    cohort: CohortMatch::Exact,
                     nexus_marker: NexusMarker::PresentWithHealthyProcess,
                 },
             ),

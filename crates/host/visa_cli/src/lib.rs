@@ -8,8 +8,8 @@ use std::{ffi::OsString, fmt};
 pub use cohort::{CohortManager, CohortPlan, CohortRoots};
 pub use systemd_activation::{
     ActivationConflict, ActivationContext, ActivationDecision, ActivationError, ActivationSession,
-    FrozenUnit, JOB_WAIT_TIMEOUT, JobOutcome, JobRemovedEvent, JobTracker, JobTrackerError,
-    ListUnitRow, NexusMarker, PreparedActivation, START_MODE, STOP_MODE, SystemdManagerProxy,
+    CohortMatch, FrozenUnit, JOB_WAIT_TIMEOUT, JobOutcome, JobRemovedEvent, JobTracker,
+    JobTrackerError, ListUnitRow, NexusMarker, PreparedActivation, START_MODE, STOP_MODE,
     UnitSnapshot, UnitState,
 };
 

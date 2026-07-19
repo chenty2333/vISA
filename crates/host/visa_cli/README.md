@@ -11,6 +11,15 @@ The current slice implements the durable `cohort-create` preparation phase:
 
 The `systemd_activation` module now contains the separately testable typed
 zbus 5.18 Manager/JobRemoved choreography and a pure five-unit state
-evaluator. It is deliberately not wired into `cohort-create` or the readiness
-ledger yet: no CLI operation issues an ownership, effect, or Nexus receipt,
-and the caller still has to bind the unit result to product RPC health.
+evaluator. The primitive uses `no_autostart` calls, a connection-scoped
+Subscribe gate, server-guid and manager-owner fencing, a bounded fixed
+JobRemoved deadline, pending-job/object-path checks, and a two-pass stable unit
+observation. `tests/private_bus.rs` exercises the real zbus signatures,
+buffered JobRemoved delivery, NoAutoStart flags, and the five-unit properties
+on an isolated D-Bus session.
+
+It is deliberately not wired into `cohort-create` or the readiness ledger yet:
+no CLI operation issues an ownership, effect, or Nexus receipt, the controller
+lease does not yet span the later activation transaction, and the caller still
+has to bind the unit result to product RPC/Nexus health and reconcile a lost
+JobRemoved outcome before any retry.
