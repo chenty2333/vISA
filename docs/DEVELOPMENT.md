@@ -429,11 +429,33 @@ completion-order boundaries, audits its exact schema and authority history, and
 rebuilds a shadow projection by replaying the durable exact RPC ledger at
 startup. Seal
 admission reuses the `joint_handoff_core` reducer for the typed neutral chain.
+First creation converges through an audited, checkpointed, explicitly closed,
+sidecar-free temporary SQLite database followed by `RENAME_NOREPLACE` and
+file/parent fsync. Orphan initialization files are never adopted, while an
+existing malformed final path or foreign SQLite sidecar fails closed without
+replacement. This closes the partial-first-start window but is not the later
+process kill/restart/lost-ACK evidence gate.
 The fixed local issuer policy remains only a same-UID trusted-binary TCB pin:
 without an authenticated neutral envelope it is not cryptographic or
 request-bound authenticity. O1 alone changes no readiness-ledger status; the
 zbus/credential/fence/sd-notify process slice and the real agent vertical remain
 required before any ownership RPC or service ID can become satisfied.
+
+The bounded O2 candidate adds the real `visa-ownershipd` executable without
+introducing a second authority implementation. It reuses exact zbus 5.18.0,
+rustix 1.1.4, `sd-notify` 0.5.0, and the O1 SQLite store. A digest-pinned,
+secure-opened canonical bootstrap supplies the exact store/peer inventory; it
+is an explicit launch input, not release provenance or a trust root. Each
+`Execute(ay) -> ay` call rechecks the bus-controlled sender, role-name owner,
+UID/PID, ProcessFD or double-query pidfd fallback, and `/proc/<pid>/exe`
+identity/digest before the name-loss commit barrier admits it to the bounded
+single-writer queue. READY is delivered only after store audit, interface
+export, watcher installation, exact no-replace name acquisition, and gate
+activation. A private-session-bus test locks the introspected method signature,
+READY visibility, and DoNotQueue/no-replace behavior. O2 still changes no
+readiness-ledger status: the installed artifact inventory, systemd user unit,
+real Source/Destination agents, process kill/restart/lost-ACK verifier, and
+Ubuntu 24.04 compatibility cell remain O3 work.
 
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,
