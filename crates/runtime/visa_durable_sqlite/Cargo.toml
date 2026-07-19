@@ -1,0 +1,14 @@
+[package]
+name = "visa_durable_sqlite"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+readme = "README.md"
+publish = false
+
+[dependencies]
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"

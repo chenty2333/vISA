@@ -2667,6 +2667,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa_durable_sqlite"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
 name = "visa_jco_node"
 version = "0.2.0"
 dependencies = [

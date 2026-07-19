@@ -27,6 +27,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
         {"contract_core", "joint_handoff_core", "substrate_api", "visa_runtime"}
     ),
     "visa_local_transport": frozenset(),
+    "visa_durable_sqlite": frozenset(),
     "visa_ownership_service": frozenset(
         {"contract_core", "joint_handoff_core", "visa_local_rpc"}
     ),
