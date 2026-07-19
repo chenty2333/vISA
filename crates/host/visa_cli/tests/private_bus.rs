@@ -40,11 +40,12 @@ struct FakeState {
     calls: Vec<Call>,
     subscribed: bool,
     next_job: u32,
+    missing_rows: bool,
 }
 
 impl FakeState {
     fn new() -> Self {
-        Self { calls: Vec::new(), subscribed: false, next_job: 1 }
+        Self { calls: Vec::new(), subscribed: false, next_job: 1, missing_rows: false }
     }
 
     fn next_job(&mut self) -> (u32, OwnedObjectPath) {
@@ -137,6 +138,7 @@ impl FakeManager {
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<Vec<ListUnitRow>> {
         let mut state = self.0.lock().expect("fake systemd state");
+        let missing_rows = state.missing_rows;
         state.calls.push(Call::List {
             units,
             no_autostart: header.primary().flags().contains(Flags::NoAutoStart),
@@ -144,18 +146,33 @@ impl FakeManager {
         Ok(FrozenUnit::all()
             .iter()
             .map(|unit| {
-                (
-                    unit.name().to_owned(),
-                    format!("fake {}", unit.name()),
-                    "loaded".to_owned(),
-                    "active".to_owned(),
-                    unit.expected_sub_state().to_owned(),
-                    String::new(),
-                    unit_path(*unit),
-                    0,
-                    String::new(),
-                    root_path(),
-                )
+                if missing_rows {
+                    (
+                        unit.name().to_owned(),
+                        format!("missing {}", unit.name()),
+                        "not-found".to_owned(),
+                        "inactive".to_owned(),
+                        "dead".to_owned(),
+                        String::new(),
+                        unit_path(*unit),
+                        0,
+                        String::new(),
+                        root_path(),
+                    )
+                } else {
+                    (
+                        unit.name().to_owned(),
+                        format!("fake {}", unit.name()),
+                        "loaded".to_owned(),
+                        "active".to_owned(),
+                        unit.expected_sub_state().to_owned(),
+                        String::new(),
+                        unit_path(*unit),
+                        0,
+                        String::new(),
+                        root_path(),
+                    )
+                }
             })
             .collect())
     }
@@ -171,6 +188,9 @@ impl FakeManager {
             unit: unit.clone(),
             no_autostart: header.primary().flags().contains(Flags::NoAutoStart),
         });
+        if state.missing_rows {
+            return Err(zbus::fdo::Error::Failed("unit was collected before GetUnit".to_owned()));
+        }
         FrozenUnit::all()
             .iter()
             .find(|candidate| candidate.name() == unit)
@@ -290,6 +310,21 @@ fn private_bus_systemd_activation_round_trip() {
             activation.stop_unit(FrozenUnit::Target).await.expect("stop target"),
             JobOutcome::Done
         );
+
+        let get_calls_before_missing = {
+            let state = state.lock().expect("fake systemd state");
+            state.calls.iter().filter(|call| matches!(call, Call::Get { .. })).count()
+        };
+        state.lock().expect("fake systemd state").missing_rows = true;
+        let missing = activation.list_units().await.expect("list missing fake units");
+        assert_eq!(missing.len(), FrozenUnit::all().len());
+        assert!(missing.iter().all(|snapshot| snapshot.state() == visa_cli::UnitState::Missing));
+        let get_calls_after_missing = {
+            let state = state.lock().expect("fake systemd state");
+            state.calls.iter().filter(|call| matches!(call, Call::Get { .. })).count()
+        };
+        assert_eq!(get_calls_after_missing, get_calls_before_missing);
+
         drop(activation);
         assert!(matches!(session.prepare().await, Err(ActivationError::AlreadyPrepared)));
 

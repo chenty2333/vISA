@@ -127,7 +127,7 @@ impl UnitSnapshot {
         Self {
             unit,
             id: unit.name().to_owned(),
-            unit_path: root_object_path(),
+            unit_path: expected_unit_path(unit),
             load_state: "not-found".to_owned(),
             active_state: "inactive".to_owned(),
             sub_state: "dead".to_owned(),
@@ -163,8 +163,18 @@ impl UnitSnapshot {
         if self.id != self.unit.name() {
             return UnitState::Malformed;
         }
+        if self.unit_path != expected_unit_path(self.unit) {
+            return UnitState::Malformed;
+        }
         if self.load_state == "not-found" {
-            return UnitState::Missing;
+            return if self.active_state == "inactive"
+                && self.sub_state == "dead"
+                && !self.has_pending_job()
+            {
+                UnitState::Missing
+            } else {
+                UnitState::Malformed
+            };
         }
         if self.load_state != "loaded" {
             return UnitState::Unloaded;
@@ -192,6 +202,14 @@ impl UnitSnapshot {
 
     pub fn has_pending_job(&self) -> bool {
         self.job_id != 0 || !self.job_type.is_empty() || self.job_path.as_str() != "/"
+    }
+
+    fn terminal_observation(&self) -> bool {
+        !self.has_pending_job()
+            && matches!(
+                self.state(),
+                UnitState::Missing | UnitState::Inactive | UnitState::Active | UnitState::Failed
+            )
     }
 }
 
@@ -741,11 +759,14 @@ impl<'a> PreparedActivation<'a> {
     pub async fn start_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
         self.require_known_outcome()?;
         self.require_manager_owner().await?;
+        // Mark the operation unknown before sending the method call. If the
+        // future is cancelled after bytes leave the connection, the handle
+        // must not be reused until a later query reconciles the unit.
+        self.mark_unknown(unit);
         let job = match self.manager.start_unit(unit.name().to_owned(), START_MODE.to_owned()).await
         {
             Ok(job) => job,
             Err(error) => {
-                self.unknown_unit = Some(unit);
                 return Err(ActivationError::Bus(error));
             }
         };
@@ -758,10 +779,10 @@ impl<'a> PreparedActivation<'a> {
     pub async fn stop_unit(&mut self, unit: FrozenUnit) -> Result<JobOutcome, ActivationError> {
         self.require_known_outcome()?;
         self.require_manager_owner().await?;
+        self.mark_unknown(unit);
         let job = match self.manager.stop_unit(unit.name().to_owned(), STOP_MODE.to_owned()).await {
             Ok(job) => job,
             Err(error) => {
-                self.unknown_unit = Some(unit);
                 return Err(ActivationError::Bus(error));
             }
         };
@@ -835,8 +856,12 @@ impl<'a> PreparedActivation<'a> {
                             return Err(error);
                         }
                         return match outcome {
-                            JobOutcome::Done => Ok(JobOutcome::Done),
+                            JobOutcome::Done => {
+                                self.unknown_unit = None;
+                                Ok(JobOutcome::Done)
+                            }
                             JobOutcome::Failed(result) => {
+                                self.unknown_unit = None;
                                 Err(ActivationError::JobFailed { unit, result })
                             }
                         };
@@ -875,17 +900,23 @@ impl<'a> PreparedActivation<'a> {
     /// Re-observe one unit through the same stable two-pass check used by the
     /// activation preflight. This is the required read path after a lost
     /// JobRemoved outcome. Pending jobs are returned as evidence instead of
-    /// being treated as an idle unit.
+    /// being treated as an idle unit. The local unknown-outcome fence is only
+    /// cleared when the complete frozen cohort is stable, has no pending jobs,
+    /// and every member is in a terminal state. The returned snapshot does not
+    /// assert that the original start/stop operation succeeded; the caller
+    /// must still re-evaluate its manifest and cohort decision.
     pub async fn query_unit(&mut self, unit: FrozenUnit) -> Result<UnitSnapshot, ActivationError> {
         let (first, second) = self.stable_unit_observation(false).await?;
         if first != second {
             return Err(ActivationError::ObservationChanged);
         }
         let snapshot = second
-            .into_iter()
+            .iter()
             .find(|snapshot| snapshot.unit == unit)
+            .cloned()
             .ok_or(ActivationError::ObservationChanged)?;
-        if !snapshot.has_pending_job() && self.unknown_unit == Some(unit) {
+        let cohort_reconciled = second.iter().all(UnitSnapshot::terminal_observation);
+        if cohort_reconciled && self.unknown_unit == Some(unit) {
             self.unknown_unit = None;
         }
         Ok(snapshot)
@@ -906,26 +937,39 @@ impl<'a> PreparedActivation<'a> {
                 return Err(ActivationError::ObservationChanged);
             }
         }
+        if rows.len() != names.len()
+            || names.iter().any(|name| !rows.iter().any(|row| &row.0 == name))
+        {
+            return Err(ActivationError::ObservationChanged);
+        }
         let mut result = Vec::with_capacity(names.len());
         for unit in FrozenUnit::all() {
-            let Some(row) = rows.iter().find(|row| row.0 == unit.name()) else {
-                // ListUnitsByNames omits names that are not loaded; this is
-                // the systemd-defined representation of a missing unit.
-                result.push(UnitSnapshot::missing(*unit));
-                continue;
-            };
+            let row = rows
+                .iter()
+                .find(|row| row.0 == unit.name())
+                .expect("validated ListUnitsByNames contains every frozen unit");
             let pending = row.7 != 0 || !row.8.is_empty() || row.9.as_str() != "/";
             if reject_pending && pending {
                 return Err(ActivationError::PendingJob(*unit));
             }
+            let mut snapshot = UnitSnapshot::from_row(*unit, row);
             if row.2 == "not-found" {
-                if pending || row.6.as_str() != "/" || row.3 != "inactive" || row.4 != "dead" {
+                // ListUnitsByNames materializes a legitimate not-found stub,
+                // but systemd may garbage-collect it before a subsequent
+                // GetUnit call. Validate the row itself and retain its path;
+                // do not turn that normal race into an observation failure.
+                if pending
+                    || row.3 != "inactive"
+                    || row.4 != "dead"
+                    || !row.5.is_empty()
+                    || row.6 != expected_unit_path(*unit)
+                    || snapshot.state() != UnitState::Missing
+                {
                     return Err(ActivationError::ObservationChanged);
                 }
-                result.push(UnitSnapshot::missing(*unit));
+                result.push(snapshot);
                 continue;
             }
-            let mut snapshot = UnitSnapshot::from_row(*unit, row);
             let path = self
                 .manager
                 .get_unit(unit.name().to_owned())
@@ -1005,6 +1049,19 @@ fn root_object_path() -> OwnedObjectPath {
     "/".try_into().expect("frozen root object path is valid")
 }
 
+fn expected_unit_path(unit: FrozenUnit) -> OwnedObjectPath {
+    let path = match unit {
+        FrozenUnit::Target => "/org/freedesktop/systemd1/unit/visa_2dlocal_2etarget",
+        FrozenUnit::Ownershipd => "/org/freedesktop/systemd1/unit/visa_2downershipd_2eservice",
+        FrozenUnit::Nexusd => "/org/freedesktop/systemd1/unit/visa_2dnexusd_2eservice",
+        FrozenUnit::SourceAgent => "/org/freedesktop/systemd1/unit/visa_2dagent_40source_2eservice",
+        FrozenUnit::DestinationAgent => {
+            "/org/freedesktop/systemd1/unit/visa_2dagent_40destination_2eservice"
+        }
+    };
+    path.try_into().expect("frozen systemd unit path is valid")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1025,6 +1082,48 @@ mod tests {
             .iter()
             .map(|unit| snapshot(*unit, "active", unit.expected_sub_state()))
             .collect()
+    }
+
+    #[test]
+    fn not_found_snapshot_requires_terminal_fields_and_canonical_path() {
+        let unit = FrozenUnit::SourceAgent;
+        let mut value = UnitSnapshot::missing(unit);
+        assert_eq!(value.state(), UnitState::Missing);
+
+        value.active_state = "active".to_owned();
+        assert_eq!(value.state(), UnitState::Malformed);
+
+        value.active_state = "inactive".to_owned();
+        value.sub_state = "dead".to_owned();
+        value.job_id = 9;
+        assert_eq!(value.state(), UnitState::Malformed);
+
+        value.job_id = 0;
+        value.unit_path = root_object_path();
+        assert_eq!(value.state(), UnitState::Malformed);
+    }
+
+    #[test]
+    fn evaluator_rejects_malformed_not_found_snapshot() {
+        let mut values = healthy_set();
+        let source = values.iter_mut().find(|value| value.unit == FrozenUnit::SourceAgent).unwrap();
+        source.load_state = "not-found".to_owned();
+        source.active_state = "active".to_owned();
+        source.sub_state = "running".to_owned();
+        source.main_pid = None;
+        source.result = None;
+        source.invocation_id = None;
+        assert_eq!(
+            evaluate_activation(
+                &values,
+                ActivationContext {
+                    exact_retry: true,
+                    cohort: CohortMatch::Exact,
+                    nexus_marker: NexusMarker::PresentWithHealthyProcess,
+                },
+            ),
+            ActivationDecision::Invalid(FrozenUnit::SourceAgent, UnitState::Malformed)
+        );
     }
 
     #[test]
