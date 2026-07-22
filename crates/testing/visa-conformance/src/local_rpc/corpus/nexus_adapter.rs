@@ -241,6 +241,25 @@ pub(super) fn build() -> Result<GoldenCorpus, GoldenCorpusError> {
         &[("Outcome", "Success"), ("Success", "Query"), ("QueryResult", "Missing")],
     )?;
 
+    let pending_query_effect = effect(1_050);
+    push_exchange(
+        &mut builder,
+        "query-effect-unknown",
+        request(
+            1_050,
+            AgentRole::Source,
+            Operation::Query(QueryRequest::Effect(pending_query_effect)),
+        ),
+        Outcome::Unknown(Unknown {
+            query: QueryRequest::Effect(pending_query_effect),
+            last_known_provider_revision: 7,
+        }),
+        "Operation::Query(QueryRequest::Effect)",
+        "Outcome::Unknown",
+        &[("Operation", "Query"), ("QueryRequest", "Effect"), ("AgentRole", "Source")],
+        &[("Outcome", "Unknown")],
+    )?;
+
     for (index, kind) in all_receipt_kinds().into_iter().enumerate() {
         let kind_name = receipt_kind_name(kind);
         let seed = 1_100 + index as u128 * 10;

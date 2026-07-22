@@ -2754,6 +2754,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa_nexus_service"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "visa_durable_sqlite",
+ "visa_local_rpc",
+]
+
+[[package]]
 name = "visa_ownership_service"
 version = "0.1.0"
 dependencies = [

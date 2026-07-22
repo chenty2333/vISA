@@ -32,6 +32,7 @@ members = [
     "crates/runtime/visa_joint_handoff",
     "crates/runtime/visa_local_transport",
     "crates/runtime/visa_durable_sqlite",
+    "crates/runtime/visa_nexus_service",
     "crates/runtime/visa_agent_store",
     "crates/runtime/visa_ownership_service",
     "crates/runtime/visa_ownershipd",

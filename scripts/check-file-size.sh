@@ -19,6 +19,7 @@ ACTIVE_SPINE_PREFIXES=(
     crates/runtime/visa_runtime/
     crates/runtime/visa_joint_handoff/
     crates/runtime/visa_durable_sqlite/
+    crates/runtime/visa_nexus_service/
     crates/runtime/visa_agent_store/
     crates/runtime/visa_ownership_service/
     crates/runtime/visa_ownershipd/

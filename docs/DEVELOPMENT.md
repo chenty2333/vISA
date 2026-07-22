@@ -486,6 +486,24 @@ readiness-ledger status: the installed artifact inventory, systemd user unit,
 real Source/Destination agents, process kill/restart/lost-ACK verifier, and
 Ubuntu 24.04 compatibility cell remain O3 work.
 
+The bounded N1 candidate now lives in `visa_nexus_service`. It is the
+transport-independent core of the planned `visa-nexusd` process, not the
+product D-Bus service or a second Nexus Registry. The service-owned SQLite
+store admits exact local-RPC request bytes, persists the deterministic native
+request bytes before any peer call, and atomically consumes one verified
+native commit into one replayable dispatch grant and paired response. A lost
+native response or adapter restart therefore reuses the same native request
+identity and bytes; it does not mint another Registry transition. Create-new
+and reopen-existing paths retain the cohort, boot, runtime session, service,
+Registry, provider, process-generation, caller-generation, request, receipt,
+and grant bindings and audit the exact schema and retained ledger before
+serving. The narrow `NativePeer` seam requires side-effect-free preparation;
+all external native effects begin only after the prepared bytes are durable.
+N1 alone changes no readiness-ledger status: bus-controlled credential
+admission, the registry-attempt tombstone, executable identity checks, native
+receipt-chain verification in a real process client, peer supervision, and the
+agent-to-sink dispatch vertical remain later gates.
+
 The implemented `system` tier creates a private artifact root, runs all 31 Stage
 1 registry cases through isolated source and destination worker processes,
 writes an execution evidence bundle, then invokes the independent

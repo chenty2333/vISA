@@ -588,7 +588,8 @@ impl Unknown {
             | (QueryRequest::Joint(handoff), Operation::CloseStep(request)) => {
                 handoff == request.key.handoff
             }
-            (_, Operation::Descriptor | Operation::Query(_)) => false,
+            (query, Operation::Query(requested)) => query == *requested,
+            (_, Operation::Descriptor) => false,
             _ => false,
         }
     }

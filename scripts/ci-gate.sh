@@ -139,6 +139,7 @@ active_spine_packages=(
     visa_joint_handoff
     visa_local_transport
     visa_durable_sqlite
+    visa_nexus_service
     visa_agent_store
     visa_ownership_service
     visa-ownershipd
