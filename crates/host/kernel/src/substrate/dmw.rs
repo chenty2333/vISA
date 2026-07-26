@@ -163,12 +163,30 @@ impl DmwLease {
 
     pub(crate) fn bytes(&self) -> Result<&[u8], DmwFault> {
         DMW.lock().validate(self.slot_index, self.generation, self.activation_id)?;
+        // SAFETY: the `validate` call above proves the lease still owns its slot at the recorded
+        // generation and activation, so the window has not been revoked or reused, and the
+        // returned slice borrows `self` so it cannot outlive the lease's `Drop` release. The
+        // element type is `u8`, so no alignment requirement applies.
+        // SAFETY: caller must guarantee that the `ptr`/`len` handed to `acquire` describe a
+        // readable range that stays mapped and unaliased for the lease's lifetime; this module
+        // only tracks slot liveness and never validates the address itself. The one caller,
+        // `frontends::linux_elf::bridge::user_lease`, establishes this via `validate_user_range`
+        // and `ensure_active_user_pages_present` before acquiring.
         Ok(unsafe { slice::from_raw_parts(self.ptr as *const u8, self.len) })
     }
 
     pub(crate) fn bytes_mut(&mut self) -> Result<&mut [u8], DmwFault> {
         assert!(self.writable, "DMW lease was not writable");
         DMW.lock().validate(self.slot_index, self.generation, self.activation_id)?;
+        // SAFETY: as in `bytes`, `validate` proves the window is still live at this generation and
+        // activation, and the slice borrows `&mut self`, so Rust's own aliasing rules keep it the
+        // only outstanding reference derived from this lease for its lifetime. The `writable`
+        // assertion above rejects leases that were not acquired for writing.
+        // SAFETY: caller must guarantee the `ptr`/`len` given to `acquire` describe a range that
+        // is writable, stays mapped for the lease's lifetime, and is not aliased by any other
+        // reference; this module validates only slot liveness, never the address. The one caller,
+        // `frontends::linux_elf::bridge::user_lease`, checks this with `validate_user_range` and
+        // `ensure_active_user_pages_present` under the `dmw.window` capability.
         Ok(unsafe { slice::from_raw_parts_mut(self.ptr as *mut u8, self.len) })
     }
 }

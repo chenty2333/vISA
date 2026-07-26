@@ -63,6 +63,10 @@ impl AlignedElfBuffer {
     fn copy_from(bytes: &[u8]) -> Self {
         let mut words = vec![0u64; bytes.len().div_ceil(core::mem::size_of::<u64>())];
         let ptr = words.as_mut_ptr().cast::<u8>();
+        // SAFETY: `words` was just allocated with `bytes.len().div_ceil(8)` `u64` elements, so its
+        // allocation is at least `bytes.len()` bytes; `bytes` is a live shared slice of that same
+        // length. The two regions cannot overlap because `words` is a fresh allocation this
+        // function exclusively owns. A `*mut u64` cast to `*mut u8` is trivially aligned for `u8`.
         unsafe {
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
         }
@@ -70,6 +74,10 @@ impl AlignedElfBuffer {
     }
 
     fn as_bytes(&self) -> &[u8] {
+        // SAFETY: `words` is only ever built by `copy_from`, which sizes it to
+        // `len.div_ceil(8)` `u64` elements and thus at least `self.len` initialized bytes, and
+        // neither field is mutated afterwards. The slice borrows `&self`, so it cannot outlive
+        // the backing `Vec`, and `u8` imposes no alignment requirement on the cast pointer.
         unsafe { slice::from_raw_parts(self.words.as_ptr().cast::<u8>(), self.len) }
     }
 }
@@ -179,6 +187,16 @@ impl PageTableAuthority for LiveUserPageTableAuthority<'_, '_> {
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
         let frame = PhysFrame::containing_address(PhysAddr::new(phys));
         let flags = page_flags_from_attrs(writable, executable);
+        // SAFETY: `va` and `phys` are checked page-aligned and non-zero by the `validate_page_aligned`
+        // calls above, and `flags` always carries PRESENT | USER_ACCESSIBLE, so the entry describes a
+        // user page rather than a kernel one. `MapToError::PageAlreadyMapped` is surfaced as an error
+        // rather than overwriting a live mapping.
+        // SAFETY: caller must guarantee `phys` names a frame that is free or already owned by this
+        // address space, so mapping it does not create an unintended alias of memory owned
+        // elsewhere. This is a `PageTableAuthority` trait method, so the guarantee rests on the
+        // frame's provenance at each call site; within this module the frames come from
+        // `UserFrameAllocator` via `alloc_frame` or from a `UserPageMapping` this address space
+        // already owns.
         match unsafe { self.mapper.map_to(page, frame, flags, self.frame_allocator) } {
             Ok(flush) => {
                 flush.flush();
@@ -224,6 +242,14 @@ impl PageTableAuthority for LiveUserPageTableAuthority<'_, '_> {
         validate_page_aligned(va, "page")?;
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(va));
         let flags = page_flags_from_attrs(writable, executable);
+        // SAFETY: `va` is checked page-aligned and non-zero above, and `page_flags_from_attrs`
+        // always sets PRESENT | USER_ACCESSIBLE, so this cannot silently unmap the page or promote
+        // a kernel mapping to user-accessible. The returned flush is consumed by `flush()` below,
+        // so the TLB never keeps a stale entry for the changed page.
+        // SAFETY: caller must guarantee that relaxing or tightening these permissions does not
+        // invalidate references the kernel holds into that page. This is a `PageTableAuthority`
+        // trait method, so the guarantee rests on the call site; the callers in this module operate
+        // on user pages tracked in `UserPageMapping`, which the kernel does not reference directly.
         match unsafe { self.mapper.update_flags(page, flags) } {
             Ok(flush) => {
                 flush.flush();
@@ -313,7 +339,18 @@ pub(crate) fn protect_user_page_range(
     prot: u64,
 ) -> Result<(), &'static str> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
+    // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+    // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+    // so it is the base of the complete physical memory map that `active_level_4_table`
+    // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+    // never escapes this function, so it does not outlive the mapper's use.
+    // SAFETY: caller must guarantee no other mapper for the active address space is live
+    // concurrently; this module's page-table entry points each build and drop their own
+    // mapper within a single call, and the kernel serializes user address space edits.
     let level_4 = unsafe { active_level_4_table(phys_offset) };
+    // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+    // `phys_offset`, which is the same bootloader-provided offset validated for
+    // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let mut authority =
         LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
@@ -375,7 +412,18 @@ pub(crate) fn invalidate_user_page_mapping(
 
     if page_mappings[index].present {
         let phys_offset = VirtAddr::new(physical_memory_offset);
+        // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+        // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+        // so it is the base of the complete physical memory map that `active_level_4_table`
+        // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+        // never escapes this function, so it does not outlive the mapper's use.
+        // SAFETY: caller must guarantee no other mapper for the active address space is live
+        // concurrently; this module's page-table entry points each build and drop their own
+        // mapper within a single call, and the kernel serializes user address space edits.
         let level_4 = unsafe { active_level_4_table(phys_offset) };
+        // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+        // `phys_offset`, which is the same bootloader-provided offset validated for
+        // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
         let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
         let mut authority =
             LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
@@ -411,7 +459,18 @@ pub(crate) fn prefault_user_page_range(
         return Err("user page range is not accessible");
     }
     let phys_offset = VirtAddr::new(physical_memory_offset);
+    // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+    // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+    // so it is the base of the complete physical memory map that `active_level_4_table`
+    // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+    // never escapes this function, so it does not outlive the mapper's use.
+    // SAFETY: caller must guarantee no other mapper for the active address space is live
+    // concurrently; this module's page-table entry points each build and drop their own
+    // mapper within a single call, and the kernel serializes user address space edits.
     let level_4 = unsafe { active_level_4_table(phys_offset) };
+    // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+    // `phys_offset`, which is the same bootloader-provided offset validated for
+    // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let mut authority =
         LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
@@ -454,7 +513,18 @@ pub(crate) fn unmap_user_page_range(
 ) -> Result<(), &'static str> {
     let end = start.checked_add(len).ok_or("user page range overflowed")?;
     let phys_offset = VirtAddr::new(physical_memory_offset);
+    // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+    // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+    // so it is the base of the complete physical memory map that `active_level_4_table`
+    // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+    // never escapes this function, so it does not outlive the mapper's use.
+    // SAFETY: caller must guarantee no other mapper for the active address space is live
+    // concurrently; this module's page-table entry points each build and drop their own
+    // mapper within a single call, and the kernel serializes user address space edits.
     let level_4 = unsafe { active_level_4_table(phys_offset) };
+    // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+    // `phys_offset`, which is the same bootloader-provided offset validated for
+    // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     {
         let mut authority =
@@ -512,7 +582,18 @@ pub(crate) fn switch_user_page_mappings(
     reclaim_current: bool,
 ) -> Result<(), UserPageSwitchError> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
+    // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+    // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+    // so it is the base of the complete physical memory map that `active_level_4_table`
+    // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+    // never escapes this function, so it does not outlive the mapper's use.
+    // SAFETY: caller must guarantee no other mapper for the active address space is live
+    // concurrently; this module's page-table entry points each build and drop their own
+    // mapper within a single call, and the kernel serializes user address space edits.
     let level_4 = unsafe { active_level_4_table(phys_offset) };
+    // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+    // `phys_offset`, which is the same bootloader-provided offset validated for
+    // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let mut authority =
         LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
@@ -638,7 +719,18 @@ pub(crate) fn cow_break_user_page(
     prot: u64,
 ) -> Result<(), &'static str> {
     let phys_offset = VirtAddr::new(physical_memory_offset);
+    // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+    // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+    // so it is the base of the complete physical memory map that `active_level_4_table`
+    // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+    // never escapes this function, so it does not outlive the mapper's use.
+    // SAFETY: caller must guarantee no other mapper for the active address space is live
+    // concurrently; this module's page-table entry points each build and drop their own
+    // mapper within a single call, and the kernel serializes user address space edits.
     let level_4 = unsafe { active_level_4_table(phys_offset) };
+    // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+    // `phys_offset`, which is the same bootloader-provided offset validated for
+    // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     let mut authority =
         LiveUserPageTableAuthority { mapper: &mut mapper, frame_allocator, phys_offset };
@@ -709,7 +801,18 @@ fn discard_user_page_range_with_policy(
     }
 
     let phys_offset = VirtAddr::new(physical_memory_offset);
+    // SAFETY: `phys_offset` is built from this function's `physical_memory_offset`
+    // argument, which the kernel threads through from `BootInfo::physical_memory_offset`,
+    // so it is the base of the complete physical memory map that `active_level_4_table`
+    // requires. The returned `&'static mut` is consumed by the `OffsetPageTable` below and
+    // never escapes this function, so it does not outlive the mapper's use.
+    // SAFETY: caller must guarantee no other mapper for the active address space is live
+    // concurrently; this module's page-table entry points each build and drop their own
+    // mapper within a single call, and the kernel serializes user address space edits.
     let level_4 = unsafe { active_level_4_table(phys_offset) };
+    // SAFETY: `OffsetPageTable::new` requires that all physical memory be mapped at
+    // `phys_offset`, which is the same bootloader-provided offset validated for
+    // `active_level_4_table` above, and `level_4` is the live level-4 table read from CR3.
     let mut mapper = unsafe { OffsetPageTable::new(level_4, phys_offset) };
     {
         let mut authority =
@@ -1524,6 +1627,12 @@ fn write_u64_values(
 
 fn frame_bytes(frame: PhysFrame, phys_offset: VirtAddr) -> &'static mut [u8] {
     let virt = phys_offset + frame.start_address().as_u64();
+    // SAFETY: `frame` is a `PhysFrame<Size4KiB>`, so it is page-aligned and exactly `PAGE_SIZE`
+    // bytes long, matching the slice length; `u8` needs no alignment.
+    // SAFETY: caller must guarantee `phys_offset` is the base of a complete physical memory map
+    // (so the frame is mapped and readable/writable at `virt`), that `frame` is a live frame the
+    // caller owns, and that no other reference to it is live -- this returns a `&'static mut`
+    // with no borrow tying it to `frame`, so repeated calls for the same frame would alias.
     unsafe { slice::from_raw_parts_mut(virt.as_mut_ptr::<u8>(), PAGE_SIZE) }
 }
 
@@ -1578,9 +1687,19 @@ pub(crate) fn fill_user_page_frame_range(
     Ok(())
 }
 
+// SAFETY: caller must guarantee that (a) `phys_offset` is the base of a complete identity map of
+// physical memory, as published by the bootloader in `BootInfo::physical_memory_offset`, and
+// (b) no other `&mut PageTable` for the active level-4 table is live, since this hands out a
+// `&'static mut` that the signature cannot tie to any borrow. Every caller in this module
+// forwards a `physical_memory_offset` argument that originates from `BootInfo` and drops the
+// resulting mapper before returning.
 unsafe fn active_level_4_table(phys_offset: VirtAddr) -> &'static mut PageTable {
     let (frame, _) = Cr3::read();
     let virt = phys_offset + frame.start_address().as_u64();
+    // SAFETY: `frame` is the level-4 table frame the CPU is currently using, read straight from
+    // CR3, so it is a valid, live, page-aligned `PageTable` frame; adding it to the physical
+    // memory offset yields its virtual alias given the mapping this function requires of callers.
+    // `PageTable` is 4 KiB and page-aligned, so the frame address satisfies its alignment.
     unsafe { &mut *virt.as_mut_ptr() }
 }
 

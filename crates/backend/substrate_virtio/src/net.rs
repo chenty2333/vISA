@@ -61,6 +61,11 @@ mod host_tap {
                 .open("/dev/net/tun")
                 .map_err(|_| tap_fault("open /dev/net/tun"))?;
             let fd = file.as_raw_fd();
+            // SAFETY: `fd` borrows the `/dev/net/tun` handle owned by `file`, which stays alive
+            // for the whole call. `ifreq` is a live `[u8; IFREQ_SIZE]` local and `as_mut_ptr`
+            // yields the only outstanding pointer to it, so TUNSETIFF has exclusive access to
+            // exactly IFREQ_SIZE (40) bytes -- the size of `struct ifreq` on this target -- when
+            // it writes the resolved interface name back into the first IFNAMSIZ bytes.
             let rc = unsafe { libc::ioctl(fd, TUNSETIFF, ifreq.as_mut_ptr()) };
             if rc < 0 {
                 return Err(tap_fault("ioctl TUNSETIFF"));
@@ -180,10 +185,15 @@ mod host_tap {
     }
 
     fn set_nonblocking(fd: libc::c_int) -> SubstrateResult<()> {
+        // SAFETY: the sole caller (`HostTapPacketDeviceBackend::open`) passes `file.as_raw_fd()`
+        // while it still owns `file`, so `fd` is open for this call. F_GETFL takes no variadic
+        // argument and touches no caller memory.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         if flags < 0 {
             return Err(tap_fault("fcntl F_GETFL"));
         }
+        // SAFETY: same live `fd` as above. F_SETFL's variadic argument is a plain `c_int` flag
+        // word derived from the checked F_GETFL result, not a pointer, so no memory is accessed.
         let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
         if rc < 0 {
             return Err(tap_fault("fcntl F_SETFL O_NONBLOCK"));
@@ -214,12 +224,19 @@ mod host_tap {
     fn with_control_socket<T>(
         action: impl FnOnce(libc::c_int) -> SubstrateResult<T>,
     ) -> SubstrateResult<T> {
+        // SAFETY: `socket` takes only scalar arguments and accesses no caller memory. The returned
+        // descriptor is checked for failure below before it is used or closed.
         let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
         if fd < 0 {
             return Err(tap_fault("socket AF_INET SOCK_DGRAM"));
         }
 
         let result = action(fd);
+        // SAFETY: `fd` is the descriptor returned by the `socket` call above and validated to be
+        // non-negative, and this is the only `close` on it. It is closed exactly once because the
+        // function returns immediately afterwards without reusing `fd`. SAFETY: caller must
+        // guarantee the `action` closure neither closes `fd` nor retains it past its own return;
+        // every closure passed within this module only issues ioctls on it.
         let close_rc = unsafe { libc::close(fd) };
         if result.is_ok() && close_rc < 0 {
             return Err(tap_fault("close tap control socket"));
@@ -233,6 +250,12 @@ mod host_tap {
         ifreq: &mut [u8; IFREQ_SIZE],
         detail: &'static str,
     ) -> SubstrateResult<()> {
+        // SAFETY: `ifreq` is an exclusive `&mut [u8; IFREQ_SIZE]` borrow, so the pointer is valid
+        // and uniquely owned for the whole call and covers exactly IFREQ_SIZE (40) bytes -- the
+        // size of `struct ifreq` on this target -- which is what every `request` used here
+        // (SIOCGIFFLAGS/SIOCSIFFLAGS/SIOCSIFMTU/SIOCSIFHWADDR) reads or writes. SAFETY: caller
+        // must guarantee `fd` is an open socket; all call sites receive it from
+        // `with_control_socket`, which keeps the socket open for the duration of the closure.
         let rc = unsafe { libc::ioctl(fd, request, ifreq.as_mut_ptr()) };
         if rc < 0 {
             return Err(tap_fault(detail));
