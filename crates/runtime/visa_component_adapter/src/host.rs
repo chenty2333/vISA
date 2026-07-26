@@ -819,6 +819,9 @@ const fn profile_binding_error(error: BindingCheckError) -> ProfileFailure {
 }
 
 fn profile_runtime_error(error: RuntimeError, operation: Identity) -> ProfileFailure {
+    if crate::faults::take_once(crate::faults::FaultPoint::RemapProfileError) {
+        return ProfileFailure::Conflict;
+    }
     match error {
         RuntimeError::Rejected(Rejection::StaleGeneration { .. })
         | RuntimeError::Rejected(Rejection::LeaseEpochMismatch { .. })

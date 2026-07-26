@@ -67,7 +67,9 @@ pub fn apply(state: &CanonicalState, event: &Event) -> Result<ApplyResult, Rejec
             }
         }
         EventKind::AuthorityAttenuated { grant } => {
-            if let Some(existing) = grant_by_identity(state, grant.authority.identity) {
+            if crate::faults::take_once(crate::faults::FaultPoint::SkipAuthorityAttenuation) {
+                true
+            } else if let Some(existing) = grant_by_identity(state, grant.authority.identity) {
                 if existing == grant {
                     true
                 } else {
@@ -79,7 +81,9 @@ pub fn apply(state: &CanonicalState, event: &Event) -> Result<ApplyResult, Rejec
             }
         }
         EventKind::AuthorityRevoked { authority, revoked_generation } => {
-            if let Some(existing) = grant_by_identity(state, authority.identity) {
+            if crate::faults::take_once(crate::faults::FaultPoint::SkipAuthorityRevocation) {
+                true
+            } else if let Some(existing) = grant_by_identity(state, authority.identity) {
                 if existing.status == AuthorityStatus::Revoked
                     && existing.authority.generation == *revoked_generation
                 {

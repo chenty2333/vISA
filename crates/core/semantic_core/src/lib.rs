@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+pub mod faults;
 mod reducer;
 mod replay;
 mod restore;

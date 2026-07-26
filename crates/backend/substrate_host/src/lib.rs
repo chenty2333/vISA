@@ -131,6 +131,10 @@ struct ProfileDispatchControl {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultPoint {
+    SkipJournalAppend,
+    SkipSourceFence,
+    DropTimerCancel,
+    DuplicateCleanupApply,
     BeforeJournalWrite,
     AfterJournalWrite,
     BeforeActivationBundle,

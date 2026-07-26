@@ -37,6 +37,8 @@ use visa_profile::{
 };
 use visa_runtime::{AuthorityPlan, Coordinator, ProfileAuthorityPlan, SnapshotExpectations};
 
+pub mod behavior;
+pub mod digest_spike;
 pub mod output;
 pub mod phases;
 pub mod restart;
@@ -54,6 +56,7 @@ pub enum Measure {
     HandoffPhases,
     SnapshotSize,
     RestartBaseline,
+    DigestCost,
 }
 
 impl Measure {
@@ -64,6 +67,7 @@ impl Measure {
             Self::HandoffPhases => "handoff-phases",
             Self::SnapshotSize => "snapshot-size",
             Self::RestartBaseline => "restart-baseline",
+            Self::DigestCost => "digest-cost",
         }
     }
 
@@ -88,6 +92,8 @@ pub struct EvalOptions {
     /// Effect counts used as the independent variable for the handoff and
     /// restart measures.
     pub effects_before_handoff: Vec<u64>,
+    /// Operation counts used by the independent digest-cost spike.
+    pub digest_operations: Vec<u64>,
 }
 
 impl Default for EvalOptions {
@@ -98,6 +104,7 @@ impl Default for EvalOptions {
             warmup: 100,
             runs: 30,
             effects_before_handoff: vec![10, 100, 1_000],
+            digest_operations: vec![10, 100, 1_000, 5_000],
         }
     }
 }

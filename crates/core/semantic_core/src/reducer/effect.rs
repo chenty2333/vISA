@@ -72,7 +72,9 @@ pub(super) fn preflight_effect_request(
             actual: request.lease_epoch,
         });
     }
-    if let Err(rejection) = authorize(state, request.authority, subject, resource, required) {
+    if !crate::faults::take_once(crate::faults::FaultPoint::DeferProfileAuthorization)
+        && let Err(rejection) = authorize(state, request.authority, subject, resource, required)
+    {
         return Decision::Reject(rejection);
     }
 

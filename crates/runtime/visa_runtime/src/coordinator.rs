@@ -195,6 +195,13 @@ impl<P> Coordinator<P> {
         &self.provider
     }
 
+    /// Mutable provider access is reserved for feature-gated harness control
+    /// and low-level integration drivers.
+    #[cfg(feature = "test-control")]
+    pub fn provider_mut(&mut self) -> &mut P {
+        &mut self.provider
+    }
+
     pub fn into_provider(self) -> P {
         self.provider
     }
@@ -1515,45 +1522,53 @@ where
             decision_digest: decision_evidence.digest,
             closure_digest: closure_evidence.digest,
         };
-        match self.provider.commit_external_source_fence(&bundle) {
-            Ok(()) => {}
-            Err(error) if error.kind == ProviderErrorKind::OutcomeUnknown => {
-                let observed =
-                    self.provider.entry(entry.position).map_err(RuntimeError::Provider)?;
-                if observed.as_ref() != Some(&entry) {
-                    return Err(RuntimeError::JournalOutcomeUnknown { position: entry.position });
-                }
-                for transition in &transitions {
-                    let observed = self
-                        .provider
-                        .current_lease(transition.resource)
-                        .map_err(RuntimeError::Provider)?;
-                    if observed
-                        != Some(LeaseRecord {
-                            resource: transition.resource,
-                            owner: destination,
-                            epoch: next_epoch,
-                        })
-                    {
+        let skip_source_fence =
+            crate::faults::take_once(crate::faults::FaultPoint::SkipExternalSourceFence);
+        if !skip_source_fence {
+            match self.provider.commit_external_source_fence(&bundle) {
+                Ok(()) => {}
+                Err(error) if error.kind == ProviderErrorKind::OutcomeUnknown => {
+                    let observed =
+                        self.provider.entry(entry.position).map_err(RuntimeError::Provider)?;
+                    if observed.as_ref() != Some(&entry) {
                         return Err(RuntimeError::JournalOutcomeUnknown {
                             position: entry.position,
                         });
                     }
+                    for transition in &transitions {
+                        let observed = self
+                            .provider
+                            .current_lease(transition.resource)
+                            .map_err(RuntimeError::Provider)?;
+                        if observed
+                            != Some(LeaseRecord {
+                                resource: transition.resource,
+                                owner: destination,
+                                epoch: next_epoch,
+                            })
+                        {
+                            return Err(RuntimeError::JournalOutcomeUnknown {
+                                position: entry.position,
+                            });
+                        }
+                    }
                 }
+                Err(error) => return Err(RuntimeError::Provider(error)),
             }
-            Err(error) => return Err(RuntimeError::Provider(error)),
         }
         let committed = self.publish(entry, next).map(CommandReceipt::Committed)?;
-        self.inspect_external_source_fence(
-            command,
-            operation,
-            &snapshot,
-            source,
-            destination,
-            next_epoch,
-            decision_evidence,
-            closure_evidence,
-        )?;
+        if !skip_source_fence {
+            self.inspect_external_source_fence(
+                command,
+                operation,
+                &snapshot,
+                source,
+                destination,
+                next_epoch,
+                decision_evidence,
+                closure_evidence,
+            )?;
+        }
         Ok(committed)
     }
 

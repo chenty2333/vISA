@@ -35,6 +35,9 @@ impl ExternalHandoffProjectionPort for SqliteProvider {
         if self.take_fault(FaultPoint::BeforeExternalSourceFence) {
             return Err(error(ProviderErrorKind::Unavailable, true));
         }
+        if self.take_fault(FaultPoint::SkipSourceFence) {
+            return Ok(());
+        }
 
         let scope = self.scope;
         let transaction = self.immediate_transaction()?;

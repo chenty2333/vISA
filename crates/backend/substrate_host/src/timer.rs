@@ -85,6 +85,7 @@ impl TimerPort for SqliteProvider {
             }
         }
 
+        let drop_timer_cancel = self.take_fault(crate::FaultPoint::DropTimerCancel);
         let transaction = self.immediate_transaction()?;
         let result = EffectResult::TimerCancelled;
         let outcome = EffectOutcome::Succeeded {
@@ -93,7 +94,7 @@ impl TimerPort for SqliteProvider {
         };
         write_outcome(&transaction, request.operation, &outcome)?;
         transaction.commit().map_err(database_error)?;
-        if let Some(timer) = self.timers.get_mut(&target_operation) {
+        if !drop_timer_cancel && let Some(timer) = self.timers.get_mut(&target_operation) {
             let evidence = match &outcome {
                 EffectOutcome::Succeeded { evidence, .. } => *evidence,
                 _ => return Err(error(ProviderErrorKind::Integrity, false)),

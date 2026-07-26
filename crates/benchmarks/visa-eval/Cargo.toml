@@ -15,15 +15,17 @@ path = "src/main.rs"
 
 [dependencies]
 contract_core = { path = "../../core/contract_core" }
+semantic_core = { path = "../../core/semantic_core", features = ["test-control"] }
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 substrate_api = { path = "../../backend/substrate_api" }
 substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
 visa-composite-cell = { path = "../../testing/visa-composite-cell" }
-visa_component_adapter = { path = "../../runtime/visa_component_adapter" }
+visa_component_adapter = { path = "../../runtime/visa_component_adapter", features = ["test-control"] }
 visa_profile = { path = "../../core/visa_profile" }
-visa_runtime = { path = "../../runtime/visa_runtime" }
+visa_runtime = { path = "../../runtime/visa_runtime", features = ["test-control"] }
 
 [dev-dependencies]
 serde_json.workspace = true

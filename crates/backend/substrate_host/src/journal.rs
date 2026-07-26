@@ -38,12 +38,20 @@ impl JournalPort for SqliteProvider {
         if matches!(entry.event.kind, EventKind::Activated { .. }) {
             return Err(error(ProviderErrorKind::InvalidRequest, false));
         }
+        if self.take_fault(FaultPoint::SkipJournalAppend) {
+            return Ok(());
+        }
         if self.take_fault(FaultPoint::BeforeJournalWrite) {
             return Err(error(ProviderErrorKind::Unavailable, true));
         }
         let scope = self.scope;
+        let duplicate_cleanup = matches!(entry.event.kind, EventKind::OperationCleaned { .. })
+            && self.take_fault(FaultPoint::DuplicateCleanupApply);
         let transaction = self.immediate_transaction()?;
         append_entry_on(&transaction, scope, entry)?;
+        if duplicate_cleanup {
+            apply_event_projection(&transaction, &entry.event.kind)?;
+        }
         transaction.commit().map_err(database_error)?;
         if self.take_fault(FaultPoint::AfterJournalWrite) {
             return Err(error(ProviderErrorKind::OutcomeUnknown, true));

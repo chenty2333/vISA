@@ -8,7 +8,7 @@ use std::{path::PathBuf, process::ExitCode};
 
 use serde_json::json;
 use visa_eval::{
-    EvalOptions, Measure,
+    EvalOptions, Measure, behavior, digest_spike,
     output::{SampleSink, is_memory_backed_path, write_meta},
     phases, restart, snapshot_size, steady_state,
 };
@@ -21,7 +21,9 @@ subcommands:
   handoff-phases     per-phase timing of one composite handoff
   snapshot-size      portable snapshot size, field by field
   restart-baseline   journal replay against a lossy read-the-last-value restart
-  all                every subcommand above, in that order
+  digest-cost        full-state replay cost versus an independent Merkle prototype
+  behavior-defects   independent feature-gated behavior-injection driver
+  all                every production measurement above, in that order
 
 options:
   --out <dir>                    output directory (default target/visa-eval)
@@ -30,6 +32,8 @@ options:
   --runs <n>                     independent runs per measure
   --effects-before-handoff <n>[,<n>...]
                                  effect counts used as the independent variable
+  --digest-operations <n>[,<n>...]
+                                 operation counts used by digest-cost
 ";
 
 fn main() -> ExitCode {
@@ -55,6 +59,13 @@ fn run() -> Result<(), String> {
     let measures = measures_for(&subcommand)?;
     let options = parse_options(arguments)?;
 
+    if subcommand == "behavior-defects" {
+        std::fs::create_dir_all(&options.out)
+            .map_err(|error| format!("cannot create {}: {error}", options.out.display()))?;
+        behavior::run(&options)?;
+        return Ok(());
+    }
+
     std::fs::create_dir_all(&options.out)
         .map_err(|error| format!("cannot create {}: {error}", options.out.display()))?;
     if is_memory_backed_path(&options.out) {
@@ -74,6 +85,7 @@ fn run() -> Result<(), String> {
             "warmup": options.warmup,
             "runs": options.runs,
             "effects_before_handoff": options.effects_before_handoff,
+            "digest_operations": options.digest_operations,
         }),
     )?;
 
@@ -85,6 +97,7 @@ fn run() -> Result<(), String> {
             Measure::HandoffPhases => phases::run(&options, &mut sink)?,
             Measure::SnapshotSize => snapshot_size::run(&options, &mut sink)?,
             Measure::RestartBaseline => restart::run(&options, &mut sink)?,
+            Measure::DigestCost => digest_spike::run(&options, &mut sink)?,
         }
         sink.flush()?;
     }
@@ -102,7 +115,9 @@ fn measures_for(subcommand: &str) -> Result<Vec<Measure>, String> {
         "handoff-phases" => Ok(vec![Measure::HandoffPhases]),
         "snapshot-size" => Ok(vec![Measure::SnapshotSize]),
         "restart-baseline" => Ok(vec![Measure::RestartBaseline]),
+        "digest-cost" => Ok(vec![Measure::DigestCost]),
         "all" => Ok(Measure::all().to_vec()),
+        "behavior-defects" => Ok(Vec::new()),
         other => {
             eprint!("{USAGE}");
             Err(format!("unknown subcommand {other}"))
@@ -133,6 +148,18 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<EvalOptions,
                     .collect::<Result<Vec<_>, _>>()?;
                 if options.effects_before_handoff.is_empty() {
                     return Err(format!("{flag} needs at least one count"));
+                }
+            }
+            "--digest-operations" => {
+                let raw = next_value(&mut arguments, &flag)?;
+                options.digest_operations = raw
+                    .split(',')
+                    .map(|part| parse_number(part.trim(), &flag))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if options.digest_operations.is_empty()
+                    || options.digest_operations.iter().any(|count| *count == 0)
+                {
+                    return Err(format!("{flag} needs positive operation counts"));
                 }
             }
             other => {

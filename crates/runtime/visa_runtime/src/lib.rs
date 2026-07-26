@@ -6,6 +6,7 @@ extern crate alloc;
 
 mod codec;
 mod coordinator;
+pub mod faults;
 
 pub use codec::{
     CANONICAL_ENCODING, DIGEST_ALGORITHM, EncodeError, canonical_bytes, canonical_digest,

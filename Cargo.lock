@@ -2616,8 +2616,10 @@ version = "0.1.0"
 dependencies = [
  "contract_core",
  "rusqlite",
+ "semantic_core",
  "serde",
  "serde_json",
+ "sha2",
  "substrate_api",
  "substrate_host",
  "visa-composite-cell",

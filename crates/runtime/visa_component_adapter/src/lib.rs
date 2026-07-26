@@ -1,4 +1,5 @@
 mod error;
+pub mod faults;
 mod host;
 mod lifecycle;
 mod logical_request_state;
