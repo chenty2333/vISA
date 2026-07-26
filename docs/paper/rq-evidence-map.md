@@ -116,6 +116,18 @@ proxy — the falsifier's real test is whether any *native* state class
 leaks into the portable vocabulary, which the grep evidence addresses
 more directly than the line counts do.
 
+A third observation now exists: the composed four-resource cell
+(`crates/testing/visa-composite-cell`, one component carrying timer, KV,
+regular file, and logical request across one Wasmtime-to-Wasmtime
+handoff with seventeen passing assertions) required **zero** lines of
+change in `contract_core`, `semantic_core`, `visa_profile`, or any
+runtime/provider crate — composition cost landed entirely in test-side
+glue (~3,900 lines of WIT copies, guest, and runner). Resource families
+compose without touching the canonical vocabulary at all, which is the
+strongest single data point against the growth falsifier so far. It is
+one cell, Wasmtime-to-Wasmtime, evaluation infrastructure rather than a
+registered claim.
+
 ### RQ2: Authority continuity
 
 > Can handoff preserve all five properties under crash, retry, reorder,
@@ -501,11 +513,13 @@ which defects the Stage 3 structural verifiers cannot catch by construction.
 The existing 10 neutral mutations are the template. Being explicit about the
 Stage 3 structural-only boundary would strengthen rather than weaken the paper.
 
-**P2.2 Composed-resource cell.** No current cell holds timer, KV, file, and
-request resources across one handoff. A single composed profile would add a
-third data point to the now-measured RQ1 core-growth observation (see
-"Measured core growth" above) and exercise the composition case; it is
-likely cheaper than P1.3.
+**P2.2 Composed-resource cell.** Done (2026-07-26):
+`crates/testing/visa-composite-cell` runs one component holding all four
+resource families across one handoff with seventeen passing assertions,
+at zero core-crate cost (see "Measured core growth"). Remaining
+extensions if the paper wants more: run it under the Wacogo cell for
+cross-runtime composition, and add fault cases (composition currently
+exercises the success path plus idempotent replay and fencing only).
 
 **P2.3 WASI and Component Model continuity-profile positioning.** RESEARCH
 states that active WASI proposals define no general checkpoint,
