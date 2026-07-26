@@ -55,12 +55,66 @@ injected during pending I/O, timeout, cancellation, error, and cleanup paths.
 | Multiple independent adapters | Partially covered | `S2strict` gives two independent-lineage Component Model runtimes | Only for timer/KV. Both Stage 3 profiles record `independent_runtime_coverage=false` and list Wacogo as unsupported, so the richest resource evidence sits on the weakest runtime evidence. This is the sharpest RQ1 gap. |
 | Handoff injected during pending I/O, timeout, cancellation, error, cleanup | Covered within each named profile | `S1` failure/recovery matrix, `S3A` and `S3B` case registries | Coverage is per-profile. There is no cell in which one component holds timer, KV, file, and request resources simultaneously across a single handoff. |
 | Native bindings are not serialized | Covered as negative evidence | Stage 1 portable snapshot excludes fd, socket, native pointer, PC/SP, credential, and runtime-private objects; `S3A` excludes device, inode, birth time, fd, and the absolute provider root; `S3B` excludes socket/TCP sequence state and credential material | This is enforced structurally per profile. It is not a measurement. |
-| Falsifier: the core keeps expanding until it duplicates runtime, Linux, or device state | Open | — | Three resource families were added without adding provider implementations or scenario names to the canonical vocabulary, which is weak positive evidence. There is no measured growth curve of core semantic state against resource-family count, and that is what would actually address the falsifier. |
+| Falsifier: the core keeps expanding until it duplicates runtime, Linux, or device state | Partially covered (measured, one growth step) | Static repository measurement, 2026-07-26; see "Measured core growth" below | Doubling the resource-family count (2 to 4) cost the canonical core +67 lines, one new type, and one new opaque `EffectKind` variant, against 5,748 provider-side lines for the same two families. The typed extension layer (`visa_profile`) grew by ~1,900 lines and must be disclosed alongside. Only one measurement step exists because both Stage 3 families landed in a single commit, so this is a two-point observation, not a curve. |
 
 Overall RQ1: **partially covered.** The timer/KV axis is strong and replicated
 across runtimes and emulated targets. Files and requests are each one bounded
-Wasmtime-only profile. The composition case, the general network case, and the
-core-growth measurement are all open.
+Wasmtime-only profile. The composition case and the general network case are
+open; the core-growth falsifier now has one measured data point (below).
+
+#### Measured core growth (static measurement, 2026-07-26)
+
+Measurement taken at four commits: `be7b7591` (Stage 1 complete, two
+resource families: timer, KV), `5ceaa78c` (strict Stage 2, same two
+families), `620dda73` (both Stage 3 families landed — regular file and
+logical request arrived in this single commit, so the family count moves 2
+to 4 in one step), and `90d54173` (current HEAD). Line counts are
+`git show <sha>:<file> | wc -l` sums over `git ls-tree`; type and variant
+counts are grep/awk over the same blobs. `crates/oracle/` is excluded
+throughout.
+
+Canonical core (`crates/core/contract_core/src`), family count 2 to 4:
+
+| Metric | Stage 1 | Stage 3 | HEAD | Delta over the family doubling |
+| --- | --- | --- | --- | --- |
+| Total lines | 1,046 | 1,113 | 1,116 | +67 (+6.4%) |
+| `pub struct` + `pub enum` | 57 | 58 | 58 | +1 |
+| `EventKind` variants | 17 | 17 | 18 | 0 (the HEAD +1 is the joint-handoff refinement, not a resource family) |
+| `EffectKind` variants | 5 | 6 | 6 | +1 |
+| `CommandKind` variants / `CanonicalState` fields / `SnapshotBody` fields | 16 / 18 / 16 | 16 / 18 / 16 | 16 / 18 / 16 | 0 / 0 / 0 |
+
+The single new `EffectKind` variant is the opaque extension escape hatch
+(`EffectKind::Profile { profile, access, payload }`), whose doc comment
+states the design intent directly: it "keeps file, request, and provider
+verbs out of the canonical effect vocabulary."
+
+Where the Stage 3 commit's 8,576 inserted lines actually landed:
+
+| Layer | Lines added |
+| --- | --- |
+| `contract_core` (canonical vocabulary) | 71 |
+| `semantic_core` reducers | 70 (non-test lines +52, +2.9%, comparable Stage 2 to Stage 3 baseline) |
+| `visa_profile` (typed extension payloads, still under `crates/core/`) | 1,911 |
+| `substrate_host` (provider implementations) | 5,670 |
+| WIT worlds | 311 |
+
+At HEAD the two Stage 3 families occupy 5,748 provider-side lines
+(`regular_file.rs` 2,680 + `logical_request.rs` 3,068) against the +67
+canonical-core lines — roughly 86:1. Structurally, all three core crates
+are `#![no_std]`, a word-boundary grep for native-binding types
+(`RawFd`, `TcpStream`, `SocketAddr`, `std::fs`, `std::net`, `statx`)
+returns zero hits in `contract_core`, `semantic_core`, and `visa_profile`
+against 85 hits in `substrate_host`, and the native file-identity tuple
+(`NativeObjectIdentity`) appears in exactly one provider file.
+
+Honest limits of this measurement: it is a single 2-to-4 step, not a
+curve, because both families landed in one commit; the ~1,900-line
+`visa_profile` growth is real semantic surface (typed claim/state records
+of 8–11 fields per family) even though it contains no native state and
+the canonical reducer treats its payloads opaquely; and line counts are a
+proxy — the falsifier's real test is whether any *native* state class
+leaks into the portable vocabulary, which the grep evidence addresses
+more directly than the line counts do.
 
 ### RQ2: Authority continuity
 
@@ -448,8 +502,10 @@ The existing 10 neutral mutations are the template. Being explicit about the
 Stage 3 structural-only boundary would strengthen rather than weaken the paper.
 
 **P2.2 Composed-resource cell.** No current cell holds timer, KV, file, and
-request resources across one handoff. A single composed profile would address
-the RQ1 core-growth falsifier directly and is likely cheaper than P1.3.
+request resources across one handoff. A single composed profile would add a
+third data point to the now-measured RQ1 core-growth observation (see
+"Measured core growth" above) and exercise the composition case; it is
+likely cheaper than P1.3.
 
 **P2.3 WASI and Component Model continuity-profile positioning.** RESEARCH
 states that active WASI proposals define no general checkpoint,
