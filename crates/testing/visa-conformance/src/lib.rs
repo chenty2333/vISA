@@ -1,10 +1,14 @@
 pub mod artifact_io;
+#[cfg(any(test, feature = "defect-corpus"))]
+pub mod defect_corpus;
 mod effect_closure;
 mod effect_closure_replay;
 mod joint_handoff;
 pub mod local_rpc;
 mod stage1;
 mod stage1_artifacts;
+#[cfg(any(test, feature = "defect-corpus"))]
+pub mod stage1_mutations;
 mod stage2;
 mod stage2_normalize;
 mod stage3;
@@ -20,6 +24,9 @@ pub use stage2::*;
 pub use stage2_normalize::*;
 pub use stage3::*;
 pub use stage4::*;
+
+#[cfg(test)]
+mod defect_corpus_tests;
 
 #[cfg(test)]
 mod stage1_tests;

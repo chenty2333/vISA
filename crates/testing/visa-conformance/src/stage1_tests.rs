@@ -1,14 +1,9 @@
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeSet, fs, path::Path};
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::stage1::*;
+use crate::{stage1::*, stage1_mutations::*};
 
 #[test]
 fn stage1_case_registry_matches_the_complete_validation_matrix() {
@@ -2344,7 +2339,7 @@ fn json_gate_rejects_missing_typed_dimension_before_validation() {
     assert_eq!(gate.load_error.unwrap().code, "invalid-stage1-evidence-json");
 }
 
-fn complete_bundle() -> Stage1EvidenceBundle {
+pub(crate) fn complete_bundle() -> Stage1EvidenceBundle {
     let bundle_id = "stage1-bundle-001";
     let component_sha256 = digest('1');
     let profile_sha256 = digest('2');
@@ -2589,7 +2584,7 @@ fn authority_for(outcome: Stage1CaseOutcome, policy_sha256: &str) -> Stage1Autho
     }
 }
 
-fn materialize_artifacts(bundle: &mut Stage1EvidenceBundle, root: &Path) {
+pub(crate) fn materialize_artifacts(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     fs::create_dir_all(root).unwrap();
     materialize_provenance(bundle, root);
     let mut performance_raw = None;
@@ -3328,26 +3323,6 @@ fn committed_case(
     (state, vec![source_trace, destination_trace], Some(envelope), receipts)
 }
 
-fn append_event(
-    state: &mut contract_core::CanonicalState,
-    position: &mut contract_core::JournalPosition,
-    entries: &mut Vec<contract_core::JournalEntry>,
-    event: contract_core::Event,
-) {
-    let input_state = contract_core::state_digest(state).unwrap();
-    let next = semantic_core::apply(state, &event).unwrap().into_state();
-    *position = position.next().unwrap();
-    let output_state = contract_core::state_digest(&next).unwrap();
-    entries.push(contract_core::JournalEntry {
-        version: contract_core::CONTRACT_VERSION,
-        position: *position,
-        input_state,
-        output_state,
-        event,
-    });
-    *state = next;
-}
-
 fn derived_grant(
     id: u128,
     parent: contract_core::EntityRef,
@@ -4003,61 +3978,6 @@ fn test_wacogo_lineage() -> serde_json::Value {
     })
 }
 
-fn json_lines(values: &[serde_json::Value]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for value in values {
-        serde_json::to_writer(&mut bytes, value).unwrap();
-        bytes.push(b'\n');
-    }
-    bytes
-}
-
-fn write_case_ref(root: &Path, artifact: &mut Stage1ArtifactReference, bytes: &[u8]) {
-    let path = root.join(&artifact.uri);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, bytes).unwrap();
-    artifact.sha256 = sha256(bytes);
-}
-
-fn write_provenance_ref(
-    root: &Path,
-    artifact: &mut Stage1ProvenanceArtifactReference,
-    bytes: &[u8],
-) {
-    let path = root.join(&artifact.uri);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, bytes).unwrap();
-    artifact.sha256 = sha256(bytes);
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
-fn contract_hex(digest: contract_core::Digest) -> String {
-    digest.0.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn digest_from_hex(value: &str) -> contract_core::Digest {
-    let mut bytes = [0_u8; 32];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap();
-    }
-    contract_core::Digest::from_bytes(bytes)
-}
-
-fn identity_from_hex(value: &str) -> contract_core::Identity {
-    let mut bytes = [0_u8; 16];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap();
-    }
-    contract_core::Identity::from_bytes(bytes)
-}
-
-fn identity_hex(identity: contract_core::Identity) -> String {
-    identity.0.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn versioned(name: &str, version: &str) -> Stage1VersionedIdentity {
     Stage1VersionedIdentity { name: name.to_string(), version: version.to_string() }
 }
@@ -4100,82 +4020,6 @@ fn assert_artifact_tamper_with_bundle(
     fs::remove_dir_all(root).unwrap();
 }
 
-fn mutate_embedded_protocol(
-    lines: &mut [serde_json::Value],
-    matches: impl Fn(&serde_json::Value) -> bool,
-    mutate: impl FnOnce(&mut serde_json::Value),
-) {
-    let index = lines
-        .iter()
-        .position(|line| {
-            line.get("line")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-                .is_some_and(|protocol| matches(&protocol))
-        })
-        .expect("matching embedded protocol line");
-    let mut protocol = serde_json::from_str::<serde_json::Value>(
-        lines[index].get("line").and_then(serde_json::Value::as_str).unwrap(),
-    )
-    .unwrap();
-    mutate(&mut protocol);
-    lines[index]["line"] = serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
-}
-
-fn committed_case_index(bundle: &Stage1EvidenceBundle) -> usize {
-    bundle.cases.iter().position(|case| case.case_id == "evidence-verification").unwrap()
-}
-
-fn read_json<T: DeserializeOwned>(root: &Path, uri: &str) -> T {
-    serde_json::from_slice(&fs::read(root.join(uri)).unwrap()).unwrap()
-}
-
-fn rewrite_committed_trace(
-    bundle: &mut Stage1EvidenceBundle,
-    root: &Path,
-    mutate: impl FnOnce(&mut Stage1SemanticTraceArtifact),
-) {
-    let case_index = committed_case_index(bundle);
-    let trace_index = bundle.cases[case_index]
-        .artifacts
-        .semantic_traces
-        .iter()
-        .position(|reference| reference.uri.ends_with("destination.json"))
-        .unwrap();
-    let reference = bundle.cases[case_index].artifacts.semantic_traces[trace_index].clone();
-    let mut trace = read_json::<Stage1SemanticTraceArtifact>(root, &reference.uri);
-    mutate(&mut trace);
-
-    let case = &mut bundle.cases[case_index];
-    let reference = &mut case.artifacts.semantic_traces[trace_index];
-    write_case_ref(root, reference, &serde_json::to_vec_pretty(&trace).unwrap());
-    case.state.trace_sha256s =
-        case.artifacts.semantic_traces.iter().map(|reference| reference.sha256.clone()).collect();
-}
-
-fn rewrite_timer_receipt(
-    bundle: &mut Stage1EvidenceBundle,
-    root: &Path,
-    mutate: impl FnOnce(&mut contract_core::BindingReceipt),
-) {
-    let case_index = committed_case_index(bundle);
-    let receipt_index = bundle.cases[case_index]
-        .artifacts
-        .binding_receipts
-        .iter()
-        .position(|reference| reference.resource == Stage1ResourceKind::PausedDurationTimer)
-        .unwrap();
-    let reference =
-        bundle.cases[case_index].artifacts.binding_receipts[receipt_index].artifact.clone();
-    let mut receipt = read_json::<contract_core::BindingReceipt>(root, &reference.uri);
-    mutate(&mut receipt);
-    write_case_ref(
-        root,
-        &mut bundle.cases[case_index].artifacts.binding_receipts[receipt_index].artifact,
-        &serde_json::to_vec_pretty(&receipt).unwrap(),
-    );
-}
-
 fn rewrite_source_trace_phase(
     bundle: &mut Stage1EvidenceBundle,
     root: &Path,
@@ -4188,98 +4032,4 @@ fn rewrite_source_trace_phase(
         }
         trace.final_state.phase = phase;
     });
-}
-
-fn rewrite_source_trace(
-    bundle: &mut Stage1EvidenceBundle,
-    root: &Path,
-    case_id: &str,
-    mutate: impl FnOnce(&mut Stage1SemanticTraceArtifact),
-) {
-    let case_index = bundle.cases.iter().position(|case| case.case_id == case_id).unwrap();
-    let trace_index = bundle.cases[case_index]
-        .artifacts
-        .semantic_traces
-        .iter()
-        .position(|reference| reference.uri.ends_with("source.json"))
-        .unwrap();
-    let reference = bundle.cases[case_index].artifacts.semantic_traces[trace_index].clone();
-    let mut trace = read_json::<Stage1SemanticTraceArtifact>(root, &reference.uri);
-    assert!(trace.claimed_final);
-    mutate(&mut trace);
-    let state_digest = contract_core::state_digest(&trace.final_state).unwrap();
-    let source_authority_root =
-        contract_core::canonical_digest(trace.final_state.authorities.as_slice()).unwrap();
-
-    let case = &mut bundle.cases[case_index];
-    write_case_ref(
-        root,
-        &mut case.artifacts.semantic_traces[trace_index],
-        &serde_json::to_vec_pretty(&trace).unwrap(),
-    );
-    case.state.trace_sha256s =
-        case.artifacts.semantic_traces.iter().map(|reference| reference.sha256.clone()).collect();
-    case.state.state_sha256 = contract_hex(state_digest);
-    case.state.replay_state_sha256 = contract_hex(state_digest);
-    case.authority.source_authority_root_sha256 = contract_hex(source_authority_root);
-}
-
-fn rewrite_case_assertions(
-    bundle: &mut Stage1EvidenceBundle,
-    root: &Path,
-    case_index: usize,
-    mutate: impl FnOnce(&mut Vec<serde_json::Value>),
-) {
-    let raw_index = bundle.cases[case_index]
-        .artifacts
-        .raw_execution
-        .iter()
-        .position(|reference| reference.uri.ends_with("assertions.jsonl"))
-        .unwrap();
-    let uri = bundle.cases[case_index].artifacts.raw_execution[raw_index].uri.clone();
-    let bytes = fs::read(root.join(uri)).unwrap();
-    let mut assertions = bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(|line| serde_json::from_slice::<serde_json::Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    mutate(&mut assertions);
-    write_case_ref(
-        root,
-        &mut bundle.cases[case_index].artifacts.raw_execution[raw_index],
-        &json_lines(&assertions),
-    );
-}
-
-fn rewrite_raw_transcript(
-    bundle: &mut Stage1EvidenceBundle,
-    root: &Path,
-    case_index: usize,
-    file_name: &str,
-    mutate: impl FnOnce(&mut Vec<serde_json::Value>),
-) {
-    let raw_index = bundle.cases[case_index]
-        .artifacts
-        .raw_execution
-        .iter()
-        .position(|reference| reference.uri.ends_with(file_name))
-        .unwrap();
-    let uri = bundle.cases[case_index].artifacts.raw_execution[raw_index].uri.clone();
-    let bytes = fs::read(root.join(uri)).unwrap();
-    let mut lines = bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(|line| serde_json::from_slice::<serde_json::Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    mutate(&mut lines);
-    write_case_ref(
-        root,
-        &mut bundle.cases[case_index].artifacts.raw_execution[raw_index],
-        &json_lines(&lines),
-    );
-}
-
-fn temp_dir(label: &str) -> PathBuf {
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("visa-stage1-{label}-{}-{nonce}", std::process::id()))
 }

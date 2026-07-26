@@ -8,6 +8,15 @@ edition = "2024"
 [lib]
 path = "src/lib.rs"
 
+[features]
+# Builds the shared Stage 1 mutation library and the visa-defect-corpus binary.
+defect-corpus = []
+
+[[bin]]
+name = "visa-defect-corpus"
+path = "src/bin/visa-defect-corpus.rs"
+required-features = ["defect-corpus"]
+
 [dependencies]
 contract_core = { path = "../../core/contract_core" }
 joint_handoff_core = { path = "../../core/joint_handoff_core" }
