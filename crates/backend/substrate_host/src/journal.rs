@@ -1,3 +1,23 @@
+//! Durable canonical journal: the provider-side append/commit port.
+//!
+//! One append is one SQLite `Immediate` transaction, so every entry, its
+//! provider projection (operation intents, outcomes, revocations), and any
+//! bundled lease work commit or vanish together. The port guarantees, for
+//! every code path:
+//!
+//! - Exact-retry idempotency: re-appending a byte-identical entry at an
+//!   occupied position succeeds without side effects; a different entry at
+//!   that position is a `Conflict`. Lost acknowledgements are therefore
+//!   always safe to retry.
+//! - Local chain contiguity: within a non-empty journal each entry must sit
+//!   at `previous.position.next()` and link `previous.output_state ==
+//!   entry.input_state`. Global anchoring of the chain start is owned by the
+//!   coordinator (see the comment in `append_entry_on_with_projection`).
+//! - Activation exclusivity: `Activated` entries enter only through
+//!   `commit_activation`, which atomically seeds the initial leases; plain
+//!   `append_entry` rejects them so no journal can claim activation without
+//!   also installing its lease truth.
+
 use contract_core::{
     CleanupStatus, EffectKind, EffectOutcome, EffectResult, EventKind, Identity, JournalEntry,
     JournalPosition,
@@ -49,6 +69,14 @@ impl JournalPort for SqliteProvider {
         Ok(())
     }
 
+    // Handoff commit is the single transaction in which the source loses its
+    // leases: outcome write, lease transitions, prepared-authority
+    // activation, and the journal entry land together or not at all. Replays
+    // of an already committed handoff (same recorded outcome) only re-assert
+    // the transitions; a different recorded outcome is a `Conflict`. A bundle
+    // carrying lease transitions or final authorities without a
+    // `HandoffCommitted` entry is rejected outright — nothing may move a
+    // lease outside a validated handoff.
     fn commit_bundle(&mut self, bundle: &CommitBundle) -> Result<(), ProviderError> {
         if self.take_fault(FaultPoint::BeforeCommitBundle) {
             return Err(error(ProviderErrorKind::Unavailable, true));
@@ -153,6 +181,11 @@ impl JournalPort for SqliteProvider {
     }
 }
 
+/// An activation bundle must carry an `Activated` entry plus at least one
+/// initial lease, every lease must name this provider's node as owner at
+/// exactly the activation's lease epoch, and resources must be unique. This
+/// keeps "the component is active here" and "this node owns its resources at
+/// epoch E" one indivisible fact.
 fn validate_activation_bundle(
     scope: JournalScope,
     bundle: &ActivationBundle,
@@ -214,6 +247,14 @@ fn append_entry_on_with_projection(
         .map_err(database_error)?
         .map(|bytes| deserialize::<JournalEntry>(&bytes))
         .transpose()?;
+    // The provider enforces only local chain contiguity, not global anchoring.
+    // An empty journal deliberately accepts any starting position above
+    // `ORIGIN`: a destination provider seeds its journal mid-stream at the
+    // position carried by a snapshot that the coordinator has already
+    // validated (`visa_runtime::validate_snapshot` owns that anchoring, and it
+    // likewise vouches for the first entry's `input_state`). `ORIGIN` (0) is
+    // the coordinator's "empty journal" cursor sentinel and is never a real
+    // entry position, so it is rejected even on an empty journal.
     if let Some(previous) = &previous {
         let expected_position =
             previous.position.next().ok_or_else(|| error(ProviderErrorKind::Storage, false))?;
@@ -350,6 +391,29 @@ fn handoff_commit(entry: &JournalEntry) -> Result<Option<HandoffCommit<'_>>, Pro
     }))
 }
 
+/// Binds a `HandoffCommitted` journal entry to the previously journaled
+/// `LeaseCommit` intent it claims to resolve.
+///
+/// Invariants:
+///
+/// - Intent binding: the recorded effect request must be a `LeaseCommit`
+///   whose operation, handoff, snapshot, destination, and epoch pair all
+///   equal the committed entry's fields, and the request must have been
+///   issued by the destination node (`request.node == commit.destination`).
+///   A commit entry can therefore never be attached to a different intent,
+///   and only the destination's own prepared intent can advance ownership.
+/// - Success shape: a successful outcome must be `LeaseAdvanced` naming the
+///   destination as owner at the new epoch, and must carry at least one
+///   lease transition and one final authority — a "successful" handoff that
+///   moves nothing is invalid by construction.
+/// - Transition consistency: transitions must be resource-unique and each
+///   must move `source -> destination` at `previous_epoch -> new_epoch`,
+///   mirroring `joint::validate_bundle` so both commit paths enforce the
+///   same single-step ownership step.
+/// - Failure shape: a non-success outcome must carry no transitions and no
+///   final authorities. A failed or indeterminate handoff must leave lease
+///   truth untouched (the source stays the owner; fencing never happens as a
+///   side effect of failure).
 fn validate_handoff_request(
     request: &contract_core::EffectRequest,
     commit: &HandoffCommit<'_>,

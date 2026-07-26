@@ -1,3 +1,13 @@
+//! Projection of an externally decided handoff onto the local source provider.
+//!
+//! `commit_external_source_fence` is the only path by which an ownership
+//! decision made outside this provider (the joint-handoff Nexus/coordinator
+//! composition) becomes local truth: it appends the `HandoffCommitted` entry
+//! and advances every lease in one SQLite transaction, so the source is either
+//! fully fenced or untouched. The provider never re-derives or second-guesses
+//! the external decision; it only checks that the projected bundle is
+//! internally bound (see `validate_bundle`) and applies it idempotently.
+
 use std::collections::BTreeSet;
 
 use contract_core::{Digest, EffectOutcome, EffectResult, EventKind, EvidenceKind, NodeIdentity};
@@ -16,6 +26,12 @@ impl ExternalHandoffProjectionPort for SqliteProvider {
         bundle: &ExternalSourceFenceBundle,
     ) -> Result<(), ProviderError> {
         validate_bundle(self.scope.node, bundle)?;
+        // Exact-retry idempotency: a byte-identical replay of an already
+        // committed fence re-asserts the lease transitions
+        // (`ensure_transition_applied`) instead of re-applying them, so a lost
+        // acknowledgement can be retried without double-advancing any lease.
+        // Any different entry at the same position is a conflict, never an
+        // overwrite.
         if self.take_fault(FaultPoint::BeforeExternalSourceFence) {
             return Err(error(ProviderErrorKind::Unavailable, true));
         }
@@ -45,6 +61,34 @@ impl ExternalHandoffProjectionPort for SqliteProvider {
     }
 }
 
+/// Checks that an external fence bundle is internally bound before any of it
+/// becomes local state. Every rejection is fail-closed `InvalidRequest`.
+///
+/// Invariants, by group:
+///
+/// - Evidence digests: the ownership decision digest and the effect-cohort
+///   closure digest must both be present, non-zero, and distinct. A zero or
+///   shared digest would let one piece of evidence stand in for the other,
+///   collapsing the two independent authorities (decision vs closure) that
+///   the joint-handoff boundary deliberately keeps separate.
+/// - Entry shape: only a `HandoffCommitted` event may fence a source, all its
+///   identities must be non-zero, source and destination must differ, and
+///   this provider must BE the named source (`*source == local_node`) — a
+///   bundle addressed to another node must not fence us.
+/// - Epoch monotonicity: `new_epoch` must be exactly `previous_epoch.next()`.
+///   Single-step advancement is what makes "one fencing epoch => at most one
+///   active writer" auditable; skipping epochs would open a gap a stale
+///   writer could occupy.
+/// - Outcome binding: the committed outcome must be `LeaseAdvanced` naming
+///   the destination as owner at the new epoch, and its two evidence refs
+///   must carry the expected kinds (`AuthorityDecision`, `SourceFence`) with
+///   digests equal to the bundle's `decision_digest`/`closure_digest`. This
+///   ties the journal entry to the exact external decision and closure it
+///   claims, so a replayed entry cannot be re-bound to different evidence.
+/// - Lease transitions: non-empty, resource-unique, and every transition must
+///   move `source -> destination` and `previous_epoch -> new_epoch`. A
+///   duplicate resource or a transition naming other owners/epochs would
+///   fence a resource the decision did not cover.
 fn validate_bundle(
     local_node: NodeIdentity,
     bundle: &ExternalSourceFenceBundle,

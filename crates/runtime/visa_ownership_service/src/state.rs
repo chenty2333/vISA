@@ -1,3 +1,36 @@
+//! Durable ownership decision state: the service-side authority that issues
+//! and stores joint-handoff ownership receipts.
+//!
+//! Per continuity unit there is one `StoredUnitOwnership` row (current owner,
+//! epoch, and the at-most-one active handoff/reservation pair); per handoff
+//! there is one `StoredOwnership` row walking `Reserved -> Prepared ->
+//! {AbortDecided | CommitDecided}`. Every operation runs inside the caller's
+//! SQLite transaction, so a decision, its receipt, and the unit-ownership
+//! update are one durable fact.
+//!
+//! Contracts every operation upholds:
+//!
+//! - Exact-request idempotency: each mutating request's semantic digest
+//!   (domain-separated over key, expected sequence, and proposal) is stored;
+//!   a byte-identical retry returns the previously issued receipt, any other
+//!   request against a consumed slot is `Conflict`. A lost response can
+//!   always be recovered by resending the same request.
+//! - Non-equivocation: at most one terminal decision per handoff. An
+//!   existing commit rejects any abort with `ExistingCommit` (and vice
+//!   versa), returning the winning receipt so the caller converges on the
+//!   recorded decision instead of retrying blind.
+//! - Optimistic sequencing: callers present `expected_state_sequence`;
+//!   mismatch is a `Conflict`, and sequences only move via `next_sequence`
+//!   (checked, never wrapping). Receipt headers chain each new receipt to
+//!   its basis digest, mirroring `joint_handoff_core`'s `require_child`.
+//! - Admission before trust: every receipt presented in a proposal is
+//!   re-admitted through the pinned local authenticator with the exact
+//!   issuer role expected for that slot; the stored copy must match the
+//!   presented artifact byte for byte.
+//! - Ownership transfer happens exactly at commit: only `commit` moves
+//!   `unit.owner`/`unit.epoch` to the destination, and both decisions clear
+//!   the unit's active handoff/reservation pair so a new handoff can start.
+
 use std::collections::BTreeMap;
 
 use contract_core::{Digest, EntityRef, Generation, Identity, LeaseEpoch, NodeIdentity};
@@ -31,9 +64,16 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum StoredPhase {
+    /// Intent receipt issued; the unit's active handoff/reservation pair is
+    /// held by this handoff.
     Reserved,
+    /// The four freeze/prepare receipts were admitted and sealed into an
+    /// `OwnershipPreparedReceipt`; the handoff is commit-eligible.
     Prepared,
+    /// Terminal: abort decided, unit pair released, owner unchanged.
     AbortDecided,
+    /// Terminal: commit decided, unit pair released, owner and epoch moved
+    /// to the destination.
     CommitDecided,
 }
 
@@ -64,6 +104,10 @@ struct StoredUnitOwnership {
     active_reservation: Option<Identity>,
 }
 
+/// Dispatches one wire operation inside the caller's transaction. Semantic
+/// rejections become successful `Outcome::Rejected` responses (the caller
+/// commits them); only integrity/storage faults surface as service errors
+/// (the caller rolls back).
 pub(crate) fn apply_operation<A: LocalReceiptAuthenticator>(
     transaction: &Transaction<'_>,
     request: &wire::Request,
@@ -125,6 +169,12 @@ fn initialize_unit(
     Ok(wire::Success::Initialized(unit_to_wire(stored)))
 }
 
+/// Issues the root `PrepareIntentReceipt` for a new handoff. Requires the
+/// unit to exist, the caller's key to name the current owner as source, and
+/// the unit to have no active handoff or reservation — one in-flight handoff
+/// per unit. The reservation identity is derived deterministically from the
+/// namespace, key, and request digest, so an exact retry reproduces the same
+/// reservation instead of minting a second one.
 fn reserve(
     transaction: &Transaction<'_>,
     request: &wire::DecisionProposal,
@@ -189,6 +239,11 @@ fn reserve(
     receipt_artifact(&intent).map_err(|_| SemanticError::Integrity)
 }
 
+/// Seals a reserved handoff into `Prepared`. The proposal must present the
+/// exact stored intent plus vISA-freeze, Nexus-freeze, and
+/// destination-prepared receipts, each re-admitted under its expected issuer
+/// role; `validate_seal_chain` then re-checks the cross-receipt bindings
+/// before the `OwnershipPreparedReceipt` is issued chained to the intent.
 fn seal<A: LocalReceiptAuthenticator>(
     transaction: &Transaction<'_>,
     request: &wire::DecisionProposal,
@@ -293,6 +348,11 @@ fn seal<A: LocalReceiptAuthenticator>(
     receipt_artifact(&prepared).map_err(|_| SemanticError::Integrity)
 }
 
+/// Records the terminal Abort decision. Fails with `ExistingCommit` (carrying
+/// the commit receipt) if the other decision already won. The abort chains
+/// from the prepared receipt when sealing happened, else from the intent,
+/// and releases the unit's active pair while leaving ownership with the
+/// source.
 fn abort<A: LocalReceiptAuthenticator>(
     transaction: &Transaction<'_>,
     request: &wire::DecisionProposal,
@@ -383,6 +443,11 @@ fn abort<A: LocalReceiptAuthenticator>(
     receipt_artifact(&abort).map_err(|_| SemanticError::Integrity)
 }
 
+/// Records the terminal Commit decision. Fails with `ExistingAbort` if the
+/// other decision already won, requires phase `Prepared` with the exact
+/// stored prepared receipt re-presented, and is the single place ownership
+/// moves: the unit's owner and epoch become the handoff key's destination
+/// and next epoch in the same transaction that issues the commit receipt.
 fn commit<A: LocalReceiptAuthenticator>(
     transaction: &Transaction<'_>,
     request: &wire::DecisionProposal,

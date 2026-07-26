@@ -1,9 +1,64 @@
+//! Pure joint-handoff reducer: the single authority for how externally issued
+//! receipts advance one handoff's state.
+//!
+//! Phase machine (one path per handoff; every transition below is driven by
+//! exactly one receipt kind):
+//!
+//! ```text
+//! SourceOwned
+//!   --intent-->            PrepareIntent
+//!   --visa freeze-->        FrozenUnsealed
+//!   --nexus freeze-->       FrozenUnsealed   (records cohort, same phase)
+//!   --dest prepared-->      FrozenUnsealed   (records bindings, same phase)
+//!   --ownership prepared--> PreparedFrozen
+//!
+//! commit path:
+//!   PreparedFrozen --commit--> CommitDecided
+//!     --closure progress--> ClosurePending (repeatable, revision-monotone)
+//!     --closure-->          SourceClosed
+//!     --retained tombstone-> RecoveryRequired --closure--> SourceClosed
+//!     SourceClosed --source fence--> SourceClosed (fence recorded)
+//!       --activation started--> DestinationActivationPending
+//!       --activation recorded--> DestinationActive
+//!
+//! abort path (from PrepareIntent, FrozenUnsealed, or PreparedFrozen):
+//!   --abort--> AbortDecided
+//!     with a Nexus freeze:  --thaw--> SourceThawPending --resume--> SourceActive
+//!     without one:          --resume--> SourceActive
+//! ```
+//!
+//! Rules that hold across every transition:
+//!
+//! - Exactly one ownership decision: once `state.decision` is `Commit` or
+//!   `Abort`, only a byte-identical replay of that same receipt is accepted;
+//!   the opposite decision is `DecisionConflict`, never a second decision.
+//! - Exact-replay idempotency: re-delivering the receipt already recorded in
+//!   a slot yields `Replay`, any different receipt in an occupied slot is
+//!   `ConflictingReceipt`. Duplicate delivery is therefore always safe.
+//! - Receipt lineage: `require_child` enforces a hash chain — a child
+//!   receipt must name the same issuer/incarnation/key/log, a strictly
+//!   larger sequence, and `previous_digest == parent.digest`. A stale or
+//!   grafted receipt cannot extend the chain; `require_root` keeps
+//!   chain-starting receipts unparented.
+//! - Fail closed: unknown or out-of-order events reject with the current
+//!   phase; nothing is inferred from absence, and no rejection mutates state
+//!   (`apply` clones before transitioning).
+//! - Ordering safety: destination activation requires the commit decision,
+//!   terminal cohort closure, AND the vISA source fence already recorded —
+//!   the destination can never run while the source is unfenced or the
+//!   frozen effect cohort is unaccounted for. A `RetainedTombstone` keeps
+//!   the handoff in `RecoveryRequired` (cleanup obligations retained) until
+//!   a genuine closure supersedes it at a higher revision.
+
 use crate::{
     ApplyResult, ClosureStatus, Command, Decision, Event, EventKind, FreezeDisposition, JointPhase,
     JointState, OwnershipDecision, ReceiptRef, Rejection, Replay, TypedReceipt,
     all_digests_nonzero, no_duplicate_receipts, nonzero_digest, receipt_reference,
 };
 
+/// Dry-runs a command against the current state without committing anything:
+/// the returned `Decision` tells the caller whether the event would apply,
+/// replay, or reject. Callers journal the event only on `Commit`.
 pub fn preflight(state: &JointState, command: &Command) -> Decision {
     if !state.version.is_supported() || !command.version.is_supported() {
         return Decision::Reject(Rejection::UnsupportedVersion);
@@ -23,6 +78,10 @@ pub fn preflight(state: &JointState, command: &Command) -> Decision {
     }
 }
 
+/// Applies one event to a cloned state. Rejections leave the caller's state
+/// untouched; replays return the original state unchanged; only a genuine
+/// transition advances `revision` (exhaustion is an explicit rejection, not
+/// a wrap).
 pub fn apply(state: &JointState, event: &Event) -> Result<ApplyResult, Rejection> {
     if !state.version.is_supported() || !event.version.is_supported() {
         return Err(Rejection::UnsupportedVersion);
@@ -80,6 +139,8 @@ fn validate_receipt<T: TypedReceipt>(
     receipt_reference(receipt)
 }
 
+/// One receipt slot, three outcomes: empty accepts, identical replays,
+/// different conflicts. This is what makes duplicate delivery harmless.
 fn replay_or_conflict(
     existing: Option<ReceiptRef>,
     candidate: ReceiptRef,
@@ -99,6 +160,11 @@ fn require_ref(actual: Option<ReceiptRef>, expected: ReceiptRef) -> Result<(), R
     }
 }
 
+/// Hash-chain lineage check: the child must be issued by the same
+/// issuer/incarnation over the same key and log, strictly after the parent,
+/// and must name the parent's digest as its predecessor. Prevents stale,
+/// reordered, or cross-log receipts from extending a chain they don't belong
+/// to.
 fn require_child(parent: ReceiptRef, child: &crate::ReceiptHeader) -> Result<(), Rejection> {
     if child.issuer != parent.issuer
         || child.issuer_incarnation != parent.issuer_incarnation
@@ -280,6 +346,12 @@ fn record_destination_prepared(
     Ok(None)
 }
 
+/// Seals the frozen state for commit. Beyond binding every prior receipt and
+/// the exact prepared bindings, this is the gate that refuses to seal a
+/// cohort that is not fully accounted for: the Nexus freeze disposition must
+/// be `ReadyToCommit` with zero unresolved effects (`ClosureBlocked`
+/// otherwise), and the prepared revision must strictly exceed the intent
+/// revision while staying within the issuer's sequence.
 fn seal_prepared(
     state: &mut JointState,
     receipt: &crate::OwnershipPreparedReceipt,
@@ -319,6 +391,9 @@ fn seal_prepared(
     Ok(None)
 }
 
+/// An abort chains from the prepared receipt when sealing happened, else
+/// from the intent. A half-prepared state (one of receipt/revision without
+/// the other) is corrupt and not a valid abort basis.
 fn abort_basis(state: &JointState) -> Result<(ReceiptRef, u64), Rejection> {
     match (state.prepared, state.prepared_revision) {
         (Some(receipt), Some(revision)) => Ok((receipt, revision)),
@@ -429,6 +504,12 @@ fn record_source_resume(
     Ok(None)
 }
 
+/// Records the single ownership Commit decision. Only reachable from
+/// `PreparedFrozen` (a commit without a sealed cohort is impossible), only
+/// child-chained from the prepared receipt, and only with a decision
+/// sequence beyond the prepared revision plus a non-zero non-equivocation
+/// root. An existing Abort makes this `DecisionConflict` — decisions never
+/// race to overwrite each other.
 fn record_commit(
     state: &mut JointState,
     receipt: &crate::OwnershipCommitReceipt,
@@ -553,6 +634,10 @@ fn record_closure(
     Ok(None)
 }
 
+/// A retained tombstone is closure with unfinished cleanup obligations: it
+/// parks the handoff in `RecoveryRequired` rather than `SourceClosed`, so
+/// destination activation stays unreachable until a genuine closure receipt
+/// supersedes it at a strictly higher revision.
 fn record_tombstone(
     state: &mut JointState,
     receipt: &crate::RetainedTombstoneReceipt,
@@ -620,6 +705,11 @@ fn record_source_fence(
     Ok(None)
 }
 
+/// Destination activation may begin only from `SourceClosed` with the source
+/// fence already recorded, naming the exact commit and closure receipts.
+/// Re-issuing the same activation command replays; a different command while
+/// activation is pending or done conflicts — at most one activation attempt
+/// identity per handoff.
 fn begin_destination_activation(
     state: &mut JointState,
     activation_command: crate::Identity,
