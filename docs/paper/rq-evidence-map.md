@@ -162,9 +162,9 @@ hold under adversarial in-process bypass.
 | --- | --- | --- | --- |
 | An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer that recomputes normalization rather than trusting the publisher cache; Stage 3A/3B structural bundle verifiers; Stage 4 verifier that reconstructs the common input and re-runs all seven inner validations; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
 | The verifier independently reimplements the semantic decision | Covered for Stage 1/2/4 and the joint neutral axis; **not** covered for Stage 3 | VALIDATION states plainly that Stage 3 evidence is "runner-produced semantic evidence plus independent structural verification, not a second independent semantic implementation" | The Stage 3 verifiers fix schema, registry, order, terminal classes, assertion shape, digests, epochs, and identities, but do not recompute case assertions from `trace.json` and the raw bytes. `S3B` peer/credential negative assertions are runner-produced and the raw frames are not published. Profile/config JSON is byte-checked but not semantically parsed. |
-| Detection of injected semantic defects is measured | Partially covered | The neutral verifier executes 10 corrupted semantic-trace mutations | This is the closest thing in the repository to a detector-efficacy experiment, and it exists on the joint-handoff axis only. The Nexus lock structurally binds 11 named falsifier classes, and RESEARCH is explicit that this catalog is **not** eleven independently source-mutated Nexus builds. There is no cross-stage injected-defect corpus and no measured detection rate. |
+| Detection of injected semantic defects is measured | Covered for Stage 1 (measured, 2026-07-26); joint axis has the prior 10-mutation suite; Stages 2-4 remain open | Stage 1 defect corpus (`crates/testing/visa-conformance/src/stage1_mutations.rs`, run via `defect_corpus_tests` or the feature-gated `visa-defect-corpus` bin): 26 resealed mutations across the eight RQ3 injection classes, every entry recomputing the full digest closure so only semantic rules can reject it (integrity-family hits asserted zero). Measured detection: 19/25 overall (0.76); per class — stale-generation 3/3, incorrect-error-mapping 3/3, late-profile-checks 3/3, silent-authority-downgrade 3/3, omitted-events 3/3, missing-source-fencing 3/4, lost-cancellation 1/3, duplicate-close 0/3. Plus the neutral verifier's 10 corrupted-trace mutations on the joint axis. | The duplicate-close 0/3 is absorption, not misses: the canonical core accepts byte-identical duplicated terminal events as no-change replays by design, so duplicate close is not an observable defect at this layer — state it that way, never as detection failure. The six genuinely undetected entries share one structure: the verifier re-checks that what the journal claims is self-consistent and reducer-legal, but has no external anchor for intent that never entered the journal (erased cancel round-trips, unclaimed transcript additions, consistently restated profile digests). The corpus is Stage 1 only; extending to Stages 2-4 needs per-stage reseal primitives. |
 | Specific injections named in RQ3 | Partially covered | Stale-generation acceptance, missing source fencing, and silent authority downgrade map onto `S1` cases and `J1` verifier checks; omitted events map onto exact-inventory and publication-completeness checks, including a negative Stage 4 unit test that adds an extra file plus temporary, symlink, hardlink, and socket entries and requires rejection; lost cancellation, duplicate close, incorrect error mapping, and late profile checks map onto `S1`/`S3` cases | These are *scenarios the system handles*, not *defects deliberately introduced into a verifier-under-test and then measured for detection*. The distinction matters for RQ3 specifically, because RQ3 is a claim about the detector, not about the system. |
-| Falsifier: an observable semantic error passes verification | Open | — | Cannot be answered without the systematic injected-defect corpus above. |
+| Falsifier: an observable semantic error passes verification | Partially answered for Stage 1 (measured) | The Stage 1 defect corpus above | Six resealed defects do pass verification, all sharing one structure: intent that never entered the journal has no external anchor for the verifier to check against. Whether these six count as "observable semantic errors" in the falsifier's sense is a definitional question the paper must argue — they are unobservable precisely at the boundary the evidence model draws. |
 | Falsifier: detection requires recording nearly all native execution state | Partially covered | The exclusion lists under RQ1 show that detection currently works without fds, sockets, PC/SP, credentials, socket sequence state, or device/inode metadata; one `SnapshotSize` sample exists per Stage 1 run | There is no evidence-size-versus-detection-coverage curve, which is the quantitative form of this falsifier. |
 
 Overall RQ3: **partially covered, and it is the weakest of the four for paper
@@ -466,7 +466,28 @@ the oracle runtime rather than the Wasmtime adapter and coordinator. Separately,
 are retained anywhere.
 
 Consequently the evaluation chapter needs a purpose-built harness on the
-production spine. Minimum useful set:
+production spine. This now exists: `crates/benchmarks/visa-eval`
+(2026-07-26) covers all four items below with JSONL samples and a
+summarizer (`scripts/eval-summarize.py`). First quick-tier numbers
+(release, btrfs, 200 iters x 3 runs; rerun at the full tier before
+publication): a KV compare-and-set through the coordinator is p50
+2.62 ms against a 1.63 ms three-transaction raw-SQLite baseline — about
+62% unavoidable fsync floor, 38% coordinator CPU (reducer plus two
+whole-state digests per journal entry); handoff wall time is dominated
+75-80% by Wasmtime compilation at every tested journal length, with the
+continuity machinery itself (quiesce, export, validate, reauthorize,
+commit) at 12-19 ms; per-family snapshot overhead is constant (+125 B
+file, +202 B request) while the unpruned operation ledger reaches 99.3%
+of a 219 KB snapshot at 1,000 effects; and the restart baseline beats
+handoff recovery only through journal replay, which grows superlinearly
+(0.4 ms at 10 effects, 7.9 ms at 100, 543 ms at 1,000) because every
+entry double-hashes the whole canonical state over a ledger that never
+prunes (`visa_runtime::Coordinator::build_entry` +
+`semantic_core::reducer::push_evidence`). That superlinearity is an
+engineering finding worth fixing on the spine independent of the paper.
+The raw-SQLite restart arm's semantic losses are named in
+`visa-eval`'s `restart::LOSSY_NOTES` and must accompany any use of its
+numbers. The original list, for reference:
 
 - steady-state overhead of the coordinator/journal path against a
   no-continuity baseline, with repetitions and dispersion, not five samples;
