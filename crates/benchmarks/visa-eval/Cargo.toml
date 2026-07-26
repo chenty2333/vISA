@@ -1,0 +1,29 @@
+[package]
+license.workspace = true
+name = "visa-eval"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[lib]
+name = "visa_eval"
+path = "src/lib.rs"
+
+[[bin]]
+name = "visa-eval"
+path = "src/main.rs"
+
+[dependencies]
+contract_core = { path = "../../core/contract_core" }
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+substrate_api = { path = "../../backend/substrate_api" }
+substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
+visa-composite-cell = { path = "../../testing/visa-composite-cell" }
+visa_component_adapter = { path = "../../runtime/visa_component_adapter" }
+visa_profile = { path = "../../core/visa_profile" }
+visa_runtime = { path = "../../runtime/visa_runtime" }
+
+[dev-dependencies]
+serde_json.workspace = true

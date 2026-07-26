@@ -66,6 +66,7 @@ members = [
     "crates/services/procfs_service",
     "crates/services/vfs_service",
     "crates/benchmarks/visa-bench",
+    "crates/benchmarks/visa-eval",
 ]
 
 [workspace.package]

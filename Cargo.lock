@@ -2611,6 +2611,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa-eval"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "substrate_api",
+ "substrate_host",
+ "visa-composite-cell",
+ "visa_component_adapter",
+ "visa_profile",
+ "visa_runtime",
+]
+
+[[package]]
 name = "visa-joint-handoff-system"
 version = "0.1.0"
 dependencies = [
