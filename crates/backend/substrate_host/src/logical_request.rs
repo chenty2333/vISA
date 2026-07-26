@@ -467,7 +467,14 @@ impl SqliteProvider {
         }
         let (bytes, next_cursor) = if record.phase == LedgerPhase::Completed {
             if let Some(response) = record.response.as_ref() {
+                // The cursor equality check above plus the ledger metadata
+                // consistency check keep the cursor within the stored
+                // response; a cursor past the end is ledger corruption, never
+                // a panic.
                 let start = state.response_cursor as usize;
+                if start > response.len() {
+                    return Err(error(ProviderErrorKind::Integrity, false));
+                }
                 let end = start.saturating_add(max_bytes as usize).min(response.len());
                 (response[start..end].to_vec(), end as u32)
             } else {

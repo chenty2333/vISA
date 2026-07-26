@@ -464,7 +464,11 @@ impl SqliteProvider {
     ) -> Result<EffectOutcome, ProviderError> {
         let connection = &mut self.connection;
         let regular_files = &mut self.regular_files;
+        // Reimplements `SqliteProvider::take_fault` over a split borrow because
+        // `connection` and `regular_files` are borrowed mutably alongside.
+        #[cfg(any(test, feature = "test-control"))]
         let faults = &mut self.faults;
+        #[cfg(any(test, feature = "test-control"))]
         let mut take_fault = |point| {
             if faults.next == Some(point) {
                 faults.next = None;
@@ -475,6 +479,8 @@ impl SqliteProvider {
                 false
             }
         };
+        #[cfg(not(any(test, feature = "test-control")))]
+        let take_fault = |_point: FaultPoint| false;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)?;

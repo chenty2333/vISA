@@ -47,6 +47,7 @@ pub struct SqliteProvider {
     pub(crate) regular_files: BTreeMap<EntityRef, std::fs::File>,
     pub(crate) logical_credentials: BTreeMap<(contract_core::NodeIdentity, Identity), Vec<u8>>,
     profile_dispatch: ProfileDispatchControl,
+    #[cfg(any(test, feature = "test-control"))]
     faults: FaultControl,
 }
 
@@ -74,6 +75,7 @@ impl SqliteProvider {
             regular_files: BTreeMap::new(),
             logical_credentials: BTreeMap::new(),
             profile_dispatch: ProfileDispatchControl::default(),
+            #[cfg(any(test, feature = "test-control"))]
             faults: FaultControl::default(),
         })
     }
@@ -91,6 +93,7 @@ impl SqliteProvider {
         }
     }
 
+    #[cfg(any(test, feature = "test-control"))]
     pub(crate) fn take_fault(&mut self, point: FaultPoint) -> bool {
         if self.faults.next == Some(point) {
             self.faults.next = None;
@@ -100,6 +103,14 @@ impl SqliteProvider {
         } else {
             false
         }
+    }
+
+    // Without test-control there is no fault state at all; every fault branch
+    // is statically false and compiles out of the production provider.
+    #[cfg(not(any(test, feature = "test-control")))]
+    #[inline(always)]
+    pub(crate) fn take_fault(&mut self, _point: FaultPoint) -> bool {
+        false
     }
 
     pub(crate) fn immediate_transaction(
@@ -146,6 +157,7 @@ pub struct FaultObservation {
     pub count: u64,
 }
 
+#[cfg(any(test, feature = "test-control"))]
 #[derive(Default)]
 struct FaultControl {
     next: Option<FaultPoint>,
