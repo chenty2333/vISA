@@ -1,0 +1,120 @@
+package visa:continuity@0.1.0;
+
+interface key-value {
+    record versioned-value {
+        value: list<u8>,
+        version: u64,
+    }
+
+    record write-result {
+        operation-id: string,
+        version: u64,
+        applied: bool,
+    }
+
+    variant kv-error {
+        denied,
+        conflict,
+        stale-binding,
+        indeterminate(string),
+        unavailable,
+    }
+
+    resource namespace {
+        read: func(key: string) -> result<option<versioned-value>, kv-error>;
+        conditional-put: func(
+            idempotency-key: string,
+            key: string,
+            expected-version: option<u64>,
+            value: list<u8>,
+        ) -> result<write-result, kv-error>;
+    }
+}
+
+interface timers {
+    record arm-result {
+        operation-id: string,
+    }
+
+    variant timer-error {
+        denied,
+        stale-binding,
+        not-pending,
+        unavailable,
+    }
+
+    resource timer-binding {
+        arm: func(idempotency-key: string, duration-ns: u64) -> result<arm-result, timer-error>;
+        cancel: func(operation-id: string) -> result<_, timer-error>;
+    }
+}
+
+interface workload {
+    use key-value.{kv-error, namespace};
+    use timers.{timer-binding, timer-error};
+
+    enum phase {
+        armed,
+        frozen,
+        completed,
+        cancelled,
+    }
+
+    record component-state {
+        session-id: string,
+        key: string,
+        expected-version: u64,
+        completion-value: list<u8>,
+        timer-operation-id: string,
+        timer-idempotency-key: string,
+        completion-idempotency-key: string,
+        phase: phase,
+    }
+
+    variant workload-error {
+        already-active,
+        invalid-state,
+        wrong-timer,
+        safe-point-unavailable,
+        kv(kv-error),
+        timer(timer-error),
+    }
+
+    activate: func(
+        session-id: string,
+        key: string,
+        initial-value: list<u8>,
+        completion-value: list<u8>,
+        delay-ns: u64,
+        baseline-idempotency-key: string,
+        timer-idempotency-key: string,
+        completion-idempotency-key: string,
+        kv: own<namespace>,
+        timer: own<timer-binding>,
+    ) -> result<_, workload-error>;
+
+    freeze: func() -> result<component-state, workload-error>;
+
+    thaw: func(
+        state: component-state,
+        kv: own<namespace>,
+        timer: own<timer-binding>,
+    ) -> result<_, workload-error>;
+
+    restore: func(
+        state: component-state,
+        remaining-duration-ns: u64,
+        kv: own<namespace>,
+        timer: own<timer-binding>,
+    ) -> result<_, workload-error>;
+
+    timer-fired: func(operation-id: string) -> result<_, workload-error>;
+    cancel-pending: func() -> result<_, workload-error>;
+    status: func() -> option<component-state>;
+}
+
+world cooperative-handoff {
+    import key-value;
+    import timers;
+    export workload;
+}

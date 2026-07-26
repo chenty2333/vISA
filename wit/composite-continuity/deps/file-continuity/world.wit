@@ -1,0 +1,131 @@
+package visa:file-continuity@0.1.0;
+
+interface regular-file {
+    enum durability {
+        visible,
+        data,
+        data-and-metadata,
+    }
+
+    variant file-error {
+        denied,
+        conflict,
+        stale-binding,
+        unsupported,
+        indeterminate(string),
+        unavailable,
+    }
+
+    record file-observation {
+        operation-id: string,
+        logical-offset: u64,
+        version: u64,
+        size: u64,
+        content-digest: list<u8>,
+        durable-through: durability,
+    }
+
+    record read-result {
+        observation: file-observation,
+        bytes: list<u8>,
+    }
+
+    resource file-binding {
+        read: func(max-bytes: u32) -> result<read-result, file-error>;
+        write: func(
+            idempotency-key: string,
+            bytes: list<u8>,
+            durability: durability,
+        ) -> result<file-observation, file-error>;
+        append: func(
+            idempotency-key: string,
+            bytes: list<u8>,
+            durability: durability,
+        ) -> result<file-observation, file-error>;
+        truncate: func(
+            idempotency-key: string,
+            size: u64,
+            durability: durability,
+        ) -> result<file-observation, file-error>;
+        rename: func(
+            idempotency-key: string,
+            relative-path: string,
+        ) -> result<file-observation, file-error>;
+        sync: func(
+            idempotency-key: string,
+            durability: durability,
+        ) -> result<file-observation, file-error>;
+        acquire-lock: func(idempotency-key: string) -> result<file-observation, file-error>;
+        release-lock: func(idempotency-key: string) -> result<file-observation, file-error>;
+    }
+}
+
+interface workload {
+    use regular-file.{durability, file-binding, file-error, file-observation, read-result};
+
+    enum phase {
+        active,
+        frozen,
+    }
+
+    record component-state {
+        session-id: string,
+        relative-path: string,
+        logical-offset: u64,
+        version: u64,
+        size: u64,
+        content-digest: list<u8>,
+        durable-through: durability,
+        lock-held: bool,
+        last-operation-id: option<string>,
+        phase: phase,
+    }
+
+    variant workload-error {
+        already-active,
+        invalid-state,
+        safe-point-unavailable,
+        file(file-error),
+    }
+
+    activate: func(
+        session-id: string,
+        state: component-state,
+        file: own<file-binding>,
+    ) -> result<_, workload-error>;
+    read: func(max-bytes: u32) -> result<read-result, workload-error>;
+    write: func(
+        idempotency-key: string,
+        bytes: list<u8>,
+        durability: durability,
+    ) -> result<file-observation, workload-error>;
+    append: func(
+        idempotency-key: string,
+        bytes: list<u8>,
+        durability: durability,
+    ) -> result<file-observation, workload-error>;
+    truncate: func(
+        idempotency-key: string,
+        size: u64,
+        durability: durability,
+    ) -> result<file-observation, workload-error>;
+    rename: func(
+        idempotency-key: string,
+        relative-path: string,
+    ) -> result<file-observation, workload-error>;
+    sync: func(
+        idempotency-key: string,
+        durability: durability,
+    ) -> result<file-observation, workload-error>;
+    acquire-lock: func(idempotency-key: string) -> result<file-observation, workload-error>;
+    release-lock: func(idempotency-key: string) -> result<file-observation, workload-error>;
+    freeze: func() -> result<component-state, workload-error>;
+    thaw: func(state: component-state, file: own<file-binding>) -> result<_, workload-error>;
+    restore: func(state: component-state, file: own<file-binding>) -> result<_, workload-error>;
+    status: func() -> option<component-state>;
+}
+
+world regular-file-continuity {
+    import regular-file;
+    export workload;
+}

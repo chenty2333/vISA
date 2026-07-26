@@ -440,6 +440,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "composite-component"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen 0.51.0",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2564,6 +2571,24 @@ dependencies = [
  "visa_durable_sqlite",
  "visa_local_rpc",
  "zbus",
+]
+
+[[package]]
+name = "visa-composite-cell"
+version = "0.1.0"
+dependencies = [
+ "composite-component",
+ "contract_core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "substrate_api",
+ "substrate_host",
+ "visa_component_adapter",
+ "visa_profile",
+ "visa_runtime",
+ "wasmtime",
+ "wit-component 0.244.0",
 ]
 
 [[package]]

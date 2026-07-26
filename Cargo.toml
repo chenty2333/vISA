@@ -47,6 +47,8 @@ members = [
     "crates/testing/handoff-component",
     "crates/testing/stage3-file-component",
     "crates/testing/stage3-request-component",
+    "crates/testing/composite-component",
+    "crates/testing/visa-composite-cell",
     "crates/testing/visa-stage3-system",
     "crates/testing/visa-joint-handoff-system",
     "crates/testing/visa-system",
