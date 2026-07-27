@@ -137,22 +137,35 @@ RUN set -eux; \
         printf '%s  %s\n' \
             '4eba5686a0fc26a1955537b059ac41f1ffd892d64bc275273e5d2102b42d4b9f' \
             /tmp/visa-wacogo/qualification/go.sum | sha256sum -c -; \
+        download_modules() { \
+            module_dir="$1"; \
+            attempt=1; \
+            while ! ( \
+                cd "$module_dir"; \
+                env \
+                    HOME=/tmp/visa-wacogo/home \
+                    GOCACHE=/tmp/visa-wacogo/go-build \
+                    GOMODCACHE="${VISA_WACOGO_GOMODCACHE}" \
+                    GOENV=off \
+                    GOSUMDB=sum.golang.org \
+                    GOTELEMETRY=off \
+                    GOTOOLCHAIN=local \
+                    GOPROXY=https://proxy.golang.org \
+                    GOVCS='*:off' \
+                    GOWORK=off \
+                    "${VISA_WACOGO_GO}" mod download all \
+            ); do \
+                if [ "$attempt" -ge 5 ]; then \
+                    return 1; \
+                fi; \
+                attempt=$((attempt + 1)); \
+                sleep "$attempt"; \
+            done; \
+        }; \
         for module_dir in \
             /tmp/visa-wacogo/module \
             /tmp/visa-wacogo/qualification; do \
-            cd "$module_dir"; \
-            env \
-                HOME=/tmp/visa-wacogo/home \
-                GOCACHE=/tmp/visa-wacogo/go-build \
-                GOMODCACHE="${VISA_WACOGO_GOMODCACHE}" \
-                GOENV=off \
-                GOSUMDB=sum.golang.org \
-                GOTELEMETRY=off \
-                GOTOOLCHAIN=local \
-                GOPROXY=https://proxy.golang.org \
-                GOVCS='*:off' \
-                GOWORK=off \
-                "${VISA_WACOGO_GO}" mod download all; \
+            download_modules "$module_dir"; \
         done; \
         cp \
             "${VISA_WACOGO_GOMODCACHE}/cache/download/github.com/partite-ai/wacogo/@v/v0.0.0-20260617023329-3de16a61796c.zip" \
