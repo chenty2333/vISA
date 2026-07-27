@@ -26,6 +26,15 @@ DEFINITION_SCHEMA = "visa.project-claim-definition.v1"
 MANIFEST_MEMBER = "ARCHIVE-MANIFEST.json"
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 CLAIM_REGISTRY_PATH = "claims/registry.json"
+EVIDENCE_MATRIX_PATH = "claims/evidence-matrix.json"
+EVIDENCE_MATRIX_LIFECYCLE_CELLS = {
+    "cross-runtime-regular-file-continuity-v1": (
+        "s3a.cross.wacogo-to-wacogo.regular-file",
+        "s3a.cross.wacogo-to-wasmtime.regular-file",
+        "s3a.cross.wasmtime-to-wacogo.regular-file",
+        "s3a.cross.wasmtime-to-wasmtime.regular-file",
+    ),
+}
 CI_CLOSURE_JOB_NAME = "Exact-SHA qualification closure"
 CI_JOB_COUNT = 13
 CLAIM_WORKFLOW_ROLES = ("regresses", "required", "supports")
@@ -979,8 +988,16 @@ def _normalized_promotion_registry(
 
 
 def _validate_promotion_tree_changes(
-    root: Path, accepted_revision: str, head: str, claim_id: str
+    root: Path,
+    accepted_revision: str,
+    head: str,
+    claim_id: str,
+    lifecycle_paths: set[str],
 ) -> None:
+    require(
+        lifecycle_paths <= {EVIDENCE_MATRIX_PATH},
+        f"unknown promotion lifecycle paths: {sorted(lifecycle_paths)}",
+    )
     result = subprocess.run(
         [
             "git",
@@ -1016,6 +1033,7 @@ def _validate_promotion_tree_changes(
         receipt_path,
         manifest_path,
         *PROMOTION_DOCUMENT_PATHS,
+        *lifecycle_paths,
     }
     require(
         changed <= allowed,
@@ -1027,6 +1045,7 @@ def _validate_promotion_tree_changes(
         "README.md",
         receipt_path,
         manifest_path,
+        *lifecycle_paths,
     }
     require(
         required <= changed,
@@ -1133,6 +1152,7 @@ def _validate_definition_against_accepted_candidate(
             promotion_contract == accepted_contract,
             f"{claim_id} {kind} semantic contract changed after CI acceptance",
         )
+    lifecycle_paths: set[str] = set()
     for relative in candidate["implementation_refs"]:
         accepted_implementation = _git_blob_at_revision(
             root,
@@ -1146,12 +1166,24 @@ def _validate_definition_against_accepted_candidate(
             relative,
             f"promotion implementation ref {relative}",
         )
-        require(
-            promotion_implementation == accepted_implementation,
-            f"implementation ref {relative} changed after CI acceptance",
-        )
+        if relative == EVIDENCE_MATRIX_PATH:
+            _validate_evidence_matrix_promotion(
+                accepted_implementation,
+                promotion_implementation,
+                claim_id,
+            )
+            lifecycle_paths.add(relative)
+        else:
+            require(
+                promotion_implementation == accepted_implementation,
+                f"implementation ref {relative} changed after CI acceptance",
+            )
     _validate_promotion_tree_changes(
-        root, revision, promotion_revision, claim_id
+        root,
+        revision,
+        promotion_revision,
+        claim_id,
+        lifecycle_paths,
     )
 
 
@@ -1269,6 +1301,88 @@ def _normalized_claim_workflow(
         workflow = workflow.replace(token, placeholder)
     require(count > 0, f"{label} does not bind the successor claim role")
     return workflow, count
+
+
+def _normalized_evidence_matrix_lifecycle(
+    data: bytes,
+    claim_id: str,
+    expected_disposition: str,
+    label: str,
+) -> tuple[bytes, list[str]]:
+    matrix = load_json_bytes(data, label)
+    require(isinstance(matrix, dict), f"{label} must contain one JSON object")
+    cells = matrix.get("cells")
+    requirements = matrix.get("claim_requirements")
+    require(isinstance(cells, list), f"{label} cells must be an array")
+    require(
+        isinstance(requirements, list),
+        f"{label} claim_requirements must be an array",
+    )
+    matches = [
+        item
+        for item in requirements
+        if isinstance(item, dict) and item.get("claim_id") == claim_id
+    ]
+    require(len(matches) == 1, f"{label} must contain exactly one {claim_id} requirement")
+    required = matches[0].get("required_cells")
+    require(
+        isinstance(required, list)
+        and required
+        and all(isinstance(item, str) and item for item in required)
+        and required == sorted(set(required)),
+        f"{label} {claim_id} required cells are invalid",
+    )
+    expected_cells = EVIDENCE_MATRIX_LIFECYCLE_CELLS.get(claim_id)
+    require(
+        expected_cells is not None and required == list(expected_cells),
+        f"{label} {claim_id} must retain its exact four-cell lifecycle set",
+    )
+    by_id = {
+        item.get("id"): item
+        for item in cells
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    require(len(by_id) == len(cells), f"{label} cell identities are invalid or duplicated")
+    normalized = copy.deepcopy(matrix)
+    normalized_cells = {
+        item["id"]: item for item in normalized["cells"] if isinstance(item, dict)
+    }
+    for cell_id in required:
+        cell = by_id.get(cell_id)
+        require(isinstance(cell, dict), f"{label} lacks required cell {cell_id}")
+        require(
+            claim_id in cell.get("claim_ids", []),
+            f"{label} required cell {cell_id} does not bind {claim_id}",
+        )
+        require(
+            cell.get("disposition") == expected_disposition,
+            f"{label} required cell {cell_id} is not {expected_disposition}",
+        )
+        normalized_cells[cell_id]["disposition"] = "claim-lifecycle-disposition"
+    return canonical_json(normalized), required
+
+
+def _validate_evidence_matrix_promotion(
+    accepted_data: bytes,
+    promotion_data: bytes,
+    claim_id: str,
+) -> None:
+    accepted, accepted_required = _normalized_evidence_matrix_lifecycle(
+        accepted_data,
+        claim_id,
+        "candidate",
+        "accepted evidence matrix",
+    )
+    promoted, promoted_required = _normalized_evidence_matrix_lifecycle(
+        promotion_data,
+        claim_id,
+        "qualified",
+        "promotion evidence matrix",
+    )
+    require(
+        promoted_required == accepted_required and promoted == accepted,
+        "evidence matrix changed beyond the successor claim lifecycle disposition",
+    )
 
 
 def _validate_accepted_source_ancestor(

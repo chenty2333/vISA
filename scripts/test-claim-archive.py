@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from claim_archive import (  # noqa: E402
     ArchiveError,
+    _validate_evidence_matrix_promotion,
     claim_definition_sha256,
     permanent_claims_at_baseline,
     require_permanent_claims_monotonic,
@@ -634,6 +635,98 @@ class Fixture:
 
 
 class ClaimArchiveTests(unittest.TestCase):
+    successor_claim_id = "cross-runtime-regular-file-continuity-v1"
+
+    def promoted_evidence_matrix(self) -> tuple[bytes, dict[str, object]]:
+        matrix_path = (
+            Path(__file__).resolve().parent.parent / "claims/evidence-matrix.json"
+        )
+        accepted = matrix_path.read_bytes()
+        promotion = json.loads(accepted)
+        requirement = next(
+            item
+            for item in promotion["claim_requirements"]
+            if item["claim_id"] == self.successor_claim_id
+        )
+        required = set(requirement["required_cells"])
+        for cell in promotion["cells"]:
+            if cell["id"] in required:
+                cell["disposition"] = "qualified"
+        return accepted, promotion
+
+    def test_evidence_matrix_allows_only_candidate_to_qualified_promotion(self) -> None:
+        accepted, promotion = self.promoted_evidence_matrix()
+        _validate_evidence_matrix_promotion(
+            accepted,
+            json_bytes(promotion),
+            self.successor_claim_id,
+        )
+
+    def test_evidence_matrix_rejects_partial_lifecycle_promotion(self) -> None:
+        accepted, promotion = self.promoted_evidence_matrix()
+        required = next(
+            item["required_cells"]
+            for item in promotion["claim_requirements"]
+            if item["claim_id"] == self.successor_claim_id
+        )
+        next(cell for cell in promotion["cells"] if cell["id"] == required[0])[
+            "disposition"
+        ] = "candidate"
+        with self.assertRaisesRegex(ArchiveError, r"is not qualified"):
+            _validate_evidence_matrix_promotion(
+                accepted,
+                json_bytes(promotion),
+                self.successor_claim_id,
+            )
+
+    def test_evidence_matrix_rejects_a_shrunken_four_cell_contract(self) -> None:
+        accepted, promotion = self.promoted_evidence_matrix()
+        accepted_matrix = json.loads(accepted)
+        accepted_requirement = next(
+            item
+            for item in accepted_matrix["claim_requirements"]
+            if item["claim_id"] == self.successor_claim_id
+        )
+        promotion_requirement = next(
+            item
+            for item in promotion["claim_requirements"]
+            if item["claim_id"] == self.successor_claim_id
+        )
+        removed = accepted_requirement["required_cells"].pop()
+        promotion_requirement["required_cells"].pop()
+        next(cell for cell in promotion["cells"] if cell["id"] == removed)[
+            "disposition"
+        ] = "candidate"
+        with self.assertRaisesRegex(ArchiveError, r"exact four-cell lifecycle set"):
+            _validate_evidence_matrix_promotion(
+                json_bytes(accepted_matrix),
+                json_bytes(promotion),
+                self.successor_claim_id,
+            )
+
+    def test_evidence_matrix_rejects_coordinate_drift_during_promotion(self) -> None:
+        accepted, promotion = self.promoted_evidence_matrix()
+        requirement = next(
+            item
+            for item in promotion["claim_requirements"]
+            if item["claim_id"] == self.successor_claim_id
+        )
+        cell = next(
+            item
+            for item in promotion["cells"]
+            if item["id"] == requirement["required_cells"][0]
+        )
+        cell["fault_model"] = "stage1-lifecycle-thirty-one-case"
+        with self.assertRaisesRegex(
+            ArchiveError,
+            r"changed beyond.*lifecycle disposition",
+        ):
+            _validate_evidence_matrix_promotion(
+                accepted,
+                json_bytes(promotion),
+                self.successor_claim_id,
+            )
+
     def make_fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Fixture]:
         temporary = tempfile.TemporaryDirectory(prefix="visa-claim-archive-test-")
         return temporary, Fixture(Path(temporary.name))

@@ -467,7 +467,7 @@
       ],
       "evidence_boundary": "The source-lock-bound Wacogo derivative executes both regular-file endpoints over the shared host provider contract.",
       "non_claims": [
-        "Candidate implementation is not an earned cross-runtime rich-resource claim."
+        "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
     },
     {
@@ -495,7 +495,7 @@
       ],
       "evidence_boundary": "The Wacogo source hands portable regular-file state and rebound authority to Wasmtime.",
       "non_claims": [
-        "Candidate implementation is not an earned cross-runtime rich-resource claim."
+        "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
     },
     {
@@ -523,7 +523,7 @@
       ],
       "evidence_boundary": "The Wasmtime source hands portable regular-file state and rebound authority to Wacogo.",
       "non_claims": [
-        "Candidate implementation is not an earned cross-runtime rich-resource claim."
+        "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
     },
     {
@@ -551,7 +551,7 @@
       ],
       "evidence_boundary": "The new matrix baseline uses the same common input and normalized verifier as all Wacogo directions.",
       "non_claims": [
-        "Candidate implementation is not an earned cross-runtime rich-resource claim."
+        "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
     },
     {

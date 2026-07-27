@@ -956,6 +956,15 @@ same command after interruption. An explicitly supplied
 `--zenodo-deposition-id` is accepted only when it matches that state, preventing
 duplicate records or recovery against different bytes.
 
+Commit the publisher's receipt and archive manifest together with the lifecycle
+promotion: change the claim registry from `candidate` to `earned`, replace the
+pending receipt kind and digest, change its required CI role to `regresses`, and
+change exactly the four successor cells in `claims/evidence-matrix.json` from
+`candidate` to `qualified`. The permanent verifier normalizes only those four
+disposition changes; every coordinate, boundary, non-claim, run requirement,
+workflow binding, semantic-contract byte, and other implementation reference
+must remain identical to the accepted revision.
+
 Accepted implementation `d3b07f1114cb49e26dd62fb252a895022ac2a743`
 completed the clean local and Docker gates, the same-revision eleven-job CI
 closure, and independent post-download verification of both joint artifacts.
