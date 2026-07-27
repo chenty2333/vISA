@@ -638,10 +638,26 @@ class ClaimArchiveTests(unittest.TestCase):
     successor_claim_id = "cross-runtime-regular-file-continuity-v1"
 
     def promoted_evidence_matrix(self) -> tuple[bytes, dict[str, object]]:
-        matrix_path = (
-            Path(__file__).resolve().parent.parent / "claims/evidence-matrix.json"
+        root = Path(__file__).resolve().parent.parent
+        receipt = json.loads(
+            (
+                root
+                / "claims/receipts"
+                / f"{self.successor_claim_id}.json"
+            ).read_bytes()
         )
-        accepted = matrix_path.read_bytes()
+        accepted_revision = receipt["accepted_source"]["revision"]
+        accepted = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "show",
+                f"{accepted_revision}:claims/evidence-matrix.json",
+            ],
+            check=True,
+            capture_output=True,
+        ).stdout
         promotion = json.loads(accepted)
         requirement = next(
             item
