@@ -120,6 +120,7 @@ define or widen them.
 | `bounded-regular-file-continuity` | `earned` |
 | `cooperative-stateful-component-handoff` | `earned` |
 | `cross-execution-path-portability` | `earned` |
+| `cross-runtime-regular-file-continuity-v1` | `candidate` |
 | `emulated-cross-isa-continuity-v1` | `earned` |
 | `named-target-substrate-continuity-v1` | `earned` |
 | `strict-cross-runtime-continuity` | `earned` |

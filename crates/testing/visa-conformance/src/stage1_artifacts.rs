@@ -970,6 +970,7 @@ fn validate_traces(
             }
         }
     }
+    validate_case_trace_intent(case, traces, findings);
     validate_authority_roots(case, traces, findings);
     if claimed.len() != 1 {
         finding(
@@ -1030,6 +1031,33 @@ fn validate_traces(
                 "{} raw worker dumps do not contain the claimed final canonical state",
                 case.case_id
             ),
+        );
+    }
+}
+
+fn validate_case_trace_intent(
+    case: &Stage1CaseEvidence,
+    traces: &[ParsedTrace],
+    findings: &mut Vec<Stage1ValidationFinding>,
+) {
+    if case.outcome != crate::stage1::Stage1CaseOutcome::EvidenceIdentityVerified {
+        return;
+    }
+
+    let frozen_timer_dispositions = traces
+        .iter()
+        .filter(|trace| trace.trace.role == Stage1TraceRole::Source)
+        .flat_map(|trace| &trace.trace.entries)
+        .filter_map(|entry| match entry.event.kind {
+            EventKind::Frozen { timer, .. } => Some(timer),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if frozen_timer_dispositions != [TimerDisposition::Idle] {
+        finding(
+            findings,
+            "inconsistent-stage1-timer-intent",
+            format!("{} must freeze exactly one never-armed timer as Idle", case.case_id),
         );
     }
 }
@@ -1671,6 +1699,14 @@ fn validate_transcript(
                 .insert(transcript.worker.clone(), (transcript.pid, transcript.sequence));
         }
         if transcript.stream == RawTranscriptStream::WorkerStderr {
+            finding(
+                findings,
+                "unexpected-stage1-worker-stderr",
+                format!(
+                    "{} worker {} emitted untyped stderr in passing evidence",
+                    case.case_id, transcript.worker
+                ),
+            );
             continue;
         }
         let value = match serde_json::from_str::<serde_json::Value>(&transcript.line) {
@@ -2095,7 +2131,15 @@ fn validate_transcript(
             RawTranscriptStream::WorkerStderr => unreachable!(),
         }
     }
-    for (worker, handshake) in worker_handshakes {
+    validate_supplemental_fault_evidence(
+        case,
+        role,
+        matrix,
+        &requests,
+        &worker_handshakes,
+        findings,
+    );
+    for (worker, handshake) in &worker_handshakes {
         if handshake.initialize_request_id.is_none() {
             finding(
                 findings,
@@ -2132,6 +2176,52 @@ fn validate_transcript(
                 "{} {} transcript has {primary_initializations} primary initialized responses",
                 case.case_id,
                 trace_role_name(role)
+            ),
+        );
+    }
+}
+
+fn validate_supplemental_fault_evidence(
+    case: &Stage1CaseEvidence,
+    role: Stage1TraceRole,
+    matrix: Option<&MatrixManifest>,
+    requests: &BTreeMap<(String, String), RawRequestObservation>,
+    worker_handshakes: &BTreeMap<String, RawWorkerHandshake>,
+    findings: &mut Vec<Stage1ValidationFinding>,
+) {
+    if case.case_id != "evidence-verification" || role != Stage1TraceRole::Source {
+        return;
+    }
+    let Some(matrix) = matrix else {
+        return;
+    };
+
+    let expected = matrix
+        .provider_fault_coverage
+        .iter()
+        .filter(|coverage| {
+            coverage.case_id == case.case_id && coverage.role == "supplemental-source"
+        })
+        .map(|coverage| supplemental_case_id(coverage.point))
+        .collect::<BTreeSet<_>>();
+    let observed = requests
+        .iter()
+        .filter_map(|((worker, _), request)| {
+            let initialization = request.initialization.as_ref()?;
+            (initialization.case_id != case.case_id
+                && worker_handshakes
+                    .get(worker)
+                    .is_some_and(|handshake| handshake.state == RawInitializationState::Succeeded))
+            .then(|| initialization.case_id.clone())
+        })
+        .collect::<BTreeSet<_>>();
+    if observed != expected {
+        finding(
+            findings,
+            "incomplete-stage1-supplemental-fault-evidence",
+            format!(
+                "{} supplemental source initializations {:?} do not cover declared fault cases {:?}",
+                case.case_id, observed, expected
             ),
         );
     }

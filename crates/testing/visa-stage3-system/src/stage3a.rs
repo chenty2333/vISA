@@ -11,24 +11,31 @@ use contract_core::{
 use serde_json::json;
 use substrate_api::{LeasePort, ProviderErrorKind};
 use substrate_host::{FaultPoint, SqliteProvider};
-use visa_component_adapter::parse_identity;
-use visa_conformance::{STAGE3A_CASE_DEFINITIONS, Stage3CaseDefinition, Stage3CaseTerminal};
+use visa_component_adapter::{
+    PortableRegularFileState, RegularFileAdapterError, RegularFileCallResult, RegularFileFailure,
+    RegularFileWorkloadFailure, parse_identity,
+};
+use visa_conformance::{
+    STAGE3A_CASE_DEFINITIONS, Stage3CaseDefinition, Stage3CaseTerminal, Stage3RuntimeScope,
+};
 use visa_profile::{
     FileDurability, FileLockState, REGULAR_FILE_EXTENSION_ID, REGULAR_FILE_EXTENSION_VERSION,
     RegularFileOperation, RegularFileResult, RegularFileState, regular_file_state,
 };
 use visa_runtime::{Coordinator, RuntimeError, SnapshotExpectations, validate_snapshot};
-use visa_wasmtime::{
-    PortableRegularFileState, RegularFileAdapter, RegularFileAdapterError, RegularFileFailure,
-    RegularFileWorkloadFailure,
-};
 
 use crate::{
     component,
-    evidence::{Stage3CaseCapture, create_incomplete_marker, publish_stage3a, terminal_name},
+    evidence::{
+        Stage3CaseCapture, create_incomplete_marker, publish_stage3a, runtime_identity,
+        terminal_name,
+    },
     fixture::{
         FixtureIds, FixturePaths, INITIAL_LEASE_EPOCH, Stage3aFixture, Stage3aFixtureOptions,
         derive_identity,
+    },
+    regular_file_runtime::{
+        MatrixRegularFileAdapter, RegularFileRuntimeKind, RegularFileRuntimePair,
     },
 };
 
@@ -42,7 +49,8 @@ struct CaseContext {
     timer_authority: visa_runtime::AuthorityPlan,
     key_value_authority: visa_runtime::AuthorityPlan,
     file_authority: visa_runtime::ProfileAuthorityPlan,
-    source: RegularFileAdapter<SqliteProvider>,
+    runtime_pair: RegularFileRuntimePair,
+    source: MatrixRegularFileAdapter,
     destination_provider: Option<SqliteProvider>,
     canonical_before: Digest,
     file_before: Vec<u8>,
@@ -50,20 +58,29 @@ struct CaseContext {
 }
 
 struct CommittedContext {
-    destination: RegularFileAdapter<SqliteProvider>,
+    destination: MatrixRegularFileAdapter,
     portable: PortableRegularFileState,
 }
 
 pub fn run_stage3a(artifact_root: &Path) -> Result<PathBuf, String> {
+    run_stage3a_for_pair(artifact_root, RegularFileRuntimePair::WASMTIME_BASELINE)
+}
+
+pub(crate) fn run_stage3a_for_pair(
+    artifact_root: &Path,
+    runtime_pair: RegularFileRuntimePair,
+) -> Result<PathBuf, String> {
     create_incomplete_marker(artifact_root)?;
     let work_root = artifact_root.join(".stage3-work");
     let started = now_unix_ms()?;
     let mut captures = Vec::with_capacity(STAGE3A_CASE_DEFINITIONS.len());
     for definition in STAGE3A_CASE_DEFINITIONS {
-        captures.push(run_case(&work_root, definition)?);
+        captures.push(run_case(&work_root, definition, runtime_pair)?);
     }
     remove_completed_work_tree(&work_root)?;
     let finished = now_unix_ms()?;
+    let includes_wacogo = runtime_pair.source == RegularFileRuntimeKind::SourceLockedWacogo
+        || runtime_pair.destination == RegularFileRuntimeKind::SourceLockedWacogo;
     let profile_manifest = json!({
         "profile": "bounded-regular-file-continuity",
         "extension_id": identity_hex(REGULAR_FILE_EXTENSION_ID),
@@ -85,10 +102,9 @@ pub fn run_stage3a(artifact_root: &Path) -> Result<PathBuf, String> {
         ],
     });
     let configuration = json!({
-        "source_runtime": "visa_wasmtime_stage3a",
-        "destination_runtime": "visa_wasmtime_stage3a",
-        "independent_runtime_coverage": false,
-        "unsupported_stage3_runtime": "wacogo",
+        "source_runtime": runtime_pair.source.implementation(),
+        "destination_runtime": runtime_pair.destination.implementation(),
+        "independent_runtime_coverage": includes_wacogo,
         "provider": "substrate_host::SqliteProvider",
         "path_resolution": "linux-openat2-beneath-no-symlink-no-xdev",
         "native_identity": "linux-statx-device-inode-birth-time-required",
@@ -97,14 +113,29 @@ pub fn run_stage3a(artifact_root: &Path) -> Result<PathBuf, String> {
         "external_mutation_boundary":
             "pre-operation-drift-detection-and-cooperative-advisory-lock-lease",
         "component_state_encoding": "visa-regular-file-state-v1",
-        "execution_boundary": "same-process-distinct-wasmtime-store-and-provider-instance",
+        "execution_boundary": runtime_pair.execution_boundary(),
         "case_count": STAGE3A_CASE_DEFINITIONS.len(),
     });
+    let runtime = Stage3RuntimeScope {
+        source: runtime_identity(&runtime_pair.source.runtime_identity()),
+        destination: runtime_identity(&runtime_pair.destination.runtime_identity()),
+        host_os: std::env::consts::OS.to_owned(),
+        source_isa: std::env::consts::ARCH.to_owned(),
+        destination_isa: std::env::consts::ARCH.to_owned(),
+        substrate: "substrate_host::SqliteProvider".to_owned(),
+        execution_boundary: runtime_pair.execution_boundary().to_owned(),
+        independent_runtime_coverage: includes_wacogo,
+        unsupported_runtime_implementations: if includes_wacogo {
+            Vec::new()
+        } else {
+            vec!["wacogo".to_owned()]
+        },
+    };
     publish_stage3a(
         artifact_root,
         started,
         finished,
-        RegularFileAdapter::<SqliteProvider>::runtime_identity_static(),
+        runtime,
         &profile_manifest,
         &configuration,
         &captures,
@@ -114,22 +145,31 @@ pub fn run_stage3a(artifact_root: &Path) -> Result<PathBuf, String> {
 fn run_case(
     artifact_root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
     match definition.id {
-        "read-write-offset" => case_read_write_offset(artifact_root, definition),
-        "append-continuity" => case_append_continuity(artifact_root, definition),
-        "truncate-version" => case_truncate_version(artifact_root, definition),
-        "rename-object-identity" => case_rename_identity(artifact_root, definition),
-        "replacement-rejected" => case_replacement_rejected(artifact_root, definition),
-        "external-mutation-rejected" => case_external_mutation(artifact_root, definition),
-        "lock-conflict" => case_lock_conflict(artifact_root, definition),
-        "durability-reconciled" => case_durability_reconciled(artifact_root, definition),
-        "stale-source-fenced" => case_stale_source_fenced(artifact_root, definition),
-        "cleanup-idempotent" => case_cleanup_idempotent(artifact_root, definition),
-        "indeterminate-write-blocks-handoff" => {
-            case_indeterminate_blocks(artifact_root, definition)
+        "read-write-offset" => case_read_write_offset(artifact_root, definition, runtime_pair),
+        "append-continuity" => case_append_continuity(artifact_root, definition, runtime_pair),
+        "truncate-version" => case_truncate_version(artifact_root, definition, runtime_pair),
+        "rename-object-identity" => case_rename_identity(artifact_root, definition, runtime_pair),
+        "replacement-rejected" => {
+            case_replacement_rejected(artifact_root, definition, runtime_pair)
         }
-        "destination-reauthorization-denied" => case_destination_denied(artifact_root, definition),
+        "external-mutation-rejected" => {
+            case_external_mutation(artifact_root, definition, runtime_pair)
+        }
+        "lock-conflict" => case_lock_conflict(artifact_root, definition, runtime_pair),
+        "durability-reconciled" => {
+            case_durability_reconciled(artifact_root, definition, runtime_pair)
+        }
+        "stale-source-fenced" => case_stale_source_fenced(artifact_root, definition, runtime_pair),
+        "cleanup-idempotent" => case_cleanup_idempotent(artifact_root, definition, runtime_pair),
+        "indeterminate-write-blocks-handoff" => {
+            case_indeterminate_blocks(artifact_root, definition, runtime_pair)
+        }
+        "destination-reauthorization-denied" => {
+            case_destination_denied(artifact_root, definition, runtime_pair)
+        }
         other => Err(format!("unimplemented Stage 3A case {other}")),
     }
 }
@@ -137,10 +177,12 @@ fn run_case(
 fn case_read_write_offset(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
+        runtime_pair,
         b"abcdef",
         Stage3aFixtureOptions {
             destination_file_policy: true,
@@ -220,8 +262,10 @@ fn case_read_write_offset(
 fn case_append_continuity(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"abc", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"abc", Stage3aFixtureOptions::standard())?;
     execute(
         &mut case,
         RegularFileOperation::Append { bytes: b"!".to_vec(), durability: FileDurability::Data },
@@ -269,8 +313,10 @@ fn case_append_continuity(
 fn case_truncate_version(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"abcdef", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"abcdef", Stage3aFixtureOptions::standard())?;
     execute(
         &mut case,
         RegularFileOperation::Truncate { size: 3, durability: FileDurability::DataAndMetadata },
@@ -296,10 +342,17 @@ fn case_truncate_version(
 fn case_rename_identity(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let mut case = start_case(root, definition, b"rename-me", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        b"rename-me",
+        Stage3aFixtureOptions::standard(),
+    )?;
     let inode_before =
         fs::metadata(&case.paths.file_path).map_err(io_error("inspect source inode"))?.ino();
     let occupied = case.paths.file_root.join("occupied.bin");
@@ -357,8 +410,10 @@ fn case_rename_identity(
 fn case_replacement_rejected(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"same", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"same", Stage3aFixtureOptions::standard())?;
     let extension_before = canonical_file(case.source.coordinator().state())?;
     let replacement = case.paths.file_root.join("replacement.bin");
     fs::write(&replacement, b"same").map_err(io_error("write replacement"))?;
@@ -379,8 +434,10 @@ fn case_replacement_rejected(
 fn case_external_mutation(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"original", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"original", Stage3aFixtureOptions::standard())?;
     let extension_before = canonical_file(case.source.coordinator().state())?;
     fs::write(&case.paths.file_path, b"external").map_err(io_error("mutate file externally"))?;
     let rejected =
@@ -399,8 +456,10 @@ fn case_external_mutation(
 fn case_lock_conflict(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"locked", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"locked", Stage3aFixtureOptions::standard())?;
     execute(&mut case, RegularFileOperation::AcquireLock, Some("lock-source"))?;
     let competitor = fs::OpenOptions::new()
         .read(true)
@@ -449,10 +508,12 @@ fn case_lock_conflict(
 fn case_durability_reconciled(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
+        runtime_pair,
         b"a",
         Stage3aFixtureOptions {
             destination_file_policy: true,
@@ -508,8 +569,10 @@ fn case_durability_reconciled(
 fn case_stale_source_fenced(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"fence", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"fence", Stage3aFixtureOptions::standard())?;
     let mut committed = handoff(&mut case)?;
     let source_denied = matches!(
         case.source.coordinator().provider().check_lease(
@@ -549,8 +612,10 @@ fn case_stale_source_fenced(
 fn case_cleanup_idempotent(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case = start_case(root, definition, b"clean", Stage3aFixtureOptions::standard())?;
+    let mut case =
+        start_case(root, definition, runtime_pair, b"clean", Stage3aFixtureOptions::standard())?;
     execute(
         &mut case,
         RegularFileOperation::Append { bytes: b"!".to_vec(), durability: FileDurability::Visible },
@@ -604,10 +669,12 @@ fn case_cleanup_idempotent(
 fn case_indeterminate_blocks(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
+        runtime_pair,
         b"a",
         Stage3aFixtureOptions {
             destination_file_policy: true,
@@ -671,10 +738,12 @@ fn case_indeterminate_blocks(
 fn case_destination_denied(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
+        runtime_pair,
         b"policy",
         Stage3aFixtureOptions { destination_file_policy: false, source_fault: None },
     )?;
@@ -711,6 +780,7 @@ fn case_destination_denied(
 fn start_case(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
+    runtime_pair: RegularFileRuntimePair,
     initial: &[u8],
     options: Stage3aFixtureOptions,
 ) -> Result<CaseContext, String> {
@@ -737,8 +807,12 @@ fn start_case(
             INITIAL_LEASE_EPOCH,
         )
         .map_err(runtime_error)?;
-    let mut source = RegularFileAdapter::instantiate(component::stage3a_bytes(), coordinator)
-        .map_err(adapter_error)?;
+    let mut source = MatrixRegularFileAdapter::instantiate(
+        runtime_pair.source,
+        component::stage3a_bytes(),
+        coordinator,
+    )
+    .map_err(adapter_error)?;
     source.activate(format!("{}:session", definition.id)).map_err(adapter_error)?;
     let canonical_before = source.coordinator().state_digest().map_err(runtime_error)?;
     let file_before = fs::read(&paths.file_path).map_err(io_error("read initial file"))?;
@@ -752,6 +826,7 @@ fn start_case(
         timer_authority,
         key_value_authority,
         file_authority,
+        runtime_pair,
         source,
         destination_provider: Some(destination),
         canonical_before,
@@ -772,7 +847,7 @@ fn execute(
 
 fn execute_destination(
     operations: &mut Vec<String>,
-    destination: &mut RegularFileAdapter<SqliteProvider>,
+    destination: &mut MatrixRegularFileAdapter,
     operation: RegularFileOperation,
     key: Option<&str>,
 ) -> Result<RegularFileResult, String> {
@@ -801,8 +876,12 @@ fn handoff(case: &mut CaseContext) -> Result<CommittedContext, String> {
             ),
         )
         .map_err(runtime_error)?;
-    let mut destination = RegularFileAdapter::instantiate(component::stage3a_bytes(), destination)
-        .map_err(adapter_error)?;
+    let mut destination = MatrixRegularFileAdapter::instantiate(
+        case.runtime_pair.destination,
+        component::stage3a_bytes(),
+        destination,
+    )
+    .map_err(adapter_error)?;
     destination.restore(&portable).map_err(adapter_error)?;
     destination
         .coordinator_mut()
@@ -872,8 +951,8 @@ fn export_to_destination(
 }
 
 fn capture(
-    case: CaseContext,
-    committed: CommittedContext,
+    mut case: CaseContext,
+    mut committed: CommittedContext,
     assertions: Vec<(&str, bool)>,
     trace: serde_json::Value,
 ) -> Result<Stage3CaseCapture, String> {
@@ -882,6 +961,10 @@ fn capture(
     let file_after = read_live_file(&case.paths, &state);
     let canonical_after =
         committed.destination.coordinator().state_digest().map_err(runtime_error)?;
+    let source_runtime = case.source.runtime_identity();
+    let destination_runtime = committed.destination.runtime_identity();
+    case.source.shutdown().map_err(adapter_error)?;
+    committed.destination.shutdown().map_err(adapter_error)?;
     Ok(Stage3CaseCapture {
         definition: case.definition,
         canonical_before: case.canonical_before,
@@ -895,6 +978,9 @@ fn capture(
             "terminal": terminal_name(case.definition.terminal),
             "source_phase": format!("{:?}", case.source.coordinator().state().phase),
             "destination_phase": format!("{:?}", committed.destination.coordinator().state().phase),
+            "source_runtime": source_runtime.implementation,
+            "destination_runtime": destination_runtime.implementation,
+            "runtime_shutdown": "clean",
             "observations": trace,
         }),
         file_before: case.file_before,
@@ -919,7 +1005,7 @@ fn blocked_capture(
 }
 
 fn terminal_capture(
-    case: CaseContext,
+    mut case: CaseContext,
     terminal: Stage3CaseTerminal,
     assertions: Vec<(&str, bool)>,
     trace: serde_json::Value,
@@ -930,6 +1016,8 @@ fn terminal_capture(
     let state = canonical_file(case.source.coordinator().state())?;
     let file_after = read_live_file(&case.paths, &state);
     let source_epoch = case.source.coordinator().state().ownership.epoch.0;
+    let source_runtime = case.source.runtime_identity();
+    case.source.shutdown().map_err(adapter_error)?;
     Ok(Stage3CaseCapture {
         definition: case.definition,
         canonical_before: case.canonical_before,
@@ -942,6 +1030,9 @@ fn terminal_capture(
             "case_id": case.definition.id,
             "terminal": terminal_name(terminal),
             "source_phase": format!("{:?}", case.source.coordinator().state().phase),
+            "source_runtime": source_runtime.implementation,
+            "destination_runtime": case.runtime_pair.destination.implementation(),
+            "runtime_shutdown": "clean",
             "observations": trace,
         }),
         file_before: case.file_before,
@@ -974,9 +1065,7 @@ fn read_live_file(paths: &FixturePaths, state: &RegularFileState) -> Vec<u8> {
     fs::read(paths.file_root.join(relative.as_ref())).unwrap_or_default()
 }
 
-fn is_file_conflict(
-    result: Result<visa_wasmtime::RegularFileCallResult, RegularFileAdapterError>,
-) -> bool {
+fn is_file_conflict(result: Result<RegularFileCallResult, RegularFileAdapterError>) -> bool {
     matches!(
         result,
         Err(RegularFileAdapterError::Workload(RegularFileWorkloadFailure::File(

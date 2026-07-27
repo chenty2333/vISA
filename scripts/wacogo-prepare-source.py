@@ -20,7 +20,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 THIRD_PARTY = ROOT / "third_party" / "wacogo"
 LOCK_PATH = THIRD_PARTY / "source-lock.json"
-SCHEMA = "visa.wacogo-source-lock.v1"
+SCHEMA = "visa.wacogo-source-lock.v2"
 TREE_ALGORITHM = "sha256-of-sorted-sha256sum-lines-v1"
 
 
@@ -311,19 +311,27 @@ def check_repository_assets(lock: dict[str, object]) -> None:
 def check_production_assets(lock: dict[str, object]) -> None:
     production = object_field(lock.get("production_artifacts"), "production_artifacts")
     sidecar = object_field(production.get("sidecar"), "production_artifacts.sidecar")
-    accepted_component = object_field(
-        sidecar.get("accepted_component"), "sidecar.accepted_component"
-    )
-    accepted_component_size = positive_int(
-        accepted_component.get("size"), "sidecar.accepted_component.size"
-    )
-    accepted_component_sha256 = sha256_field(
-        accepted_component.get("sha256"), "sidecar.accepted_component.sha256"
-    )
-    if accepted_component_size != 146486 or accepted_component_sha256 != (
-        "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b"
-    ):
-        fail("production sidecar must accept only the byte-identical Strict Stage 2 Component")
+    accepted_components = sidecar.get("accepted_components")
+    expected_components = [
+        {
+            "profile": "cooperative-handoff-v1",
+            "size": 146486,
+            "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b",
+        },
+        {
+            "profile": "regular-file-v1",
+            "size": 215376,
+            "sha256": "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109",
+        },
+    ]
+    if accepted_components != expected_components:
+        fail("production sidecar accepted Component registry is not the exact two-profile lock")
+    for index, component in enumerate(accepted_components):
+        string_field(component.get("profile"), f"sidecar.accepted_components[{index}].profile")
+        positive_int(component.get("size"), f"sidecar.accepted_components[{index}].size")
+        sha256_field(
+            component.get("sha256"), f"sidecar.accepted_components[{index}].sha256"
+        )
     module_path = string_field(sidecar.get("module_path"), "sidecar.module_path")
     if module_path != "visa.local/wacogo-runtime":
         fail("production sidecar module path must be visa.local/wacogo-runtime")
@@ -331,10 +339,10 @@ def check_production_assets(lock: dict[str, object]) -> None:
         fail("production sidecar entry package must be ./cmd/visa-wacogo-runtime")
     if sidecar.get("protocol_version") != 1:
         fail("production sidecar protocol version must be 1")
-    if sidecar.get("carrier_version") != "owned-component-stdin-frame-v1":
-        fail("production sidecar carrier version must remain owned-component-stdin-frame-v1")
-    if sidecar.get("carrier_magic") != "VISAWCG1":
-        fail("production sidecar carrier magic must remain VISAWCG1")
+    if sidecar.get("carrier_version") != "owned-component-profile-stdin-frame-v2":
+        fail("production sidecar carrier version must be owned-component-profile-stdin-frame-v2")
+    if sidecar.get("carrier_magic") != "VISAWCG2":
+        fail("production sidecar carrier magic must be VISAWCG2")
 
     target = object_field(sidecar.get("target"), "sidecar.target")
     if target != {
@@ -432,8 +440,8 @@ def check_production_assets(lock: dict[str, object]) -> None:
         "sidecar.generated_bindings.ordered_concatenation_sha256",
     )
     binding_records = generated.get("files")
-    if not isinstance(binding_records, list) or len(binding_records) != 6:
-        fail("production sidecar must lock exactly six generated binding files")
+    if not isinstance(binding_records, list) or not binding_records:
+        fail("production sidecar must lock a non-empty generated binding inventory")
     expected_prefix = module_relative + "/generated/"
     listed_paths: list[str] = []
     concatenation = hashlib.sha256()
@@ -508,21 +516,33 @@ def check_production_assets(lock: dict[str, object]) -> None:
         if '"github.com/partite-ai/wacogo/internal/' in source:
             fail(f"production sidecar directly imports a private wacogo package: {path}")
 
-    runtime_source = (module_directory / "internal/runtimecell/cell.go").read_text(
-        encoding="utf-8"
-    )
-    if not re.search(
-        rf"^\s*acceptedComponentSize\s*=\s*{accepted_component_size}\s*$",
-        runtime_source,
-        re.MULTILINE,
-    ):
-        fail("Go sidecar accepted Component size differs from source lock")
-    if not re.search(
-        rf'^\s*acceptedComponentSHA256\s*=\s*"{accepted_component_sha256}"\s*$',
-        runtime_source,
-        re.MULTILINE,
-    ):
-        fail("Go sidecar accepted Component SHA-256 differs from source lock")
+    component_sources = {
+        "cooperative-handoff-v1": (
+            module_directory / "internal/runtimecell/cell.go",
+            "acceptedComponentSize",
+            "acceptedComponentSHA256",
+        ),
+        "regular-file-v1": (
+            module_directory / "internal/runtimecell/regular_file.go",
+            "regularFileAcceptedComponentSize",
+            "regularFileAcceptedComponentSHA256",
+        ),
+    }
+    for component in accepted_components:
+        source_path, size_constant, digest_constant = component_sources[component["profile"]]
+        runtime_source = source_path.read_text(encoding="utf-8")
+        if not re.search(
+            rf"^\s*{size_constant}\s*=\s*{component['size']}\s*$",
+            runtime_source,
+            re.MULTILINE,
+        ):
+            fail(f"Go sidecar {component['profile']} Component size differs from source lock")
+        if not re.search(
+            rf'^\s*{digest_constant}\s*=\s*"{component["sha256"]}"\s*$',
+            runtime_source,
+            re.MULTILINE,
+        ):
+            fail(f"Go sidecar {component['profile']} Component SHA-256 differs from source lock")
 
     protocol_source = (module_directory / "internal/protocol/protocol.go").read_text(
         encoding="utf-8"
@@ -530,7 +550,7 @@ def check_production_assets(lock: dict[str, object]) -> None:
     if not re.search(r"^\s*Version\s*=\s*uint32\(1\)\s*$", protocol_source, re.MULTILINE):
         fail("Go sidecar protocol version differs from source lock")
     if not re.search(
-        r'^\s*CarrierVersion\s*=\s*"VISAWCG1"\s*$', protocol_source, re.MULTILINE
+        r'^\s*CarrierVersion\s*=\s*"VISAWCG2"\s*$', protocol_source, re.MULTILINE
     ):
         fail("Go sidecar carrier magic differs from source lock")
     rust_protocol = (ROOT / "crates/runtime/visa_wacogo/src/protocol.rs").read_text(
@@ -541,9 +561,9 @@ def check_production_assets(lock: dict[str, object]) -> None:
     rust_carrier = (ROOT / "crates/runtime/visa_wacogo/src/carrier.rs").read_text(
         encoding="utf-8"
     )
-    if 'pub const EXECUTION_CARRIER: &str = "owned-component-stdin-frame-v1";' not in rust_carrier:
+    if 'pub const EXECUTION_CARRIER: &str = "owned-component-profile-stdin-frame-v2";' not in rust_carrier:
         fail("Rust adapter carrier version differs from source lock")
-    if 'const FRAME_MAGIC: &[u8; 8] = b"VISAWCG1";' not in rust_carrier:
+    if 'const FRAME_MAGIC: &[u8; 8] = b"VISAWCG2";' not in rust_carrier:
         fail("Rust adapter carrier magic differs from source lock")
 
 

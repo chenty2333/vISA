@@ -24,10 +24,10 @@ pub const STAGE2_STRICT_WACOGO_BUILD_RECEIPT_URI: &str = "lineage/wacogo-build-r
 pub const STAGE2_STRICT_WACOGO_SIDECAR_URI: &str = "lineage/visa-wacogo-runtime";
 
 pub const STAGE2_STRICT_WACOGO_SOURCE_LOCK_SHA256: &str =
-    "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235";
+    "7bb25d170435b604669253f67005378382ff55d48b7cf5495a586c2db1b9b755";
 pub const STAGE2_STRICT_WACOGO_SIDECAR_SHA256: &str =
-    "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606";
-pub const STAGE2_STRICT_WACOGO_SIDECAR_SIZE: usize = 6_754_430;
+    "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb";
+pub const STAGE2_STRICT_WACOGO_SIDECAR_SIZE: usize = 6_889_598;
 
 const WACOGO_UPSTREAM_VERSION: &str = "v0.0.0-20260617023329-3de16a61796c";
 const WACOGO_UPSTREAM_REVISION: &str = "3de16a61796ce02d29795e4a074f37a33e6ebd87";
@@ -194,7 +194,7 @@ pub(super) fn required_wacogo_metadata() -> Stage2StrictRuntimeMetadata {
 
 fn required_wacogo_observation() -> Stage2WacogoRuntimeLineageObservation {
     Stage2WacogoRuntimeLineageObservation {
-        source_lock_schema: "visa.wacogo-source-lock.v1".to_owned(),
+        source_lock_schema: "visa.wacogo-source-lock.v2".to_owned(),
         source_lock_sha256: STAGE2_STRICT_WACOGO_SOURCE_LOCK_SHA256.to_owned(),
         derivative_id: "partite-ai-wacogo-3de16a61796c-visa-patchset-v1".to_owned(),
         upstream_module: "github.com/partite-ai/wacogo".to_owned(),
@@ -215,7 +215,7 @@ fn required_wacogo_observation() -> Stage2WacogoRuntimeLineageObservation {
         sidecar_executable_sha256: STAGE2_STRICT_WACOGO_SIDECAR_SHA256.to_owned(),
         sidecar_executable_size: STAGE2_STRICT_WACOGO_SIDECAR_SIZE as u64,
         sidecar_protocol_version: 1,
-        execution_carrier: "owned-component-stdin-frame-v1".to_owned(),
+        execution_carrier: "owned-component-profile-stdin-frame-v2".to_owned(),
         wacogo_version: WACOGO_UPSTREAM_VERSION.to_owned(),
         wacogo_revision: WACOGO_UPSTREAM_REVISION.to_owned(),
         wazero_version: WAZERO_VERSION.to_owned(),
@@ -350,8 +350,8 @@ fn validate_build_receipt(
             == pointer_str(source, "/patchset/ordered_concatenation_sha256")
         && pointer_str(receipt, "/patched_source_tree_sha256")
             == pointer_str(source, "/patchset/post_patch_tree/sha256")
-        && receipt.get("accepted_component")
-            == source.pointer("/production_artifacts/sidecar/accepted_component")
+        && receipt.get("accepted_components")
+            == source.pointer("/production_artifacts/sidecar/accepted_components")
         && receipt.get("execution_host_requirements")
             == source.pointer("/production_artifacts/sidecar/execution_host_requirements")
         && receipt.get("executable_module_closure")

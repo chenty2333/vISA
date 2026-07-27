@@ -20,22 +20,29 @@ print()
 print(f"bundle: `{report['bundle']}`  ")
 print(f"verifier: `{report['verifier']}`")
 print()
-print("| defect class | n | detected | rate |")
+print("| corpus category | n | matched | rate |")
 print("| --- | ---: | ---: | ---: |")
-for name, rate in summary["per_class"]:
-    print(f"| {name} | {rate['n']} | {rate['detected']} | {rate['rate']:.2f} |")
-overall = summary["overall"]
-print(f"| **overall** | {overall['n']} | {overall['detected']} | {overall['rate']:.2f} |")
+semantic = summary["semantic_defects"]
+equivalent = summary["benign_equivalents"]
+boundary = summary["boundary_cases"]
+print(f"| semantic defects detected | {semantic['n']} | {semantic['detected']} | {semantic['rate']:.2f} |")
+print(f"| benign-equivalent mutations recognized | {equivalent['n']} | {equivalent['equivalent']} | {equivalent['rate']:.2f} |")
+print(f"| boundary cases recorded | {boundary['n']} | {boundary['recorded']} | - |")
+print()
+print("| semantic defect class | n | detected | rate |")
+print("| --- | ---: | ---: | ---: |")
+for name, rate in summary["per_class_semantic_defects"]:
+    rendered = "-" if rate["rate"] is None else f"{rate['rate']:.2f}"
+    print(f"| {name} | {rate['n']} | {rate['detected']} | {rendered} |")
 print()
 print(f"mismatches: {summary['mismatches']}  ")
 print(f"incompletely resealed entries: {summary['integrity_family_hits']}")
 print()
-print("| entry | class | verdict | findings |")
-print("| --- | --- | --- | --- |")
+print("| entry | class | disposition | verdict | findings |")
+print("| --- | --- | --- | --- | --- |")
 for entry in report["entries"]:
     codes = ", ".join(f"`{code}`" for code in entry["actual"]["finding_codes"]) or "-"
-    boundary = " (boundary)" if entry["boundary"] else ""
-    print(f"| `{entry['id']}`{boundary} | {entry['class']} | {entry['verdict']} | {codes} |")
+    print(f"| `{entry['id']}` | {entry['class']} | {entry['disposition']} | {entry['verdict']} | {codes} |")
 
 if summary["mismatches"] or summary["integrity_family_hits"]:
     sys.exit(1)

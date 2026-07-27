@@ -18,7 +18,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "third_party" / "wacogo" / "source-lock.json"
-SCHEMA = "visa.wacogo-source-lock.v1"
+SCHEMA = "visa.wacogo-source-lock.v2"
 
 
 class ToolchainError(RuntimeError):
@@ -83,7 +83,7 @@ def load_go_lock() -> dict[str, object]:
         fail("Strict Stage 2 wacogo requires the linux/amd64 Go distribution")
     try:
         sidecar = lock["production_artifacts"]["sidecar"]
-        accepted_component = sidecar["accepted_component"]
+        accepted_components = sidecar["accepted_components"]
         execution_host_requirements = sidecar["execution_host_requirements"]
         target = sidecar["target"]
         binary = sidecar["binary"]
@@ -97,11 +97,19 @@ def load_go_lock() -> dict[str, object]:
     }
     if target != expected_target:
         fail(f"production sidecar target does not match the locked Go distribution: {target!r}")
-    if accepted_component != {
-        "size": 146486,
-        "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b",
-    }:
-        fail("source lock production sidecar accepted Component identity is invalid")
+    if accepted_components != [
+        {
+            "profile": "cooperative-handoff-v1",
+            "size": 146486,
+            "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b",
+        },
+        {
+            "profile": "regular-file-v1",
+            "size": 215376,
+            "sha256": "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109",
+        },
+    ]:
+        fail("source lock production sidecar accepted Component registry is invalid")
     if execution_host_requirements != {
         "os": "linux",
         "procfs": {

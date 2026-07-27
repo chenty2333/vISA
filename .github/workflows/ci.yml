@@ -156,9 +156,15 @@ jobs:
           - lane: stage3a
             label: Stage 3A regular-file
             binding: stage3a
-            claims: "bounded-regular-file-continuity:regresses"
+            claims: "bounded-regular-file-continuity:regresses,cross-runtime-regular-file-continuity-v1:supports"
             tier: system-stage3a
             artifact: stage3a-regular-file-system-evidence
+          - lane: stage3a-cross-runtime
+            label: Stage 3A cross-runtime regular-file
+            binding: stage3a-cross-runtime
+            claims: "bounded-regular-file-continuity:regresses,cross-runtime-regular-file-continuity-v1:required"
+            tier: system-stage3a-cross-runtime
+            artifact: stage3a-cross-runtime-regular-file-system-evidence
           - lane: stage3b
             label: Stage 3B logical-request
             binding: stage3b

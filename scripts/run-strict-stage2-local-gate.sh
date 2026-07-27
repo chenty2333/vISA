@@ -366,10 +366,10 @@ verify_locked_sidecar() {
     require_regular_file 'locked Wacogo sidecar' "$path"
     observed_size=$(wc -c <"$path" | tr -d '[:space:]')
     observed_sha=$(sha256sum "$path" | cut -d' ' -f1)
-    [[ "$observed_size" == 6754430 ]] \
-        || fail "Wacogo sidecar size mismatch: expected 6754430, observed $observed_size"
+    [[ "$observed_size" == 6889598 ]] \
+        || fail "Wacogo sidecar size mismatch: expected 6889598, observed $observed_size"
     [[ "$observed_sha" == \
-        7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606 ]] \
+        972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb ]] \
         || fail "Wacogo sidecar SHA-256 mismatch: $observed_sha"
 }
 
@@ -412,7 +412,7 @@ if receipt.get("schema") != "visa.wacogo-sidecar-build-receipt.v1":
     raise SystemExit("retained Wacogo build receipt has the wrong schema")
 expected_binary = {
     "file": "target/visa-wacogo/visa-wacogo-runtime",
-    "size": 6754430,
+    "size": 6889598,
     "sha256": sys.argv[2],
 }
 if receipt.get("binary") != expected_binary:

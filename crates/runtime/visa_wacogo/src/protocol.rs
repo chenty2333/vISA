@@ -42,10 +42,11 @@ pub(crate) struct CommandRequest<'a> {
 pub(crate) enum Envelope {
     Prepared {
         protocol: u32,
+        profile: String,
         component_sha256: String,
         guest_instantiated: bool,
         live_resources: usize,
-        runtime: RuntimeReport,
+        runtime: Box<RuntimeReport>,
     },
     StartupError {
         protocol: u32,
@@ -169,6 +170,22 @@ pub(crate) enum HostCallOperation {
     TimerArm(TimerArmArgs),
     #[serde(rename = "timer.cancel")]
     TimerCancel(TimerCancelArgs),
+    #[serde(rename = "file.read")]
+    FileRead(FileReadArgs),
+    #[serde(rename = "file.write")]
+    FileWrite(FileBytesArgs),
+    #[serde(rename = "file.append")]
+    FileAppend(FileBytesArgs),
+    #[serde(rename = "file.truncate")]
+    FileTruncate(FileTruncateArgs),
+    #[serde(rename = "file.rename")]
+    FileRename(FileRenameArgs),
+    #[serde(rename = "file.sync")]
+    FileSync(FileSyncArgs),
+    #[serde(rename = "file.acquire-lock")]
+    FileAcquireLock(FileIdempotencyArgs),
+    #[serde(rename = "file.release-lock")]
+    FileReleaseLock(FileIdempotencyArgs),
     #[serde(rename = "resource.dispose")]
     ResourceDispose(ResourceDisposeArgs),
 }
@@ -203,6 +220,48 @@ pub(crate) struct TimerCancelArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileReadArgs {
+    pub max_bytes: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileBytesArgs {
+    pub idempotency_key: String,
+    pub bytes_hex: String,
+    pub durability: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileTruncateArgs {
+    pub idempotency_key: String,
+    pub size: String,
+    pub durability: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileRenameArgs {
+    pub idempotency_key: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileSyncArgs {
+    pub idempotency_key: String,
+    pub durability: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FileIdempotencyArgs {
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ResourceDisposeArgs {
     pub kind: ResourceKind,
 }
@@ -212,6 +271,7 @@ pub(crate) struct ResourceDisposeArgs {
 pub(crate) enum ResourceKind {
     Kv,
     Timer,
+    File,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,5 +281,10 @@ pub(crate) struct NullableU64Text(pub Option<String>);
 #[derive(Debug)]
 pub(crate) struct CommandReply {
     pub result: Result<Value, visa_component_adapter::AdapterError>,
+    pub live_resources: usize,
+}
+
+pub(crate) struct RawCommandReply {
+    pub result: Result<Value, WireError>,
     pub live_resources: usize,
 }

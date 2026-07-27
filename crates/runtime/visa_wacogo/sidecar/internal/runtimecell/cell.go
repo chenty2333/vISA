@@ -47,7 +47,7 @@ type resourceKey struct {
 	id   uint64
 }
 
-type Cell struct {
+type cooperativeCell struct {
 	ctx           context.Context
 	channel       *protocol.Channel
 	engine        *wacogo.Engine
@@ -65,15 +65,15 @@ type Cell struct {
 	closed        bool
 }
 
-func Prepare(
+func prepareCooperative(
 	ctx context.Context,
 	channel *protocol.Channel,
 	componentBytes []byte,
-) (*Cell, *protocol.WireError) {
+) (*cooperativeCell, *protocol.WireError) {
 	if err := verifyAcceptedComponent(componentBytes); err != nil {
 		return nil, protocol.NewError("preflight", "unsupported-runtime-feature", err)
 	}
-	cell := &Cell{
+	cell := &cooperativeCell{
 		ctx:       ctx,
 		channel:   channel,
 		resources: make(map[resourceKey]struct{}),
@@ -130,7 +130,7 @@ func Prepare(
 	return cell, nil
 }
 
-func (c *Cell) Instantiate() *protocol.WireError {
+func (c *cooperativeCell) Instantiate() *protocol.WireError {
 	if c.closed || c.instantiated {
 		return protocol.ErrorDetail("protocol", "invalid-state", "instantiate requires a prepared cell")
 	}
@@ -157,7 +157,7 @@ func (c *Cell) Instantiate() *protocol.WireError {
 	return nil
 }
 
-func (c *Cell) Handle(op string, raw json.RawMessage) (any, *protocol.WireError, bool) {
+func (c *cooperativeCell) Handle(op string, raw json.RawMessage) (any, *protocol.WireError, bool) {
 	if op == "instantiate" {
 		if err := decodeEmpty(raw); err != nil {
 			return nil, protocol.NewError("protocol", "invalid-arguments", err), true
@@ -218,11 +218,11 @@ func (c *Cell) Handle(op string, raw json.RawMessage) (any, *protocol.WireError,
 	return result, failure, failure != nil && failure.Domain != "workload"
 }
 
-func (c *Cell) LiveResources() uint64 {
+func (c *cooperativeCell) LiveResources() uint64 {
 	return uint64(len(c.resources))
 }
 
-func (c *Cell) Close() error {
+func (c *cooperativeCell) Close() error {
 	if c.closed {
 		return nil
 	}
@@ -256,14 +256,14 @@ func (c *Cell) Close() error {
 	return errors.Join(closeErrors...)
 }
 
-func (c *Cell) prepareFailure(domain, kind string, cause error) *protocol.WireError {
+func (c *cooperativeCell) prepareFailure(domain, kind string, cause error) *protocol.WireError {
 	if closeErr := c.Close(); closeErr != nil {
 		cause = errors.Join(cause, fmt.Errorf("preflight cleanup: %w", closeErr))
 	}
 	return protocol.NewError(domain, kind, cause)
 }
 
-func (c *Cell) instantiateOptions() []wacogo.InstantiateOption {
+func (c *cooperativeCell) instantiateOptions() []wacogo.InstantiateOption {
 	return []wacogo.InstantiateOption{
 		wacogo.WithInstanceImport(keyvalue.InterfaceName, c.kvHost.Core()),
 		wacogo.WithInstanceImport(timers.InterfaceName, c.timerHost.Core()),
@@ -283,7 +283,7 @@ type activateArgs struct {
 	TimerResource            uint64 `json:"timerResource"`
 }
 
-func (c *Cell) activate(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) activate(raw json.RawMessage) (any, *protocol.WireError) {
 	var args activateArgs
 	if err := protocol.DecodeArgs(raw, &args); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
@@ -320,7 +320,7 @@ func (c *Cell) activate(raw json.RawMessage) (any, *protocol.WireError) {
 	return nil, failure
 }
 
-func (c *Cell) freeze(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) freeze(raw json.RawMessage) (any, *protocol.WireError) {
 	if err := decodeEmpty(raw); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
 	}
@@ -341,7 +341,7 @@ type thawArgs struct {
 	TimerResource uint64    `json:"timerResource"`
 }
 
-func (c *Cell) thaw(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) thaw(raw json.RawMessage) (any, *protocol.WireError) {
 	var args thawArgs
 	if err := protocol.DecodeArgs(raw, &args); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
@@ -365,7 +365,7 @@ type restoreArgs struct {
 	TimerResource       uint64    `json:"timerResource"`
 }
 
-func (c *Cell) restore(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) restore(raw json.RawMessage) (any, *protocol.WireError) {
 	var args restoreArgs
 	if err := protocol.DecodeArgs(raw, &args); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
@@ -390,7 +390,7 @@ type timerFiredArgs struct {
 	OperationID string `json:"operationId"`
 }
 
-func (c *Cell) timerFired(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) timerFired(raw json.RawMessage) (any, *protocol.WireError) {
 	var args timerFiredArgs
 	if err := protocol.DecodeArgs(raw, &args); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
@@ -399,7 +399,7 @@ func (c *Cell) timerFired(raw json.RawMessage) (any, *protocol.WireError) {
 	return nil, failure
 }
 
-func (c *Cell) cancelPending(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) cancelPending(raw json.RawMessage) (any, *protocol.WireError) {
 	if err := decodeEmpty(raw); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
 	}
@@ -407,7 +407,7 @@ func (c *Cell) cancelPending(raw json.RawMessage) (any, *protocol.WireError) {
 	return nil, failure
 }
 
-func (c *Cell) status(raw json.RawMessage) (any, *protocol.WireError) {
+func (c *cooperativeCell) status(raw json.RawMessage) (any, *protocol.WireError) {
 	if err := decodeEmpty(raw); err != nil {
 		return nil, protocol.NewError("protocol", "invalid-arguments", err)
 	}
@@ -444,14 +444,14 @@ func (c *Cell) status(raw json.RawMessage) (any, *protocol.WireError) {
 	return state, nil
 }
 
-func (c *Cell) export(name string) *wacogo.ExportedFunc {
+func (c *cooperativeCell) export(name string) *wacogo.ExportedFunc {
 	if c.workload == nil {
 		return nil
 	}
 	return c.workload.ExportedFunc(name)
 }
 
-func (c *Cell) requiredExport(name string) (*wacogo.ExportedFunc, *protocol.WireError) {
+func (c *cooperativeCell) requiredExport(name string) (*wacogo.ExportedFunc, *protocol.WireError) {
 	function := c.export(name)
 	if function == nil {
 		return nil, protocol.ErrorDetail(
@@ -463,7 +463,7 @@ func (c *Cell) requiredExport(name string) (*wacogo.ExportedFunc, *protocol.Wire
 	return function, nil
 }
 
-func (c *Cell) callResult(name string, args ...wacogo.Val) (wacogo.Val, *protocol.WireError) {
+func (c *cooperativeCell) callResult(name string, args ...wacogo.Val) (wacogo.Val, *protocol.WireError) {
 	function, failure := c.requiredExport(name)
 	if failure != nil {
 		return nil, failure
@@ -614,7 +614,7 @@ func nestedTimerFailure(value wacogo.Val) *protocol.WireError {
 	return &protocol.WireError{Domain: "workload", Kind: "timer." + kind}
 }
 
-func (c *Cell) ownedPair(kvID, timerID uint64) (*wacogo.ValOwnHandle, *wacogo.ValOwnHandle, *protocol.WireError) {
+func (c *cooperativeCell) ownedPair(kvID, timerID uint64) (*wacogo.ValOwnHandle, *wacogo.ValOwnHandle, *protocol.WireError) {
 	if len(c.resources) != 0 {
 		return nil, nil, protocol.ErrorDetail(
 			"protocol",
@@ -640,7 +640,7 @@ func (c *Cell) ownedPair(kvID, timerID uint64) (*wacogo.ValOwnHandle, *wacogo.Va
 }
 
 type remoteNamespace struct {
-	cell *Cell
+	cell *cooperativeCell
 	id   uint64
 }
 
@@ -742,7 +742,7 @@ func (n *remoteNamespace) Drop(context.Context) error {
 }
 
 type remoteTimer struct {
-	cell *Cell
+	cell *cooperativeCell
 	id   uint64
 }
 
@@ -803,7 +803,7 @@ func (t *remoteTimer) Drop(context.Context) error {
 	return t.cell.dispose(resourceTimer, t.id)
 }
 
-func (c *Cell) dispose(kind resourceKind, id uint64) error {
+func (c *cooperativeCell) dispose(kind resourceKind, id uint64) error {
 	key := resourceKey{kind: kind, id: id}
 	if _, ok := c.resources[key]; !ok {
 		return fmt.Errorf("resource %s/%d was already disposed or never registered", kind, id)

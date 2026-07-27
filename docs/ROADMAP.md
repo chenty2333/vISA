@@ -291,6 +291,25 @@ filesystem object. Stage 3A also does not provide atomic compare-and-mutate
 against an uncooperative concurrent writer that bypasses its advisory
 lock/lease protocol.
 
+#### Stage 3A cross-runtime successor
+
+<!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:scope:start -->
+`cross-runtime-regular-file-continuity-v1` is a successor claim, not a widening
+of either predecessor. It requires the unchanged 12-case regular-file registry
+to pass in all four Wasmtime/source-lock-bound-Wacogo directions on x86-64
+Linux: Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo, Wacogo-to-Wasmtime, and
+Wacogo-to-Wacogo. Every cell must consume one immutable common input, retain
+exact Component, WIT, profile, provider, runtime-lineage, sidecar, and
+configuration artifacts, and participate in one typed outer normalized
+comparison. The source-lock and no-fallback rules remain mandatory.
+
+The successor does not cover unmodified upstream Wacogo, logical requests,
+arbitrary filesystem objects, another ISA or substrate, cross-host execution,
+or joint-handoff composition. It remains candidate until the four-direction
+gate, detector contract, repeated stability gate, exact-SHA CI, and permanent
+paper-artifact receipt all close on one accepted revision.
+<!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:scope:end -->
+
 ### Stage 3B -- bounded logical-request continuity
 
 Implementation status: the separate logical-request WIT world, guest, typed

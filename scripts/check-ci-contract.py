@@ -668,7 +668,10 @@ def check_upload(
 def check_claim_matrix(job: dict[str, Any]) -> None:
     strategy = job.get("strategy", {})
     require(strategy.get("fail-fast") == "false", "claim matrix must run every lane")
-    require(strategy.get("max-parallel") == "6", "all six claim lanes must be parallel")
+    require(
+        strategy.get("max-parallel") == "6",
+        "claim matrix must retain the bounded six-job parallelism policy",
+    )
     include = job.get("strategy", {}).get("matrix", {}).get("include", [])
     require(isinstance(include, list), "claim matrix include must be a sequence")
     actual: dict[str, tuple[str, str, str, str]] = {}

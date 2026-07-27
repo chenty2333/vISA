@@ -7,6 +7,7 @@ use visa_conformance::{
     gate_stage2_evidence_bundle_json_with_artifacts,
     gate_stage2_strict_evidence_bundle_json_with_artifacts,
     gate_stage3_evidence_bundle_json_with_artifacts,
+    gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts,
     gate_stage4_evidence_bundle_json_with_artifacts,
 };
 
@@ -16,6 +17,7 @@ enum Command {
     Stage2,
     Stage2Strict,
     Stage3A,
+    Stage3ACrossRuntime,
     Stage3B,
     Stage4,
     JointHandoff,
@@ -42,7 +44,7 @@ fn run() -> Result<(), (u8, String)> {
         return Err((
             64,
             format!(
-                "usage: {} <stage1|stage2|stage2-strict|stage3a|stage3b|stage4> <bundle.json> <artifact-root>\n       {} joint-handoff <bundle.json> <artifact-root> <visa-sha> <nexus-sha> <neutral-sha> <neutral-tree> <neutral-bundle-sha256> <source-lock-sha256> <protocol-markdown-sha256> <machine-toml-sha256> <refinement-map-sha256> <abstract-registry-sha256>",
+                "usage: {} <stage1|stage2|stage2-strict|stage3a|stage3a-cross-runtime|stage3b|stage4> <bundle.json> <artifact-root>\n       {} joint-handoff <bundle.json> <artifact-root> <visa-sha> <nexus-sha> <neutral-sha> <neutral-tree> <neutral-bundle-sha256> <source-lock-sha256> <protocol-markdown-sha256> <machine-toml-sha256> <refinement-map-sha256> <abstract-registry-sha256>",
                 PathBuf::from(&program).display(),
                 PathBuf::from(program).display()
             ),
@@ -84,6 +86,13 @@ fn run() -> Result<(), (u8, String)> {
             "Stage 3A",
             serde_json::to_value(gate_stage3_evidence_bundle_json_with_artifacts(
                 Stage3Profile::RegularFile,
+                &bytes,
+                &artifact_root,
+            )),
+        ),
+        Some(Command::Stage3ACrossRuntime) => (
+            "Stage 3A cross-runtime",
+            serde_json::to_value(gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts(
                 &bytes,
                 &artifact_root,
             )),
@@ -160,6 +169,7 @@ fn parse_command(command: Option<&std::ffi::OsStr>) -> Option<Command> {
         Some("stage2") => Some(Command::Stage2),
         Some("stage2-strict") => Some(Command::Stage2Strict),
         Some("stage3a") => Some(Command::Stage3A),
+        Some("stage3a-cross-runtime") => Some(Command::Stage3ACrossRuntime),
         Some("stage3b") => Some(Command::Stage3B),
         Some("stage4") => Some(Command::Stage4),
         Some("joint-handoff") => Some(Command::JointHandoff),
@@ -179,6 +189,10 @@ mod tests {
         assert_eq!(parse_command(Some(OsStr::new("stage2"))), Some(Command::Stage2));
         assert_eq!(parse_command(Some(OsStr::new("stage2-strict"))), Some(Command::Stage2Strict));
         assert_eq!(parse_command(Some(OsStr::new("stage3a"))), Some(Command::Stage3A));
+        assert_eq!(
+            parse_command(Some(OsStr::new("stage3a-cross-runtime"))),
+            Some(Command::Stage3ACrossRuntime)
+        );
         assert_eq!(parse_command(Some(OsStr::new("stage3b"))), Some(Command::Stage3B));
         assert_eq!(parse_command(Some(OsStr::new("stage4"))), Some(Command::Stage4));
         assert_eq!(parse_command(Some(OsStr::new("joint-handoff"))), Some(Command::JointHandoff));

@@ -428,7 +428,7 @@ pub(crate) fn implementation_lineage_matches(
                 main_module,
             }),
         ) => {
-            source_lock_schema == "visa.wacogo-source-lock.v1"
+            source_lock_schema == "visa.wacogo-source-lock.v2"
                 && source_lock_sha256
                     == "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235"
                 && derivative_id == "partite-ai-wacogo-3de16a61796c-visa-patchset-v1"
@@ -448,10 +448,10 @@ pub(crate) fn implementation_lineage_matches(
                 && patched_tree_sha256
                     == "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311"
                 && sidecar_executable_sha256
-                    == "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606"
-                && *sidecar_executable_size == 6_754_430
+                    == "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb"
+                && *sidecar_executable_size == 6_889_598
                 && *sidecar_protocol_version == 1
-                && execution_carrier == "owned-component-stdin-frame-v1"
+                && execution_carrier == "owned-component-profile-stdin-frame-v2"
                 && wacogo_version == upstream_version
                 && wacogo_revision == upstream_revision
                 && wazero_version == "v1.11.1-0.20260418165552-5cb4bb3ec0c1"

@@ -17,6 +17,7 @@ visa-conformance = { path = "../visa-conformance" }
 visa_component_adapter = { path = "../../runtime/visa_component_adapter" }
 visa_profile = { path = "../../core/visa_profile" }
 visa_runtime = { path = "../../runtime/visa_runtime" }
+visa_wacogo = { path = "../../runtime/visa_wacogo" }
 visa_wasmtime = { path = "../../runtime/visa_wasmtime" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

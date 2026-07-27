@@ -427,49 +427,90 @@ fn validate_runtime(
     runtime: &Stage3RuntimeScope,
     findings: &mut Vec<Stage3ValidationFinding>,
 ) {
-    let expected_implementation = match profile {
-        Stage3Profile::RegularFile => "visa_wasmtime_stage3a",
-        Stage3Profile::LogicalRequest => "visa_wasmtime_stage3b",
-    };
     for (role, identity) in [("source", &runtime.source), ("destination", &runtime.destination)] {
-        if identity.implementation != expected_implementation
-            || identity.implementation_version.is_empty()
-            || identity.engine != "wasmtime"
-            || identity.engine_version.is_empty()
-        {
+        let valid = match profile {
+            Stage3Profile::RegularFile => valid_regular_file_runtime(identity),
+            Stage3Profile::LogicalRequest => {
+                identity.implementation == "visa_wasmtime_stage3b"
+                    && identity.engine == "wasmtime"
+                    && !identity.implementation_version.is_empty()
+                    && !identity.engine_version.is_empty()
+            }
+        };
+        if !valid {
             finding(
                 findings,
                 "invalid-stage3-runtime-scope",
-                format!("{role} is not the declared Wasmtime Stage 3 adapter"),
+                format!("{role} is not an accepted runtime for the declared Stage 3 profile"),
             );
         }
     }
+    let expected_boundary = match profile {
+        Stage3Profile::LogicalRequest => {
+            "same-process-distinct-wasmtime-store-and-provider-instance"
+        }
+        Stage3Profile::RegularFile => regular_file_execution_boundary(
+            &runtime.source.implementation,
+            &runtime.destination.implementation,
+        )
+        .unwrap_or("invalid-runtime-pair"),
+    };
     if runtime.host_os != "linux"
         || runtime.source_isa != "x86_64"
         || runtime.destination_isa != "x86_64"
         || runtime.substrate != "substrate_host::SqliteProvider"
-        || runtime.execution_boundary
-            != "same-process-distinct-wasmtime-store-and-provider-instance"
+        || runtime.execution_boundary != expected_boundary
     {
         finding(
             findings,
             "invalid-stage3-target-scope",
-            "Stage 3 evidence must remain scoped to Linux/x86_64, the SQLite host provider, and distinct in-process Wasmtime stores/provider instances",
+            "Stage 3 evidence must use the fixed Linux/x86_64 SQLite scope and the execution boundary declared for its exact runtime pair",
         );
     }
-    if runtime.independent_runtime_coverage {
+    let includes_wacogo = profile == Stage3Profile::RegularFile
+        && (runtime.source.implementation == "visa_wacogo"
+            || runtime.destination.implementation == "visa_wacogo");
+    if runtime.independent_runtime_coverage != includes_wacogo {
         finding(
             findings,
-            "stage3-runtime-overclaim",
-            "the first Stage 3 gate cannot claim a qualified independent second runtime",
+            "stage3-runtime-coverage-mismatch",
+            "independent runtime coverage does not match the declared runtime identities",
         );
     }
-    if !runtime.unsupported_runtime_implementations.iter().any(|runtime| runtime == "wacogo") {
+    let expected_unsupported = if includes_wacogo { Vec::new() } else { vec!["wacogo".to_owned()] };
+    if runtime.unsupported_runtime_implementations != expected_unsupported {
         finding(
             findings,
-            "missing-stage3-runtime-limit",
-            "Wacogo Stage 3 support must remain explicitly unsupported until separately qualified",
+            "invalid-stage3-runtime-limit",
+            "unsupported runtime declarations do not match the exercised runtime pair",
         );
+    }
+}
+
+fn valid_regular_file_runtime(identity: &Stage3RuntimeIdentity) -> bool {
+    !identity.implementation_version.is_empty()
+        && !identity.engine_version.is_empty()
+        && matches!(
+            (identity.implementation.as_str(), identity.engine.as_str()),
+            ("visa_wasmtime_stage3a", "wasmtime") | ("visa_wacogo", "partite-ai/wacogo+wazero")
+        )
+}
+
+fn regular_file_execution_boundary(source: &str, destination: &str) -> Option<&'static str> {
+    match (source, destination) {
+        ("visa_wasmtime_stage3a", "visa_wasmtime_stage3a") => {
+            Some("same-process-distinct-wasmtime-store-and-provider-instance")
+        }
+        ("visa_wacogo", "visa_wacogo") => Some(
+            "runner-with-distinct-source-and-destination-wacogo-sidecars-and-provider-instances",
+        ),
+        ("visa_wacogo", "visa_wasmtime_stage3a") => {
+            Some("runner-with-source-wacogo-sidecar-and-destination-wasmtime-store")
+        }
+        ("visa_wasmtime_stage3a", "visa_wacogo") => {
+            Some("runner-with-source-wasmtime-store-and-destination-wacogo-sidecar")
+        }
+        _ => None,
     }
 }
 

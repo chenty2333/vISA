@@ -14,6 +14,7 @@ func TestCarrierRequiresExactMagicLengthAndDigest(t *testing.T) {
 	digest := sha256.Sum256(payload)
 	var carrier bytes.Buffer
 	carrier.WriteString(CarrierVersion)
+	carrier.WriteByte(ProfileRegularFile.carrierTag())
 	if err := binary.Write(&carrier, binary.BigEndian, uint64(len(payload))); err != nil {
 		t.Fatal(err)
 	}
@@ -21,25 +22,26 @@ func TestCarrierRequiresExactMagicLengthAndDigest(t *testing.T) {
 	carrier.Write(payload)
 
 	channel := NewChannel(bytes.NewReader(carrier.Bytes()), &bytes.Buffer{})
-	observed, observedDigest, err := channel.ReadCarrier()
+	observed, observedDigest, profile, err := channel.ReadCarrier()
 	if err != nil {
 		t.Fatalf("valid carrier: %v", err)
 	}
-	if !bytes.Equal(observed, payload) || observedDigest != digest {
-		t.Fatalf("carrier mismatch: %q / %x", observed, observedDigest)
+	if !bytes.Equal(observed, payload) || observedDigest != digest || profile != ProfileRegularFile {
+		t.Fatalf("carrier mismatch: %q / %x / %q", observed, observedDigest, profile)
 	}
 
 	for name, mutate := range map[string]func([]byte){
-		"magic":  func(data []byte) { data[0] ^= 1 },
-		"digest": func(data []byte) { data[len(CarrierVersion)+8] ^= 1 },
+		"magic":   func(data []byte) { data[0] ^= 1 },
+		"profile": func(data []byte) { data[len(CarrierVersion)] = 255 },
+		"digest":  func(data []byte) { data[len(CarrierVersion)+1+8] ^= 1 },
 		"length": func(data []byte) {
-			binary.BigEndian.PutUint64(data[len(CarrierVersion):], 0)
+			binary.BigEndian.PutUint64(data[len(CarrierVersion)+1:], 0)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := append([]byte(nil), carrier.Bytes()...)
 			mutate(data)
-			if _, _, err := NewChannel(bytes.NewReader(data), &bytes.Buffer{}).ReadCarrier(); err == nil {
+			if _, _, _, err := NewChannel(bytes.NewReader(data), &bytes.Buffer{}).ReadCarrier(); err == nil {
 				t.Fatal("malformed carrier unexpectedly passed")
 			}
 		})

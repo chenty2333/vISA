@@ -121,6 +121,10 @@ impl From<substrate_host::FaultPoint> for FaultPointSpec {
             substrate_host::FaultPoint::AfterCommitBundle => Self::AfterCommitBundle,
             substrate_host::FaultPoint::AfterKvCommit => Self::AfterKvCommit,
             substrate_host::FaultPoint::BeforeProfileEffect
+            | substrate_host::FaultPoint::SkipJournalAppend
+            | substrate_host::FaultPoint::SkipSourceFence
+            | substrate_host::FaultPoint::DropTimerCancel
+            | substrate_host::FaultPoint::DuplicateCleanupApply
             | substrate_host::FaultPoint::AfterProfileEffect
             | substrate_host::FaultPoint::AfterProfileCommit
             | substrate_host::FaultPoint::BeforeExternalSourceFence
@@ -543,5 +547,11 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<RequestEnvelope>(encoded).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "non-Stage-2 fault escaped into the frozen Stage 2 protocol")]
+    fn evaluation_only_faults_cannot_cross_the_frozen_stage2_protocol() {
+        let _ = FaultPointSpec::from(substrate_host::FaultPoint::SkipJournalAppend);
     }
 }

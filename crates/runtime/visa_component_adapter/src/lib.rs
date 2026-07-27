@@ -3,6 +3,7 @@ pub mod faults;
 mod host;
 mod lifecycle;
 mod logical_request_state;
+mod regular_file;
 mod regular_file_state;
 mod state;
 mod types;
@@ -24,6 +25,9 @@ pub use lifecycle::{
 pub use logical_request_state::{
     LOGICAL_REQUEST_COMPONENT_STATE_ENCODING, LogicalRequestComponentState,
     LogicalRequestStateCodecError, LogicalRequestWorkloadLifecycle, PortableLogicalRequestState,
+};
+pub use regular_file::{
+    RegularFileAdapterError, RegularFileCallResult, RegularFileFailure, RegularFileWorkloadFailure,
 };
 pub use regular_file_state::{
     PortableRegularFileState, REGULAR_FILE_COMPONENT_STATE_ENCODING, RegularFileComponentState,

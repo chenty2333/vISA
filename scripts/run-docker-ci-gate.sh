@@ -6,7 +6,8 @@ usage() {
 usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] \
     [--artifact-parent DIR] \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
-     system-stage3a|system-stage3b|system-stage3|system-stage4-target|
+     system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|
+     system-stage4-target|
      system-stage4-isa|system-stage4|system-joint-handoff]
 
 Validates the Compose configuration, builds or reuses the vISA development
@@ -18,8 +19,10 @@ pair cells and can be substantially slower than the other tiers.
 system-stage2-strict calls the same local Strict Stage 2 gate used on the host,
 with locked offline Wacogo inputs from the image. Its evidence, Docker log, and
 sidecar binary/receipt are retained together under a host-visible run root.
-system-stage3a and system-stage3b independently validate the regular-file and
-logical-request profiles; system-stage3 runs both profiles in sequence.
+system-stage3a and system-stage3b independently validate the Wasmtime
+regular-file and logical-request profiles. system-stage3a-cross-runtime builds
+the locked Wacogo sidecar and validates the repeated four-direction
+regular-file matrix; system-stage3 runs all three gates in sequence.
 system-stage4 cross-builds release x86-64 and AArch64 workers and validates the
 complete seven-cell native/QEMU-user matrix, a raw x86-64 Linux host receipt,
 and bundle relocation. system-stage4-target and
@@ -69,7 +72,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             exit 0
             ;;
-        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3b|system-stage3|system-stage4-target|system-stage4-isa|system-stage4|system-joint-handoff)
+        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|system-stage4-target|system-stage4-isa|system-stage4|system-joint-handoff)
             if [[ -n "$tier" ]]; then
                 printf 'only one validation tier may be selected\n' >&2
                 usage
@@ -240,14 +243,8 @@ log_strict_command "${compose[@]}" run --rm -T \
     dev \
     bash -Eeuo pipefail -c '
         runtime_module_cache=/tmp/visa-wacogo-gomodcache
-        seed=/opt/visa-wacogo/gomodcache.tar.gz
-        rm -rf -- "$runtime_module_cache"
-        mkdir -m 0700 -- "$runtime_module_cache"
-        tar --extract --gzip --file "$seed" --directory "$runtime_module_cache"
-        test -f "$runtime_module_cache/github.com/regclient/regclient@v0.8.3/testdata/.wh.layer2.txt"
-        test -f "$runtime_module_cache/github.com/regclient/regclient@v0.8.3/testdata/exdir/.wh..wh..opq"
-        printf "module-cache-seed=%s sha256=%s\n" "$seed" "$(sha256sum "$seed" | cut -d" " -f1)"
-        printf "materialized-module-cache=%s\n" "$runtime_module_cache"
+        export VISA_WACOGO_GOMODCACHE="$runtime_module_cache"
+        scripts/wacogo-materialize-module-cache.sh
         exec env \
             GOENV=off \
             GOPROXY=off \
@@ -256,7 +253,7 @@ log_strict_command "${compose[@]}" run --rm -T \
             GOTOOLCHAIN=local \
             "GOVCS=*:off" \
             GOWORK=off \
-            VISA_WACOGO_GOMODCACHE="$runtime_module_cache" \
+            VISA_WACOGO_GOMODCACHE="$VISA_WACOGO_GOMODCACHE" \
             VISA_STRICT_STAGE2_ARTIFACT_ROOT=/visa-strict-output/gate \
             scripts/ci-gate.sh system-stage2-strict
     '

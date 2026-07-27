@@ -6,12 +6,16 @@ fn main() -> ExitCode {
     let command = arguments.next();
     let root = arguments.next();
     if arguments.next().is_some() || root.is_none() {
-        eprintln!("usage: {} <stage3a|stage3b> <artifact-root>", PathBuf::from(program).display());
+        eprintln!(
+            "usage: {} <stage3a|stage3a-cross-runtime|stage3b> <artifact-root>",
+            PathBuf::from(program).display()
+        );
         return ExitCode::from(64);
     }
     let root = PathBuf::from(root.unwrap());
     let result = match command.as_deref().and_then(std::ffi::OsStr::to_str) {
         Some("stage3a") => visa_stage3_system::run_stage3a(&root),
+        Some("stage3a-cross-runtime") => visa_stage3_system::run_stage3a_cross_runtime(&root),
         Some("stage3b") => visa_stage3_system::run_stage3b(&root),
         _ => Err("unknown Stage 3 command".to_owned()),
     };

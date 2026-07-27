@@ -16,10 +16,39 @@ import (
 
 const (
 	Version             = uint32(1)
-	CarrierVersion      = "VISAWCG1"
+	CarrierVersion      = "VISAWCG2"
 	MaxCarrierBytes     = uint64(64 * 1024 * 1024)
 	MaxJSONLMessageSize = 1024 * 1024
 )
+
+type Profile string
+
+const (
+	ProfileCooperativeHandoff Profile = "cooperative-handoff-v1"
+	ProfileRegularFile        Profile = "regular-file-v1"
+)
+
+func (p Profile) carrierTag() byte {
+	switch p {
+	case ProfileCooperativeHandoff:
+		return 1
+	case ProfileRegularFile:
+		return 2
+	default:
+		return 0
+	}
+}
+
+func profileFromCarrierTag(tag byte) (Profile, error) {
+	switch tag {
+	case ProfileCooperativeHandoff.carrierTag():
+		return ProfileCooperativeHandoff, nil
+	case ProfileRegularFile.carrierTag():
+		return ProfileRegularFile, nil
+	default:
+		return "", fmt.Errorf("unsupported carrier profile tag %d", tag)
+	}
+}
 
 type RuntimeIdentity struct {
 	Implementation        string `json:"implementation"`
@@ -78,6 +107,7 @@ func (e *WireError) Validate() error {
 type PreparedMessage struct {
 	Type              string          `json:"type"`
 	Protocol          uint32          `json:"protocol"`
+	Profile           Profile         `json:"profile"`
 	ComponentSHA256   string          `json:"componentSha256"`
 	GuestInstantiated bool            `json:"guestInstantiated"`
 	LiveResources     uint64          `json:"liveResources"`
@@ -177,39 +207,48 @@ func NewChannel(reader io.Reader, writer io.Writer) *Channel {
 	}
 }
 
-func (c *Channel) ReadCarrier() ([]byte, [32]byte, error) {
-	header := make([]byte, len(CarrierVersion)+8+sha256.Size)
+func (c *Channel) ReadCarrier() ([]byte, [32]byte, Profile, error) {
+	header := make([]byte, len(CarrierVersion)+1+8+sha256.Size)
 	if _, err := io.ReadFull(c.reader, header); err != nil {
-		return nil, [32]byte{}, fmt.Errorf("read carrier header: %w", err)
+		return nil, [32]byte{}, "", fmt.Errorf("read carrier header: %w", err)
 	}
 	if string(header[:len(CarrierVersion)]) != CarrierVersion {
-		return nil, [32]byte{}, errors.New("invalid carrier magic")
+		return nil, [32]byte{}, "", errors.New("invalid carrier magic")
 	}
-	length := binary.BigEndian.Uint64(header[len(CarrierVersion) : len(CarrierVersion)+8])
+	profile, err := profileFromCarrierTag(header[len(CarrierVersion)])
+	if err != nil {
+		return nil, [32]byte{}, "", err
+	}
+	lengthOffset := len(CarrierVersion) + 1
+	length := binary.BigEndian.Uint64(header[lengthOffset : lengthOffset+8])
 	if length == 0 || length > MaxCarrierBytes {
-		return nil, [32]byte{}, fmt.Errorf("carrier length %d is outside 1..%d", length, MaxCarrierBytes)
+		return nil, [32]byte{}, "", fmt.Errorf("carrier length %d is outside 1..%d", length, MaxCarrierBytes)
 	}
 	var expected [32]byte
-	copy(expected[:], header[len(CarrierVersion)+8:])
+	copy(expected[:], header[lengthOffset+8:])
 	payload := make([]byte, int(length))
 	if _, err := io.ReadFull(c.reader, payload); err != nil {
-		return nil, [32]byte{}, fmt.Errorf("read carrier payload: %w", err)
+		return nil, [32]byte{}, "", fmt.Errorf("read carrier payload: %w", err)
 	}
 	observed := sha256.Sum256(payload)
 	if observed != expected {
-		return nil, [32]byte{}, fmt.Errorf(
+		return nil, [32]byte{}, "", fmt.Errorf(
 			"carrier digest mismatch: expected %s, observed %s",
 			hex.EncodeToString(expected[:]),
 			hex.EncodeToString(observed[:]),
 		)
 	}
-	return payload, observed, nil
+	return payload, observed, profile, nil
 }
 
-func (c *Channel) WritePrepared(digest [32]byte, runtime RuntimeIdentity) error {
+func (c *Channel) WritePrepared(digest [32]byte, profile Profile, runtime RuntimeIdentity) error {
+	if profile.carrierTag() == 0 {
+		return fmt.Errorf("unsupported prepared profile %q", profile)
+	}
 	return c.writeJSON(PreparedMessage{
 		Type:              "prepared",
 		Protocol:          Version,
+		Profile:           profile,
 		ComponentSHA256:   hex.EncodeToString(digest[:]),
 		GuestInstantiated: false,
 		LiveResources:     0,

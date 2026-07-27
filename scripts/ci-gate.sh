@@ -5,7 +5,8 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-gate.sh \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
-     system-stage3a|system-stage3b|system-stage3|system-stage4-target|
+     system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|
+     system-stage4-target|
      system-stage4-isa|system-stage4|system-joint-handoff]
 
 Runs a validation tier inside the vISA development environment.
@@ -20,9 +21,11 @@ independently validated strict Wasmtime/Wacogo matrix through the unified local
 gate. Set VISA_STRICT_STAGE2_ARTIFACT_ROOT to select its retained output root.
 Locked inputs use the VISA_WACOGO_* variables documented by that local gate.
 system-stage3a and system-stage3b run and independently validate the bounded
-regular-file and logical-request continuity profiles. system-stage3 runs both
-Stage 3 profiles in sequence. Stage 3 currently covers Wasmtime-to-Wasmtime
-handoff only and does not inherit Strict Stage 2 independent-runtime coverage.
+Wasmtime regular-file and logical-request continuity profiles.
+system-stage3a-cross-runtime reproducibly rebuilds the source-locked Wacogo
+sidecar, runs the Stage 1 semantic detector, executes three repetitions of all
+four regular-file runtime directions, audits the outer verifier, and validates
+the relocated publication. system-stage3 runs all three Stage 3 gates.
 system-stage4 builds release x86-64 and AArch64 Wasmtime workers, runs the
 complete seven-cell native/QEMU-user target and cross-ISA matrix, and verifies
 the resulting evidence independently before and after a real directory
@@ -194,6 +197,13 @@ gate_claims_registry() {
         python3 scripts/check-claims-registry.py
     run_gate "claims: registry checker mutation tests" \
         python3 scripts/test-check-claims-registry.py
+    run_gate "claims: six-dimensional evidence matrix" \
+        python3 scripts/check-evidence-matrix.py
+    run_gate "claims: evidence matrix mutation tests" \
+        python3 scripts/test-check-evidence-matrix.py
+    run_gate "claims: compiled evidence matrix model" \
+        cargo run --quiet --locked -p visa-conformance \
+            --bin visa-evidence-matrix -- claims/evidence-matrix.json
     run_gate "claims: committed closure records" \
         python3 scripts/check-claim-closures.py
     run_gate "claims: permanent archive verifier tests" \
@@ -416,6 +426,84 @@ gate_system_stage3a() {
     printf 'Stage 3A evidence bundle: %s\n' "$system_bundle_path"
 }
 
+gate_wacogo_sidecar() {
+    run_gate "Wacogo: materialize verified offline module cache" \
+        scripts/wacogo-materialize-module-cache.sh
+    run_gate "Wacogo: reproducible two-profile production sidecar" \
+        scripts/wacogo-build-sidecar.sh
+}
+
+gate_system_stage3a_cross_runtime() {
+    local system_parent
+    local git_sha
+    local matrix_root
+    local relocated_root
+    local cargo_target
+    local verifier_bin
+    local detector_report
+    local verifier_audit
+
+    git_sha="$(git rev-parse --verify HEAD)"
+    if [[ ! "$git_sha" =~ ^[0-9a-f]{40}$ ]]; then
+        printf 'cross-runtime Stage 3A revision is not an exact lowercase Git SHA: %s\n' \
+            "$git_sha" >&2
+        return 1
+    fi
+    if [[ -n "${GITHUB_SHA:-}" && "$git_sha" != "$GITHUB_SHA" ]]; then
+        printf 'cross-runtime Stage 3A checkout differs from GITHUB_SHA: checkout=%s github=%s\n' \
+            "$git_sha" "$GITHUB_SHA" >&2
+        return 1
+    fi
+    if ! git diff --quiet --ignore-submodules -- \
+        || ! git diff --cached --quiet --ignore-submodules -- \
+        || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+        printf '%s\n' \
+            'cross-runtime Stage 3A evidence requires a clean exact-SHA worktree' >&2
+        return 1
+    fi
+
+    system_parent="$(system_evidence_parent)"
+    system_artifact_kind="Stage 3A cross-runtime regular-file continuity"
+    system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage3a-cross-runtime-XXXXXX")"
+    matrix_root="$system_artifact_root/matrix"
+    relocated_root="$system_artifact_root/matrix-relocated"
+    detector_report="$system_artifact_root/detector/stage1-defect-corpus-report.json"
+    verifier_audit="$system_artifact_root/verifier/stage3a-cross-runtime-audit.json"
+    system_bundle_path="$matrix_root/stage3a-cross-runtime-evidence.json"
+
+    gate_wacogo_sidecar
+    run_gate "system-stage3a-cross-runtime: Stage 1 semantic detector closure" \
+        env VISA_DEFECT_CORPUS_OUT="$detector_report" scripts/defect-corpus.sh
+    run_gate "system-stage3a-cross-runtime: four directions with three stability runs" \
+        env VISA_WACOGO_BIN="$PWD/target/visa-wacogo/visa-wacogo-runtime" \
+        cargo run --locked -p visa-stage3-system --bin visa-stage3-system -- \
+            stage3a-cross-runtime "$matrix_root"
+    run_gate "system-stage3a-cross-runtime: independent outer evidence validation" \
+        cargo run --locked -p visa-conformance --bin visa-conformance -- \
+            stage3a-cross-runtime "$system_bundle_path" "$matrix_root"
+
+    cargo_target="$(cargo_target_directory)"
+    verifier_bin="$cargo_target/debug/visa-conformance"
+    run_gate "system-stage3a-cross-runtime: outer verifier mutation audit" \
+        python3 scripts/stage3a-cross-runtime-verifier-audit.py \
+            --verifier "$verifier_bin" \
+            --artifact-root "$matrix_root" \
+            --out "$verifier_audit"
+    run_gate "system-stage3a-cross-runtime: require an unused relocation path" \
+        test ! -e "$relocated_root"
+    run_gate "system-stage3a-cross-runtime: relocate byte-identical publication" \
+        mv -- "$matrix_root" "$relocated_root"
+    matrix_root="$relocated_root"
+    system_bundle_path="$matrix_root/stage3a-cross-runtime-evidence.json"
+    run_gate "system-stage3a-cross-runtime: validate relocated outer publication" \
+        "$verifier_bin" stage3a-cross-runtime "$system_bundle_path" "$matrix_root"
+
+    printf 'Stage 3A cross-runtime artifact root: %s\n' "$system_artifact_root"
+    printf 'Stage 3A cross-runtime evidence bundle: %s\n' "$system_bundle_path"
+    printf 'Stage 1 detector report: %s\n' "$detector_report"
+    printf 'Stage 3A verifier audit: %s\n' "$verifier_audit"
+}
+
 gate_system_stage3b() {
     local system_parent
     system_parent="$(system_evidence_parent)"
@@ -436,6 +524,7 @@ gate_system_stage3b() {
 
 gate_system_stage3() {
     gate_system_stage3a
+    gate_system_stage3a_cross_runtime
     gate_system_stage3b
 }
 
@@ -647,6 +736,7 @@ case "$tier" in
     system-stage2) gate_system_stage2 ;;
     system-stage2-strict) gate_system_stage2_strict ;;
     system-stage3a) gate_system_stage3a ;;
+    system-stage3a-cross-runtime) gate_system_stage3a_cross_runtime ;;
     system-stage3b) gate_system_stage3b ;;
     system-stage3) gate_system_stage3 ;;
     system-stage4-target) gate_system_stage4_target ;;

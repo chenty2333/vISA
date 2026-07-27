@@ -173,7 +173,7 @@ fn runtime_identity_matches(
                         && sidecar_executable_sha256 == visa_wacogo::SIDECAR_EXECUTABLE_SHA256
                         && *sidecar_executable_size == visa_wacogo::SIDECAR_EXECUTABLE_SIZE
                         && *sidecar_protocol_version == 1
-                        && execution_carrier == "owned-component-stdin-frame-v1"
+                        && execution_carrier == "owned-component-profile-stdin-frame-v2"
                         && wacogo_version == visa_wacogo::WACOGO_VERSION
                         && wacogo_revision == visa_wacogo::WACOGO_REVISION
                         && wazero_version == visa_wacogo::WAZERO_VERSION

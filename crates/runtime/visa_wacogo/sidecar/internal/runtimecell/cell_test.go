@@ -45,6 +45,7 @@ func TestPrepareRejectsSameNameEmptyWorkloadBeforeInstantiation(t *testing.T) {
 	cell, failure := Prepare(
 		ctx,
 		protocol.NewChannel(bytes.NewReader(nil), &bytes.Buffer{}),
+		protocol.ProfileCooperativeHandoff,
 		component,
 	)
 	if cell != nil {
@@ -61,7 +62,7 @@ func TestPrepareRejectsSameNameEmptyWorkloadBeforeInstantiation(t *testing.T) {
 }
 
 func TestMissingWorkloadExportsReturnStructuredTraps(t *testing.T) {
-	cell := &Cell{ctx: context.Background(), instantiated: true}
+	cell := &cooperativeCell{ctx: context.Background(), instantiated: true}
 	for _, name := range requiredWorkloadExports {
 		t.Run(name, func(t *testing.T) {
 			var failure *protocol.WireError

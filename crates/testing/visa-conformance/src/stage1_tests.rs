@@ -3555,53 +3555,80 @@ fn materialize_raw(
                 }),
             ];
             if case.case_id == "evidence-verification" && role == "source" {
-                let supplemental_case = "evidence-verification-fault-before-journal-write";
-                let initial_worker = format!("{supplemental_case}-supplemental-source");
-                let retry_worker = format!("{initial_worker}-retry");
-                for (worker, pid, fault) in [
-                    (&initial_worker, 300, Some("before_journal_write")),
-                    (&retry_worker, 301, None),
+                for (supplemental_case, fault, recovery_suffix, base_pid) in [
+                    (
+                        "evidence-verification-fault-before-journal-write",
+                        "before_journal_write",
+                        "retry",
+                        300,
+                    ),
+                    (
+                        "evidence-verification-fault-after-journal-write",
+                        "after_journal_write",
+                        "recovery",
+                        302,
+                    ),
+                    (
+                        "evidence-verification-fault-before-activation-bundle",
+                        "before_activation_bundle",
+                        "retry",
+                        304,
+                    ),
+                    (
+                        "evidence-verification-fault-after-activation-bundle",
+                        "after_activation_bundle",
+                        "recovery",
+                        306,
+                    ),
                 ] {
-                    let request_id = format!("{worker}-000001");
-                    let mut command = test_initialize_command(supplemental_case, role, runtime);
-                    command["fault"] = fault.map_or(serde_json::Value::Null, |fault| {
-                        serde_json::Value::String(fault.to_owned())
-                    });
-                    let request = serde_json::json!({
-                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
-                        "id": request_id,
-                        "command": command,
-                    });
-                    let response = serde_json::json!({
-                        "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
-                        "id": request_id,
-                        "outcome": {
-                            "status": "success",
-                            "result": {
-                                "kind": "initialized",
-                                "role": role,
-                                "case_id": supplemental_case,
-                                "prepared_runtime": test_runtime_observation(runtime),
-                                "live_runtime": test_runtime_observation(runtime),
+                    let initial_worker = format!("{supplemental_case}-supplemental-source");
+                    let recovery_worker = format!("{initial_worker}-{recovery_suffix}");
+                    for (worker, pid, injected_fault) in [
+                        (initial_worker.as_str(), base_pid, Some(fault)),
+                        (recovery_worker.as_str(), base_pid + 1, None),
+                    ] {
+                        let request_id = format!("{worker}-000001");
+                        let mut command = test_initialize_command(supplemental_case, role, runtime);
+                        command["fault"] = injected_fault
+                            .map_or(serde_json::Value::Null, |injected_fault| {
+                                serde_json::Value::String(injected_fault.to_owned())
+                            });
+                        let request = serde_json::json!({
+                            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                            "id": request_id,
+                            "command": command,
+                        });
+                        let response = serde_json::json!({
+                            "version": crate::STAGE1_WORKER_PROTOCOL_VERSION,
+                            "id": request_id,
+                            "outcome": {
+                                "status": "success",
+                                "result": {
+                                    "kind": "initialized",
+                                    "role": role,
+                                    "case_id": supplemental_case,
+                                    "prepared_runtime": test_runtime_observation(runtime),
+                                    "live_runtime": test_runtime_observation(runtime),
+                                },
                             },
-                        },
-                    });
-                    transcript.extend([
-                        serde_json::json!({
-                            "worker": worker,
-                            "pid": pid,
-                            "sequence": 1,
-                            "stream": "parent_request",
-                            "line": serde_json::to_string(&request).unwrap(),
-                        }),
-                        serde_json::json!({
-                            "worker": worker,
-                            "pid": pid,
-                            "sequence": 2,
-                            "stream": "worker_response",
-                            "line": serde_json::to_string(&response).unwrap(),
-                        }),
-                    ]);
+                        });
+                        transcript.extend([
+                            serde_json::json!({
+                                "worker": worker,
+                                "pid": pid,
+                                "sequence": 1,
+                                "stream": "parent_request",
+                                "line": serde_json::to_string(&request).unwrap(),
+                            }),
+                            serde_json::json!({
+                                "worker": worker,
+                                "pid": pid,
+                                "sequence": 2,
+                                "stream": "worker_response",
+                                "line": serde_json::to_string(&response).unwrap(),
+                            }),
+                        ]);
+                    }
                 }
             }
             if case.outcome == Stage1CaseOutcome::RevocationRejectedNoResurrection {
@@ -3949,7 +3976,7 @@ fn test_runtime_observation(runtime: TestRuntime) -> serde_json::Value {
 fn test_wacogo_lineage() -> serde_json::Value {
     serde_json::json!({
         "kind": "wacogo",
-        "source_lock_schema": "visa.wacogo-source-lock.v1",
+        "source_lock_schema": "visa.wacogo-source-lock.v2",
         "source_lock_sha256": "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235",
         "derivative_id": "partite-ai-wacogo-3de16a61796c-visa-patchset-v1",
         "upstream_module": "github.com/partite-ai/wacogo",
@@ -3965,10 +3992,10 @@ fn test_wacogo_lineage() -> serde_json::Value {
             "4b32fe31643aedab8472c42ae38d635abbfc9133093866b5ff1de9dcc4548d0e"
         ],
         "patched_tree_sha256": "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311",
-        "sidecar_executable_sha256": "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606",
-        "sidecar_executable_size": 6754430,
+        "sidecar_executable_sha256": "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb",
+        "sidecar_executable_size": 6889598,
         "sidecar_protocol_version": 1,
-        "execution_carrier": "owned-component-stdin-frame-v1",
+        "execution_carrier": "owned-component-profile-stdin-frame-v2",
         "wacogo_version": "v0.0.0-20260617023329-3de16a61796c",
         "wacogo_revision": "3de16a61796ce02d29795e4a074f37a33e6ebd87",
         "wazero_version": "v1.11.1-0.20260418165552-5cb4bb3ec0c1",

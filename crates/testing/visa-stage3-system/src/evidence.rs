@@ -100,7 +100,7 @@ pub fn publish_stage3a(
     root: &Path,
     started_at_unix_ms: u64,
     finished_at_unix_ms: u64,
-    runtime: RuntimeIdentity,
+    runtime: Stage3RuntimeScope,
     profile_manifest: &impl Serialize,
     configuration: &impl Serialize,
     captures: &[Stage3CaseCapture],
@@ -176,18 +176,7 @@ pub fn publish_stage3a(
         wit_world,
         profile_manifest,
         configuration,
-        runtime: Stage3RuntimeScope {
-            source: runtime_identity(&runtime),
-            destination: runtime_identity(&runtime),
-            host_os: std::env::consts::OS.to_owned(),
-            source_isa: std::env::consts::ARCH.to_owned(),
-            destination_isa: std::env::consts::ARCH.to_owned(),
-            substrate: "substrate_host::SqliteProvider".to_owned(),
-            execution_boundary: "same-process-distinct-wasmtime-store-and-provider-instance"
-                .to_owned(),
-            independent_runtime_coverage: false,
-            unsupported_runtime_implementations: vec!["wacogo".to_owned()],
-        },
+        runtime,
         cases,
     };
 
@@ -325,7 +314,7 @@ fn publish_bundle(
     Ok(root.join(profile.evidence_file()))
 }
 
-fn write_json_artifact(
+pub(crate) fn write_json_artifact(
     root: &Path,
     uri: &str,
     value: &impl Serialize,
@@ -335,7 +324,11 @@ fn write_json_artifact(
     write_artifact(root, uri, &bytes)
 }
 
-fn write_artifact(root: &Path, uri: &str, bytes: &[u8]) -> Result<Stage3ArtifactReference, String> {
+pub(crate) fn write_artifact(
+    root: &Path,
+    uri: &str,
+    bytes: &[u8],
+) -> Result<Stage3ArtifactReference, String> {
     if uri.starts_with('/')
         || uri
             .split('/')
@@ -355,7 +348,7 @@ fn write_artifact(root: &Path, uri: &str, bytes: &[u8]) -> Result<Stage3Artifact
     })
 }
 
-fn publish_atomic(root: &Path, uri: &str, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn publish_atomic(root: &Path, uri: &str, bytes: &[u8]) -> Result<(), String> {
     if !safe_relative_uri(uri) {
         return Err(format!("unsafe Stage 3 publication URI {uri:?}"));
     }
@@ -427,7 +420,7 @@ fn reject_existing_symlink_components(root: &Path, uri: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn sync_directory(path: &Path) -> Result<(), String> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), String> {
     let directory = fs::File::open(path).map_err(|error| {
         format!("cannot open publication directory {}: {error}", path.display())
     })?;
@@ -436,7 +429,7 @@ fn sync_directory(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot sync publication directory {}: {error}", path.display()))
 }
 
-fn runtime_identity(identity: &RuntimeIdentity) -> Stage3RuntimeIdentity {
+pub(crate) fn runtime_identity(identity: &RuntimeIdentity) -> Stage3RuntimeIdentity {
     Stage3RuntimeIdentity {
         implementation: identity.implementation.clone(),
         implementation_version: identity.implementation_version.clone(),

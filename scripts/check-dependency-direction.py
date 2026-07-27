@@ -93,6 +93,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "visa_component_adapter",
             "visa_profile",
             "visa_runtime",
+            "visa_wacogo",
             "visa_wasmtime",
         }
     ),

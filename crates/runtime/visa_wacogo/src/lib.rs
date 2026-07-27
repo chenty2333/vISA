@@ -12,6 +12,7 @@ mod identity;
 mod preflight;
 mod process;
 mod protocol;
+pub mod regular_file;
 mod state;
 
 pub use adapter::{WacogoAdapter, WacogoRuntime};
@@ -21,7 +22,13 @@ pub use identity::{
     SOURCE_LOCK_SCHEMA, SOURCE_LOCK_SHA256, TARGET, UPSTREAM_MODULE, UPSTREAM_MODULE_SUM,
     VISA_WACOGO_VERSION, WACOGO_REVISION, WACOGO_VERSION, WAZERO_VERSION, WacogoProvenance,
 };
-pub use preflight::PreparedWacogoComponent;
+pub use preflight::{PreparedWacogoComponent, PreparedWacogoRegularFileComponent};
+pub use regular_file::{
+    FileDurability, FileLockState, PortableRegularFileState, RegularFileAdapterError,
+    RegularFileCallResult, RegularFileComponentState, RegularFileFailure, RegularFileOperation,
+    RegularFileResult, RegularFileState, RegularFileStateCodecError, RegularFileWorkloadFailure,
+    RegularFileWorkloadPhase, WacogoRegularFileAdapter,
+};
 pub use visa_component_adapter::{
     ActivationRequest, AdapterError, AdapterFailureKind, AdapterProvider, COMPONENT_STATE_ENCODING,
     ComponentSafePoint, ComponentState, ComponentStatus, KvBinding, KvFailure,

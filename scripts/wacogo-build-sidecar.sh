@@ -384,7 +384,7 @@ if not any(
     raise SystemExit("sidecar build info is missing the locked wacogo dependency")
 if "=>\t../wacogo\t(devel)\t" not in stripped:
     raise SystemExit("sidecar build info is missing the relative patched-wacogo replacement")
-if sys.argv[4] != "1" or sys.argv[5] != "owned-component-stdin-frame-v1" or sys.argv[6] != "VISAWCG1":
+if sys.argv[4] != "1" or sys.argv[5] != "owned-component-profile-stdin-frame-v2" or sys.argv[6] != "VISAWCG2":
     raise SystemExit("source-lock protocol/carrier identity is not the accepted production identity")
 PY
 
@@ -426,7 +426,7 @@ receipt = {
     "schema": "visa.wacogo-sidecar-build-receipt.v1",
     "source_lock_sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
     "derivative_id": lock["derivative"]["id"],
-    "accepted_component": sidecar["accepted_component"],
+    "accepted_components": sidecar["accepted_components"],
     "execution_host_requirements": sidecar["execution_host_requirements"],
     "upstream_module_zip_sha256": lock["upstream"]["module_zip"]["sha256"],
     "patchset_sha256": lock["patchset"]["ordered_concatenation_sha256"],

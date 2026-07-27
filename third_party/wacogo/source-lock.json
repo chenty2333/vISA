@@ -1,17 +1,19 @@
 {
-  "schema": "visa.wacogo-source-lock.v1",
+  "schema": "visa.wacogo-source-lock.v2",
   "derivative": {
     "id": "partite-ai-wacogo-3de16a61796c-visa-patchset-v1",
     "display_name": "partite-ai/wacogo v0.0.0-20260617023329-3de16a61796c + vISA downstream patchset v1",
     "upstream_is_qualified_without_patches": false,
     "supported_host_profile": [
       "visa:continuity/key-value@0.1.0",
-      "visa:continuity/timers@0.1.0"
+      "visa:continuity/timers@0.1.0",
+      "visa:file-continuity/regular-file@0.1.0"
     ],
     "limitations": {
       "add_type_host_scope": "root-host-component-only",
       "nested_host_scope_add_type_supported": false,
-      "stage3_resources_supported": false,
+      "regular_file_profile_supported": true,
+      "logical_request_profile_supported": false,
       "cross_isa_qualified": false
     }
   },
@@ -100,15 +102,23 @@
   },
   "production_artifacts": {
     "sidecar": {
-      "accepted_component": {
-        "size": 146486,
-        "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b"
-      },
+      "accepted_components": [
+        {
+          "profile": "cooperative-handoff-v1",
+          "size": 146486,
+          "sha256": "4d8c99fbe7475aa02983592f55a8cfdc4260753aec75de74e18a19ec47813e3b"
+        },
+        {
+          "profile": "regular-file-v1",
+          "size": 215376,
+          "sha256": "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109"
+        }
+      ],
       "module_path": "visa.local/wacogo-runtime",
       "entry_package": "./cmd/visa-wacogo-runtime",
       "protocol_version": 1,
-      "carrier_version": "owned-component-stdin-frame-v1",
-      "carrier_magic": "VISAWCG1",
+      "carrier_version": "owned-component-profile-stdin-frame-v2",
+      "carrier_magic": "VISAWCG2",
       "target": {
         "goos": "linux",
         "goarch": "amd64",
@@ -145,15 +155,15 @@
       },
       "binary": {
         "file": "target/visa-wacogo/visa-wacogo-runtime",
-        "size": 6754430,
-        "sha256": "7dd8365e5132fcd32f92ac89d8d1b78b80ec1d285730d8e43b360de6378a0606"
+        "size": 6889598,
+        "sha256": "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb"
       },
       "go_module": {
         "directory": "crates/runtime/visa_wacogo/sidecar",
         "source_tree": {
           "algorithm": "sha256-of-sorted-sha256sum-lines-v1",
-          "regular_file_count": 14,
-          "sha256": "8e9120ec87a81cdfb1ac9861f35d4748a21d160f128afb3fdc3463852a56fde0"
+          "regular_file_count": 19,
+          "sha256": "30068dc6ff7a2176eb5613b3d36f227b8c108628d6f8692ec2dcfe72a84b54de"
         },
         "go_mod": {
           "file": "crates/runtime/visa_wacogo/sidecar/go.mod",
@@ -161,12 +171,12 @@
         },
         "go_sum": {
           "file": "crates/runtime/visa_wacogo/sidecar/go.sum",
-          "sha256": "5ee5cfc734f03608cfbecbb1e22a08c1f7b7636be1d637b9c44fb262fee6bfad"
+          "sha256": "4eba5686a0fc26a1955537b059ac41f1ffd892d64bc275273e5d2102b42d4b9f"
         }
       },
       "generated_bindings": {
         "algorithm": "raw-file-concatenation-in-listed-order-sha256-v1",
-        "ordered_concatenation_sha256": "ad7ace9fa2af993b9d58c4afc8ab91c26c7322906014f410b072cf190cfb8484",
+        "ordered_concatenation_sha256": "bbc2dd6c1fdbea0ff928c6b30e13140a43c86b409d73fa59115f17c0c821cd23",
         "files": [
           {
             "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/keyvalue/keyvalue.bind.go",
@@ -191,6 +201,18 @@
           {
             "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/continuity/timers/timers.wrap.go",
             "sha256": "8dff5a455dd06fa7ba85cc41a3ba5f22769867069e94f7ee7435ae2468434b50"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/file-continuity/regularfile/regularfile.bind.go",
+            "sha256": "3c6e032899e6dacc1970da7a73a18397ea06fba266fa0d407a9813c29e231980"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/file-continuity/regularfile/regularfile.go",
+            "sha256": "078425b204c654700cc159d7c3ad18fca2bb31db0f7813ff5b4f1ee48936d78e"
+          },
+          {
+            "file": "crates/runtime/visa_wacogo/sidecar/generated/visa/file-continuity/regularfile/regularfile.wrap.go",
+            "sha256": "ab995f7721737baa1af13a38c47a3c8880e8dfcdc86eddd20d47af3df65d05c0"
           }
         ]
       },

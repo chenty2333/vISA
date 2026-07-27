@@ -1,8 +1,5 @@
-use std::{error::Error, fmt};
-
-use contract_core::Digest;
-use visa_component_adapter::{
-    PortableRegularFileState, RegularFileStateCodecError, ResourceBindingError,
+pub use visa_component_adapter::{
+    RegularFileAdapterError, RegularFileFailure, RegularFileWorkloadFailure,
 };
 
 use super::bindings::{
@@ -10,62 +7,23 @@ use super::bindings::{
     visa::file_continuity::regular_file::FileError,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RegularFileFailure {
-    Denied,
-    Conflict,
-    StaleBinding,
-    Unsupported,
-    Indeterminate(String),
-    Unavailable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RegularFileWorkloadFailure {
-    AlreadyActive,
-    InvalidState,
-    SafePointUnavailable,
-    File(RegularFileFailure),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RegularFileAdapterError {
-    ComponentDigestMismatch { expected: Digest, actual: Digest },
-    Engine(String),
-    InvalidComponent(String),
-    Link(String),
-    Instantiation(String),
-    GuestTrap(String),
-    Workload(RegularFileWorkloadFailure),
-    ResourceBinding(ResourceBindingError),
-    InvalidCanonicalProfile,
-    InvalidOperation,
-    LiveResourcesAtSafePoint { state: PortableRegularFileState },
-    PortableStateMismatch { expected: Digest, actual: Digest },
-    PortableState(RegularFileStateCodecError),
-}
-
-impl From<WitWorkloadError> for RegularFileWorkloadFailure {
-    fn from(error: WitWorkloadError) -> Self {
-        match error {
-            WitWorkloadError::AlreadyActive => Self::AlreadyActive,
-            WitWorkloadError::InvalidState => Self::InvalidState,
-            WitWorkloadError::SafePointUnavailable => Self::SafePointUnavailable,
-            WitWorkloadError::File(error) => Self::File(error.into()),
-        }
+pub(crate) fn workload_failure(error: WitWorkloadError) -> RegularFileWorkloadFailure {
+    match error {
+        WitWorkloadError::AlreadyActive => RegularFileWorkloadFailure::AlreadyActive,
+        WitWorkloadError::InvalidState => RegularFileWorkloadFailure::InvalidState,
+        WitWorkloadError::SafePointUnavailable => RegularFileWorkloadFailure::SafePointUnavailable,
+        WitWorkloadError::File(error) => RegularFileWorkloadFailure::File(file_failure(error)),
     }
 }
 
-impl From<FileError> for RegularFileFailure {
-    fn from(error: FileError) -> Self {
-        match error {
-            FileError::Denied => Self::Denied,
-            FileError::Conflict => Self::Conflict,
-            FileError::StaleBinding => Self::StaleBinding,
-            FileError::Unsupported => Self::Unsupported,
-            FileError::Indeterminate(operation) => Self::Indeterminate(operation),
-            FileError::Unavailable => Self::Unavailable,
-        }
+fn file_failure(error: FileError) -> RegularFileFailure {
+    match error {
+        FileError::Denied => RegularFileFailure::Denied,
+        FileError::Conflict => RegularFileFailure::Conflict,
+        FileError::StaleBinding => RegularFileFailure::StaleBinding,
+        FileError::Unsupported => RegularFileFailure::Unsupported,
+        FileError::Indeterminate(operation) => RegularFileFailure::Indeterminate(operation),
+        FileError::Unavailable => RegularFileFailure::Unavailable,
     }
 }
 
@@ -84,52 +42,6 @@ impl From<visa_component_adapter::ProfileFailure> for FileError {
         }
     }
 }
-
-impl From<RegularFileStateCodecError> for RegularFileAdapterError {
-    fn from(error: RegularFileStateCodecError) -> Self {
-        Self::PortableState(error)
-    }
-}
-
-impl From<ResourceBindingError> for RegularFileAdapterError {
-    fn from(error: ResourceBindingError) -> Self {
-        Self::ResourceBinding(error)
-    }
-}
-
-impl fmt::Display for RegularFileAdapterError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ComponentDigestMismatch { .. } => {
-                formatter.write_str("component digest mismatch")
-            }
-            Self::Engine(error) => write!(formatter, "creating runtime engine failed: {error}"),
-            Self::InvalidComponent(error) => write!(formatter, "invalid component: {error}"),
-            Self::Link(error) => write!(formatter, "linking component imports failed: {error}"),
-            Self::Instantiation(error) => {
-                write!(formatter, "instantiating component failed: {error}")
-            }
-            Self::GuestTrap(error) => write!(formatter, "component call trapped: {error}"),
-            Self::Workload(error) => write!(formatter, "component rejected request: {error:?}"),
-            Self::ResourceBinding(error) => write!(formatter, "resource binding failed: {error:?}"),
-            Self::InvalidCanonicalProfile => {
-                formatter.write_str("canonical regular-file profile is missing or invalid")
-            }
-            Self::InvalidOperation => formatter.write_str("invalid regular-file operation"),
-            Self::LiveResourcesAtSafePoint { .. } => {
-                formatter.write_str("component reported a safe point with live file handles")
-            }
-            Self::PortableStateMismatch { .. } => {
-                formatter.write_str("provided portable file state does not match canonical state")
-            }
-            Self::PortableState(error) => {
-                write!(formatter, "invalid portable file state: {error:?}")
-            }
-        }
-    }
-}
-
-impl Error for RegularFileAdapterError {}
 
 #[cfg(test)]
 mod tests {

@@ -47,6 +47,7 @@ fn smoke_options(root: &Path) -> EvalOptions {
         warmup: 1,
         runs: 1,
         effects_before_handoff: vec![2],
+        digest_operations: vec![2],
     }
 }
 

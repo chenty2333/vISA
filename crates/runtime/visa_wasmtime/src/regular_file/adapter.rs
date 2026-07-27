@@ -1,7 +1,7 @@
 use contract_core::{ActivationRole, Digest, HandoffPhase};
 use visa_component_adapter::{
-    AdapterProvider, PortableRegularFileState, RegularFileComponentState, RegularFileWorkloadPhase,
-    ResourceBindingError, RuntimeIdentity, component_digest,
+    AdapterProvider, PortableRegularFileState, RegularFileCallResult, RegularFileComponentState,
+    RegularFileWorkloadPhase, ResourceBindingError, RuntimeIdentity, component_digest,
 };
 use visa_profile::{RegularFileOperation, RegularFileResult};
 use visa_runtime::Coordinator;
@@ -15,16 +15,10 @@ use super::{
         RegularFileContinuity, RegularFileContinuityPre,
         visa::file_continuity::regular_file::{FileObservation, ReadResult},
     },
-    error::{RegularFileAdapterError, RegularFileWorkloadFailure},
+    error::{RegularFileAdapterError, workload_failure},
     host::{RegularFileStoreState, canonical_regular_file},
     state::{from_wit_state, to_wit_durability, to_wit_state},
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RegularFileCallResult {
-    pub operation_id: String,
-    pub result: RegularFileResult,
-}
 
 /// Compiled, type-checked Stage 3A component. This value is runtime-local and
 /// never enters portable evidence or handoff state.
@@ -547,7 +541,7 @@ fn guest_trap(error: wasmtime::Error) -> RegularFileAdapterError {
 fn workload_error(
     error: super::bindings::exports::visa::file_continuity::workload::WorkloadError,
 ) -> RegularFileAdapterError {
-    RegularFileAdapterError::Workload(RegularFileWorkloadFailure::from(error))
+    RegularFileAdapterError::Workload(workload_failure(error))
 }
 
 fn build_engine() -> Result<Engine, RegularFileAdapterError> {

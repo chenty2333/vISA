@@ -15,12 +15,13 @@ use rustix::{
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use visa_component_adapter::{
-    AdapterError, PreflightExpectations, RuntimeIdentity, validate_preflight_contract,
+    AdapterError, PreflightExpectations, RuntimeIdentity, component_digest,
+    validate_preflight_contract,
 };
 use visa_profile::{CooperativeHandoffProfile, ProviderSupport};
 
 use crate::{
-    carrier::PreparedComponentBytes,
+    carrier::{PreparedComponentBytes, WacogoProfile},
     identity::{WacogoProvenance, static_identity},
     process::PreparedProcess,
     state::decode_canonical_hex,
@@ -33,6 +34,14 @@ pub struct PreparedWacogoComponent {
     pub(crate) component: PreparedComponentBytes,
     pub(crate) component_digest: Digest,
     pub(crate) profile_digest: Digest,
+    pub(crate) identity: RuntimeIdentity,
+    pub(crate) provenance: WacogoProvenance,
+}
+
+pub struct PreparedWacogoRegularFileComponent {
+    pub(crate) process: PreparedProcess,
+    pub(crate) component: PreparedComponentBytes,
+    pub(crate) component_digest: Digest,
     pub(crate) identity: RuntimeIdentity,
     pub(crate) provenance: WacogoProvenance,
 }
@@ -74,6 +83,35 @@ impl PreparedWacogoComponent {
     }
 }
 
+impl fmt::Debug for PreparedWacogoRegularFileComponent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedWacogoRegularFileComponent")
+            .field("component_digest", &self.component_digest)
+            .field("identity", &self.identity)
+            .field("provenance", &self.provenance)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedWacogoRegularFileComponent {
+    pub const fn component_digest(&self) -> Digest {
+        self.component_digest
+    }
+
+    pub fn runtime_identity(&self) -> &RuntimeIdentity {
+        &self.identity
+    }
+
+    pub fn provenance(&self) -> &WacogoProvenance {
+        &self.provenance
+    }
+
+    pub fn shutdown(self) -> Result<(), AdapterError> {
+        self.process.shutdown()
+    }
+}
+
 pub(crate) fn preflight(
     component_bytes: &[u8],
     profile: &CooperativeHandoffProfile,
@@ -82,7 +120,11 @@ pub(crate) fn preflight(
 ) -> Result<PreparedWacogoComponent, AdapterError> {
     let component_digest =
         validate_preflight_contract(component_bytes, profile, support, expectations)?;
-    let component = PreparedComponentBytes::capture(component_bytes, component_digest)?;
+    let component = PreparedComponentBytes::capture(
+        component_bytes,
+        component_digest,
+        WacogoProfile::CooperativeHandoff,
+    )?;
     let captured_component_digest = component.digest();
     let executable = open_verified_sidecar()?;
     let process = PreparedProcess::spawn(&executable.sealed_file, &component)?;
@@ -97,6 +139,36 @@ pub(crate) fn preflight(
         component,
         component_digest: captured_component_digest,
         profile_digest: expectations.profile_digest,
+        identity,
+        provenance,
+    })
+}
+
+pub(crate) fn regular_file_preflight(
+    component_bytes: &[u8],
+    expected_component_digest: Digest,
+) -> Result<PreparedWacogoRegularFileComponent, AdapterError> {
+    let actual = component_digest(component_bytes);
+    if actual != expected_component_digest {
+        return Err(AdapterError::ComponentDigestMismatch {
+            expected: expected_component_digest,
+            actual,
+        });
+    }
+    let component =
+        PreparedComponentBytes::capture(component_bytes, actual, WacogoProfile::RegularFile)?;
+    let executable = open_verified_sidecar()?;
+    let process = PreparedProcess::spawn(&executable.sealed_file, &component)?;
+    let identity = static_identity();
+    let provenance = process.runtime().provenance(
+        executable.path_text.clone(),
+        executable.digest,
+        executable.size,
+    );
+    Ok(PreparedWacogoRegularFileComponent {
+        process,
+        component,
+        component_digest: actual,
         identity,
         provenance,
     })
@@ -491,7 +563,7 @@ mod tests {
 
     #[test]
     fn missing_production_artifact_fails_closed_without_fallback() {
-        let error = sidecar_binary_lock(r#"{"schema":"visa.wacogo-source-lock.v1"}"#)
+        let error = sidecar_binary_lock(r#"{"schema":"visa.wacogo-source-lock.v2"}"#)
             .expect_err("a source-only lock cannot select an executable");
         assert_eq!(
             error.kind(),

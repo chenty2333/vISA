@@ -20,7 +20,7 @@ use crate::{
     error::{protocol_error, startup_error, terminal_error},
     protocol::{
         CommandReply, CommandRequest, Envelope, FieldPresence, HostCall, HostResponse,
-        MAX_JSONL_MESSAGE_BYTES, PROTOCOL_VERSION, RuntimeReport, WireError,
+        MAX_JSONL_MESSAGE_BYTES, PROTOCOL_VERSION, RawCommandReply, RuntimeReport, WireError,
     },
 };
 
@@ -64,13 +64,19 @@ impl PreparedProcess {
         }
         let mut command = Command::new(fd_path);
         command.env_clear();
-        Self::spawn_command(command, Some(component), &component.digest_hex())
+        Self::spawn_command(
+            command,
+            Some(component),
+            &component.digest_hex(),
+            component.profile().id(),
+        )
     }
 
     fn spawn_command(
         mut command: Command,
         component: Option<&PreparedComponentBytes>,
         expected_component_sha256: &str,
+        expected_profile: &str,
     ) -> Result<Self, AdapterError> {
         let production_component = component.is_some();
         let mut child = command
@@ -115,6 +121,7 @@ impl PreparedProcess {
         }
         let runtime = match prepared {
             Envelope::Prepared {
+                profile,
                 component_sha256,
                 guest_instantiated: false,
                 live_resources: 0,
@@ -126,8 +133,13 @@ impl PreparedProcess {
                         "wacogo prepared Component digest mismatch: expected {expected_component_sha256}, found {component_sha256}"
                     )));
                 }
+                if profile != expected_profile {
+                    return Err(AdapterError::InvalidComponent(format!(
+                        "wacogo prepared profile mismatch: expected {expected_profile}, found {profile}"
+                    )));
+                }
                 runtime.validate()?;
-                runtime
+                *runtime
             }
             Envelope::Prepared { guest_instantiated: true, .. } => {
                 return Err(AdapterError::Engine(
@@ -211,7 +223,7 @@ impl PreparedProcess {
         command: Command,
         expected_component_sha256: &str,
     ) -> Result<Self, AdapterError> {
-        Self::spawn_command(command, None, expected_component_sha256)
+        Self::spawn_command(command, None, expected_component_sha256, "cooperative-handoff-v1")
     }
 }
 
@@ -236,6 +248,18 @@ impl WacogoProcess {
         self.inner.call(op, args, host)
     }
 
+    pub(crate) fn call_raw<F>(
+        &mut self,
+        op: &str,
+        args: Value,
+        host: F,
+    ) -> Result<RawCommandReply, AdapterError>
+    where
+        F: FnMut(HostCall) -> Result<Value, WireError>,
+    {
+        self.inner.call_raw(op, args, host)
+    }
+
     pub(crate) fn terminate_after_adapter_failure(&mut self) {
         self.inner.terminate_after_adapter_failure();
     }
@@ -250,6 +274,28 @@ impl WacogoProcess {
 
 impl RpcProcess {
     fn call<F>(&mut self, op: &str, args: Value, host: F) -> Result<CommandReply, AdapterError>
+    where
+        F: FnMut(HostCall) -> Result<Value, WireError>,
+    {
+        if self.poisoned {
+            return Err(AdapterError::GuestTrap(POISONED_PROCESS_ERROR.into()));
+        }
+        if self.closed {
+            return Err(AdapterError::GuestTrap(CLOSED_PROCESS_ERROR.into()));
+        }
+        let result = self.call_raw(op, args, host).and_then(|reply| map_terminal(reply, op));
+        if result.is_err() {
+            self.terminate_after_adapter_failure();
+        }
+        result
+    }
+
+    fn call_raw<F>(
+        &mut self,
+        op: &str,
+        args: Value,
+        host: F,
+    ) -> Result<RawCommandReply, AdapterError>
     where
         F: FnMut(HostCall) -> Result<Value, WireError>,
     {
@@ -276,7 +322,10 @@ impl RpcProcess {
         if self.closed {
             return Err(AdapterError::GuestTrap(CLOSED_PROCESS_ERROR.into()));
         }
-        let reply = match self.call_inner("shutdown", json!({}), host, true) {
+        let reply = match self
+            .call_inner("shutdown", json!({}), host, true)
+            .and_then(|reply| map_terminal(reply, "shutdown"))
+        {
             Ok(reply) => reply,
             Err(error) => {
                 self.terminate_after_adapter_failure();
@@ -303,7 +352,7 @@ impl RpcProcess {
         args: Value,
         mut host: F,
         expect_exit: bool,
-    ) -> Result<CommandReply, AdapterError>
+    ) -> Result<RawCommandReply, AdapterError>
     where
         F: FnMut(HostCall) -> Result<Value, WireError>,
     {
@@ -373,10 +422,10 @@ impl RpcProcess {
                     }
                     let reply = match (ok, result, error) {
                         (true, FieldPresence::Present(result), FieldPresence::Missing) => {
-                            CommandReply { result: Ok(result), live_resources }
+                            RawCommandReply { result: Ok(result), live_resources }
                         }
                         (false, FieldPresence::Missing, FieldPresence::Present(error)) => {
-                            CommandReply { result: Err(terminal_error(error, op)?), live_resources }
+                            RawCommandReply { result: Err(error), live_resources }
                         }
                         (true, _, _) => Err(AdapterError::GuestTrap(
                             "successful wacogo response must contain result and omit error".into(),
@@ -535,6 +584,14 @@ impl Drop for RpcProcess {
     fn drop(&mut self) {
         self.terminate_after_adapter_failure();
     }
+}
+
+fn map_terminal(reply: RawCommandReply, operation: &str) -> Result<CommandReply, AdapterError> {
+    let result = match reply.result {
+        Ok(value) => Ok(value),
+        Err(error) => Err(terminal_error(error, operation)?),
+    };
+    Ok(CommandReply { result, live_resources: reply.live_resources })
 }
 
 fn unit_result(value: Value, operation: &str) -> Result<(), AdapterError> {
@@ -1034,6 +1091,7 @@ IFS= read -r never
         serde_json::json!({
             "type": "prepared",
             "protocol": PROTOCOL_VERSION,
+            "profile": "cooperative-handoff-v1",
             "componentSha256": COMPONENT_SHA,
             "guestInstantiated": false,
             "liveResources": 0,

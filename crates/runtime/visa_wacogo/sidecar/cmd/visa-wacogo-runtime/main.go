@@ -23,11 +23,11 @@ func run() int {
 	if err != nil {
 		return startupFailure(channel, "runtime-identity", err)
 	}
-	component, digest, err := channel.ReadCarrier()
+	component, digest, profile, err := channel.ReadCarrier()
 	if err != nil {
 		return startupFailure(channel, "invalid-carrier", err)
 	}
-	cell, wireError := runtimecell.Prepare(context.Background(), channel, component)
+	cell, wireError := runtimecell.Prepare(context.Background(), channel, profile, component)
 	if wireError != nil {
 		if err := channel.WriteStartupError(wireError, 0); err != nil {
 			fmt.Fprintf(os.Stderr, "write startup preflight failure: %v\n", err)
@@ -39,7 +39,7 @@ func run() int {
 			fmt.Fprintf(os.Stderr, "sidecar cleanup: %v\n", err)
 		}
 	}()
-	if err := channel.WritePrepared(digest, identity); err != nil {
+	if err := channel.WritePrepared(digest, cell.Profile(), identity); err != nil {
 		fmt.Fprintf(os.Stderr, "write prepared handshake: %v\n", err)
 		return 1
 	}

@@ -14,10 +14,13 @@ use serde::Serialize;
 
 use crate::{
     stage1::{Stage1EvidenceBundle, gate_stage1_evidence_bundle_json_with_artifacts},
-    stage1_mutations::{DefectCase, DefectClass, INTEGRITY_FAMILY_CODES, defect_corpus, temp_dir},
+    stage1_mutations::{
+        DefectCase, DefectClass, INTEGRITY_FAMILY_CODES, MutationDisposition, defect_corpus,
+        temp_dir,
+    },
 };
 
-pub const DEFECT_CORPUS_REPORT_SCHEMA: &str = "visa-stage1-defect-corpus-report-v1";
+pub const DEFECT_CORPUS_REPORT_SCHEMA: &str = "visa-stage1-defect-corpus-report-v2";
 
 /// The verifier's judgement on one injected defect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -25,8 +28,10 @@ pub const DEFECT_CORPUS_REPORT_SCHEMA: &str = "visa-stage1-defect-corpus-report-
 pub enum Verdict {
     /// The gate rejected the bundle with every predicted finding code.
     Detected,
-    /// The gate accepted the bundle, as predicted.
-    Undetected,
+    /// The gate accepted a mutation whose replay is semantically equivalent.
+    Equivalent,
+    /// The gate outcome matched the separately declared specification boundary.
+    BoundaryRecorded,
     /// The gate disagreed with the prediction.
     Mismatch,
     /// The mutation was not resealed completely, so the entry measures nothing.
@@ -53,8 +58,7 @@ pub struct DefectEntryReport {
     pub mutation: String,
     /// Whether the injected tree still carries a complete integrity seal.
     pub resealed: bool,
-    /// Boundary entries are reported but excluded from the rate denominators.
-    pub boundary: bool,
+    pub disposition: MutationDisposition,
     pub expected: ExpectedOutcome,
     pub actual: ActualOutcome,
     pub verdict: Verdict,
@@ -64,21 +68,44 @@ pub struct DefectEntryReport {
 pub struct DetectionRate {
     pub n: usize,
     pub detected: usize,
-    pub rate: f64,
+    pub rate: Option<f64>,
 }
 
 impl DetectionRate {
     fn new(n: usize, detected: usize) -> Self {
         #[expect(clippy::cast_precision_loss, reason = "corpus sizes are far below 2^53")]
-        let rate = if n == 0 { 0.0 } else { detected as f64 / n as f64 };
+        let rate = (n != 0).then_some(detected as f64 / n as f64);
         Self { n, detected, rate }
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct EquivalenceRate {
+    pub n: usize,
+    pub equivalent: usize,
+    pub rate: Option<f64>,
+}
+
+impl EquivalenceRate {
+    fn new(n: usize, equivalent: usize) -> Self {
+        #[expect(clippy::cast_precision_loss, reason = "corpus sizes are far below 2^53")]
+        let rate = (n != 0).then_some(equivalent as f64 / n as f64);
+        Self { n, equivalent, rate }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct BoundaryCount {
+    pub n: usize,
+    pub recorded: usize,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DefectCorpusSummary {
-    pub per_class: Vec<(DefectClass, DetectionRate)>,
-    pub overall: DetectionRate,
+    pub per_class_semantic_defects: Vec<(DefectClass, DetectionRate)>,
+    pub semantic_defects: DetectionRate,
+    pub benign_equivalents: EquivalenceRate,
+    pub boundary_cases: BoundaryCount,
     pub mismatches: usize,
     pub integrity_family_hits: usize,
 }
@@ -94,9 +121,13 @@ pub struct DefectCorpusReport {
 
 impl DefectCorpusReport {
     /// The corpus is usable as a measurement only when every entry resealed and
-    /// every prediction held.
+    /// every prediction held in its declared semantic category.
     pub fn is_calibrated(&self) -> bool {
-        self.summary.mismatches == 0 && self.summary.integrity_family_hits == 0
+        self.summary.mismatches == 0
+            && self.summary.integrity_family_hits == 0
+            && self.summary.semantic_defects.detected == self.summary.semantic_defects.n
+            && self.summary.benign_equivalents.equivalent == self.summary.benign_equivalents.n
+            && self.summary.boundary_cases.recorded == self.summary.boundary_cases.n
     }
 }
 
@@ -157,7 +188,7 @@ fn run_defect_case(
         case_id: case.case_id.to_owned(),
         mutation: case.mutation.to_owned(),
         resealed,
-        boundary: case.boundary,
+        disposition: case.disposition,
         expected: ExpectedOutcome { ok: case.expectation.ok, codes: expected_codes },
         actual: ActualOutcome { ok: gate.ok, finding_codes },
         verdict,
@@ -165,35 +196,62 @@ fn run_defect_case(
 }
 
 fn verdict_for(case: &DefectCase, ok: bool, finding_codes: &[String]) -> Verdict {
-    if case.expectation.ok {
-        return if ok { Verdict::Undetected } else { Verdict::Mismatch };
+    match case.disposition {
+        MutationDisposition::SemanticDefect => {
+            let complete = !case.expectation.ok
+                && !ok
+                && case
+                    .expectation
+                    .codes
+                    .iter()
+                    .all(|code| finding_codes.iter().any(|found| found == code));
+            if complete { Verdict::Detected } else { Verdict::Mismatch }
+        }
+        MutationDisposition::BenignEquivalent => {
+            if case.expectation.ok && ok {
+                Verdict::Equivalent
+            } else {
+                Verdict::Mismatch
+            }
+        }
+        MutationDisposition::BoundaryCase => {
+            if case.expectation.ok && ok {
+                Verdict::BoundaryRecorded
+            } else {
+                Verdict::Mismatch
+            }
+        }
     }
-    let complete = !ok
-        && case
-            .expectation
-            .codes
-            .iter()
-            .all(|code| finding_codes.iter().any(|found| found == code));
-    if complete { Verdict::Detected } else { Verdict::Mismatch }
 }
 
 fn summarize(entries: &[DefectEntryReport]) -> DefectCorpusSummary {
-    let scored = entries.iter().filter(|entry| !entry.boundary && entry.verdict != Verdict::Void);
-    let per_class = DefectClass::ALL
+    let semantic =
+        entries.iter().filter(|entry| entry.disposition == MutationDisposition::SemanticDefect);
+    let per_class_semantic_defects = DefectClass::ALL
         .iter()
         .map(|class| {
             let class_entries =
-                scored.clone().filter(|entry| entry.class == *class).collect::<Vec<_>>();
+                semantic.clone().filter(|entry| entry.class == *class).collect::<Vec<_>>();
             let detected =
                 class_entries.iter().filter(|entry| entry.verdict == Verdict::Detected).count();
             (*class, DetectionRate::new(class_entries.len(), detected))
         })
         .collect::<Vec<_>>();
-    let total = scored.clone().count();
-    let detected = scored.filter(|entry| entry.verdict == Verdict::Detected).count();
+    let semantic_n = semantic.clone().count();
+    let detected = semantic.filter(|entry| entry.verdict == Verdict::Detected).count();
+    let benign =
+        entries.iter().filter(|entry| entry.disposition == MutationDisposition::BenignEquivalent);
+    let benign_n = benign.clone().count();
+    let equivalent = benign.filter(|entry| entry.verdict == Verdict::Equivalent).count();
+    let boundary =
+        entries.iter().filter(|entry| entry.disposition == MutationDisposition::BoundaryCase);
+    let boundary_n = boundary.clone().count();
+    let recorded = boundary.filter(|entry| entry.verdict == Verdict::BoundaryRecorded).count();
     DefectCorpusSummary {
-        per_class,
-        overall: DetectionRate::new(total, detected),
+        per_class_semantic_defects,
+        semantic_defects: DetectionRate::new(semantic_n, detected),
+        benign_equivalents: EquivalenceRate::new(benign_n, equivalent),
+        boundary_cases: BoundaryCount { n: boundary_n, recorded },
         mismatches: entries.iter().filter(|entry| entry.verdict == Verdict::Mismatch).count(),
         integrity_family_hits: entries.iter().filter(|entry| !entry.resealed).count(),
     }

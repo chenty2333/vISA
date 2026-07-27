@@ -578,10 +578,27 @@ where
                     .map(|()| Value::Null)
                     .map_err(timer_wire_error)
             }
+            HostCallOperation::FileRead(_)
+            | HostCallOperation::FileWrite(_)
+            | HostCallOperation::FileAppend(_)
+            | HostCallOperation::FileTruncate(_)
+            | HostCallOperation::FileRename(_)
+            | HostCallOperation::FileSync(_)
+            | HostCallOperation::FileAcquireLock(_)
+            | HostCallOperation::FileReleaseLock(_) => Err(protocol_error(
+                "profile-hostcall-mismatch",
+                "regular-file hostcall reached a cooperative-handoff host state",
+            )),
             HostCallOperation::ResourceDispose(args) => {
                 let removed = match args.kind {
                     ResourceKind::Kv => self.kv.remove(&call.resource).is_some(),
                     ResourceKind::Timer => self.timers.remove(&call.resource).is_some(),
+                    ResourceKind::File => {
+                        return Err(protocol_error(
+                            "profile-hostcall-mismatch",
+                            "file resource disposal reached a cooperative-handoff host state",
+                        ));
+                    }
                 };
                 if !removed {
                     return Err(protocol_error(
