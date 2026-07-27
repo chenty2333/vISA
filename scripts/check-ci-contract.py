@@ -54,6 +54,13 @@ IMAGE_SOURCE_LABEL = (
     "org.opencontainers.image.source="
     "${{ github.server_url }}/${{ github.repository }}"
 )
+BUILDX_VERSION = "v0.35.0"
+BUILDKIT_IMAGE = (
+    "moby/buildkit:v0.31.2@"
+    "sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
+)
+BUILDKIT_PRELOAD_STEP = "Preload pinned BuildKit image"
+BUILDKIT_PRELOAD_COMMAND = "scripts/prepare-buildx.sh"
 LOCKED_CARGO_WRAPPERS = (
     "scripts/run-logical-request-admission-cell.sh",
     "scripts/run-logical-request-lost-ack-cell.sh",
@@ -618,6 +625,45 @@ def check_exact_sha_images(jobs: dict[str, Any]) -> None:
             and '"$VISA_DEV_IMAGE"' in command
             and 'test "$actual_revision" = "$GITHUB_SHA"' in command,
             f"{job_name}: exact-SHA image inspection must verify the OCI revision label",
+        )
+
+
+def check_buildx_bootstrap(jobs: dict[str, Any]) -> None:
+    source = (ROOT / BUILDKIT_PRELOAD_COMMAND).read_text(encoding="utf-8")
+    require(
+        f"readonly BUILDX_VERSION='{BUILDX_VERSION}'" in source
+        and f"readonly BUILDKIT_IMAGE='{BUILDKIT_IMAGE}'" in source
+        and "readonly MAX_PULL_ATTEMPTS=5" in source
+        and "readonly PULL_TIMEOUT_SECONDS=300" in source
+        and "readonly PULL_KILL_AFTER_SECONDS=15" in source,
+        "Buildx preparation script identity or retry bound drifted",
+    )
+
+    for job_name in VISA_DOCKER_GATE_JOBS:
+        job = jobs[job_name]
+        steps = job.get("steps", [])
+        require(isinstance(steps, list), f"{job_name}: steps must be a sequence")
+        preload = step_with_name(job, BUILDKIT_PRELOAD_STEP)
+        require(
+            preload.get("run") == BUILDKIT_PRELOAD_COMMAND,
+            f"{job_name}: pinned BuildKit preload command drifted",
+        )
+        setups = steps_using(job, "docker/setup-buildx-action@")
+        require(len(setups) == 1, f"{job_name}: expected exactly one Buildx setup")
+        settings = setups[0].get("with", {})
+        require(
+            settings
+            == {
+                "version": BUILDX_VERSION,
+                "driver-opts": f"image={BUILDKIT_IMAGE}",
+            },
+            f"{job_name}: Buildx or BuildKit identity drifted",
+        )
+
+        names = [step.get("name") for step in steps if isinstance(step, dict)]
+        require(
+            names.index(BUILDKIT_PRELOAD_STEP) < names.index("Set up Docker Buildx"),
+            f"{job_name}: pinned BuildKit must be preloaded before Buildx setup",
         )
 
 
@@ -1246,6 +1292,7 @@ def check_workflow() -> None:
 
     check_action_pins(jobs)
     check_checkouts(jobs)
+    check_buildx_bootstrap(jobs)
     check_exact_sha_images(jobs)
     check_cache_paths(jobs)
     check_dependency_caches(jobs)

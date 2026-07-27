@@ -33,6 +33,36 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
     def test_repository_bindings_are_valid(self) -> None:
         CONTRACT.check_claim_workflow_bindings(copy.deepcopy(self.jobs))
 
+    def test_buildx_bootstrap_is_pinned_and_ordered(self) -> None:
+        CONTRACT.check_buildx_bootstrap(copy.deepcopy(self.jobs))
+
+    def test_missing_buildkit_preload_is_rejected(self) -> None:
+        jobs = copy.deepcopy(self.jobs)
+        steps = jobs["docker-quality-gate"]["steps"]
+        steps[:] = [
+            step
+            for step in steps
+            if step.get("name") != CONTRACT.BUILDKIT_PRELOAD_STEP
+        ]
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"expected exactly one workflow step named Preload pinned BuildKit image",
+        ):
+            CONTRACT.check_buildx_bootstrap(jobs)
+
+    def test_mutable_buildkit_or_buildx_identity_is_rejected(self) -> None:
+        jobs = copy.deepcopy(self.jobs)
+        setup = CONTRACT.steps_using(
+            jobs["docker-quality-gate"], "docker/setup-buildx-action@"
+        )[0]
+        setup["with"]["version"] = "latest"
+        setup["with"]["driver-opts"] = "image=moby/buildkit:buildx-stable-1"
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"Buildx or BuildKit identity drifted",
+        ):
+            CONTRACT.check_buildx_bootstrap(jobs)
+
     def test_swapped_claim_identities_are_rejected(self) -> None:
         bindings = {
             binding["id"]: binding

@@ -190,6 +190,8 @@ gate_file_size() {
 }
 
 gate_ci_contract() {
+    run_gate "CI: pinned Buildx acquisition retry contract" \
+        scripts/test-prepare-buildx.sh
     run_gate "CI: canonical Component build environment" \
         scripts/test-canonical-component-build-env.sh
     run_gate "CI: build, cache, evidence, and closure contract" \

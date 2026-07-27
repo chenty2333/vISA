@@ -900,7 +900,9 @@ A host-only claim-closure lane uses only `contents: read`, `actions: read`, and
 A final `Exact-SHA qualification closure` job fails unless all twelve
 prerequisite job executions succeed for the same source SHA, making thirteen jobs
 including closure. The reference-only lane does not qualify Nexus, and neither
-joint lane substitutes for the other. Every Docker image is built from that
+joint lane substitutes for the other. Each Docker lane first makes five bounded
+attempts to preload BuildKit v0.31.2 by its exact OCI index digest, then runs the
+digest-bound driver through Buildx v0.35.0. Every Docker image is built from that
 checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
 `.ci-artifacts/` on gate success or failure. Pull-request artifacts are retained
 for 3 days and push artifacts for 14 days.
