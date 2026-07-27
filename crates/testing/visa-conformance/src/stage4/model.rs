@@ -31,9 +31,11 @@ const _: () = assert!(STAGE4_WORKER_PROTOCOL_VERSION == crate::STAGE1_WORKER_PRO
 // handoff Component with the release profile. This is intentionally a
 // different byte artifact from Strict Stage 2's dev-profile Component even
 // though both implement the same locked WIT world and Stage 1 workload.
-// Update only after an explicit Stage 4 Component/toolchain review.
+// Update only after an explicit Stage 4 Component/toolchain review. This
+// identity was resealed from independent canonical release builds and the
+// byte-identical Component retained by all seven Stage 4 cells.
 pub const STAGE4_ACCEPTED_COMPONENT_SHA256: &str =
-    "64ac7689f90a09f2b0a6756cf9087e952e775f81470c57b1c12a988ecee967af";
+    "a0a4469529aa8c3e2ca1bcdcadad122779a0e67cd662416f45c17623a9fb55a4";
 // Updated only by an explicit endpoint/cell/claim/case registry review.
 pub const STAGE4_ACCEPTED_REGISTRY_SHA256: &str =
     "add0099df5d8b8f89c847496ab151347e1b6051810f2beb722f8b0ddc3e23cdf";

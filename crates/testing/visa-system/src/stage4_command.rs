@@ -12,20 +12,20 @@ use std::{
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use visa_conformance::{
-    STAGE4_BUILD_RECEIPT_SCHEMA_VERSION, STAGE4_CELL_CATALOG, STAGE4_HOST_RECEIPT_SCHEMA_VERSION,
-    STAGE4_HOST_UNAME_STDERR_FILE, STAGE4_HOST_UNAME_STDOUT_FILE,
-    STAGE4_LAUNCHER_RECEIPT_SCHEMA_VERSION, STAGE4_SYSROOT_MANIFEST_SCHEMA_VERSION,
-    STAGE4_SYSROOT_RECEIPT_SCHEMA_VERSION, STAGE4_TARGET_HELLO_SCHEMA_VERSION,
-    STAGE4_WORKER_PROTOCOL_VERSION, Stage4ArtifactReference, Stage4BuildReceipt, Stage4CellId,
-    Stage4EndpointEvidence, Stage4EndpointId, Stage4ExecutionBoundary, Stage4HostIdentity,
-    Stage4HostReceipt, Stage4LauncherReceipt, Stage4PublicationCell,
-    Stage4PublicationCellDisposition, Stage4PublicationInput, Stage4QemuReceipt, Stage4Role,
-    Stage4SysrootManifest, Stage4SysrootManifestEntry, Stage4SysrootReceipt, Stage4TargetHello,
-    Stage4TargetHelloObservation, Stage4TargetIdentity, begin_stage4_evidence_publication,
-    write_stage4_evidence_artifacts,
+    STAGE4_ACCEPTED_COMPONENT_SHA256, STAGE4_BUILD_RECEIPT_SCHEMA_VERSION, STAGE4_CELL_CATALOG,
+    STAGE4_HOST_RECEIPT_SCHEMA_VERSION, STAGE4_HOST_UNAME_STDERR_FILE,
+    STAGE4_HOST_UNAME_STDOUT_FILE, STAGE4_LAUNCHER_RECEIPT_SCHEMA_VERSION,
+    STAGE4_SYSROOT_MANIFEST_SCHEMA_VERSION, STAGE4_SYSROOT_RECEIPT_SCHEMA_VERSION,
+    STAGE4_TARGET_HELLO_SCHEMA_VERSION, STAGE4_WORKER_PROTOCOL_VERSION, Stage4ArtifactReference,
+    Stage4BuildReceipt, Stage4CellId, Stage4EndpointEvidence, Stage4EndpointId,
+    Stage4ExecutionBoundary, Stage4HostIdentity, Stage4HostReceipt, Stage4LauncherReceipt,
+    Stage4PublicationCell, Stage4PublicationCellDisposition, Stage4PublicationInput,
+    Stage4QemuReceipt, Stage4Role, Stage4SysrootManifest, Stage4SysrootManifestEntry,
+    Stage4SysrootReceipt, Stage4TargetHello, Stage4TargetHelloObservation, Stage4TargetIdentity,
+    begin_stage4_evidence_publication, write_stage4_evidence_artifacts,
 };
 use visa_system::{
-    build_info,
+    build_info, component,
     runner::{RoleLaunchers, TargetHelloObservation, WorkerLauncher},
     target::{TargetEndianness, TargetHelloV1, observe_target},
 };
@@ -133,6 +133,7 @@ pub(super) fn run_stage4_command(requested_root: &Path) -> CommandResult<ExitCod
 
 fn execute_stage4(root: &Path) -> CommandResult<()> {
     reject_ambient_execution_environment()?;
+    validate_embedded_component_identity()?;
     let inputs = Stage4Inputs::from_environment()?;
     let current_exe = current_executable()?;
     let current_identity = regular_file_identity(&current_exe, "current visa-system executable")?;
@@ -239,6 +240,24 @@ fn execute_stage4(root: &Path) -> CommandResult<()> {
     println!("Stage 4 matrix manifest: {}", result.matrix_path);
     println!("Stage 4 artifact root: {}", root.display());
     println!("Stage 4 cases: 217/217 (31 cases x 7 cells)");
+    Ok(())
+}
+
+fn validate_embedded_component_identity() -> CommandResult<()> {
+    let observed = format!("{:x}", Sha256::digest(component::bytes()));
+    require_accepted_component_identity(&observed)
+}
+
+fn require_accepted_component_identity(observed: &str) -> CommandResult<()> {
+    if observed != STAGE4_ACCEPTED_COMPONENT_SHA256 {
+        return command_error(
+            1,
+            format!(
+                "Stage 4 embedded Component identity mismatch: expected {}, observed {observed}",
+                STAGE4_ACCEPTED_COMPONENT_SHA256
+            ),
+        );
+    }
     Ok(())
 }
 
@@ -1396,6 +1415,16 @@ fn command_error<T>(code: u8, detail: impl Into<String>) -> CommandResult<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_preflight_reports_the_exact_expected_and_observed_identities() {
+        require_accepted_component_identity(STAGE4_ACCEPTED_COMPONENT_SHA256).unwrap();
+
+        let observed = "0".repeat(64);
+        let (_, detail) = require_accepted_component_identity(&observed).unwrap_err();
+        assert!(detail.contains(STAGE4_ACCEPTED_COMPONENT_SHA256));
+        assert!(detail.contains(&observed));
+    }
 
     #[test]
     fn uname_parser_requires_one_canonical_identity_line() {

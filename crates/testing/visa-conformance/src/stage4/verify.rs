@@ -904,19 +904,49 @@ fn validate_common_shape(
     common: &Stage4CommonInputIdentity,
     findings: &mut Vec<Stage4ValidationFinding>,
 ) {
-    if common.schema_version != STAGE4_COMMON_INPUT_SCHEMA_VERSION
-        || common.stage1_schema_version != STAGE1_EVIDENCE_SCHEMA_VERSION
-        || common.capability_id != STAGE1_CAPABILITY_ID
-        || common.evidence_kind != crate::Stage1EvidenceKind::Execution
-        || common.component_sha256 != STAGE4_ACCEPTED_COMPONENT_SHA256
-        || common.wit_world_name != STAGE2_WIT_WORLD_NAME
-        || common.wit_world_sha256 != STAGE2_WIT_WORLD_SHA256
-    {
-        finding(
-            findings,
-            "invalid-stage4-common-input-identity",
-            "common input has a wrong schema, capability, Component, WIT world, or evidence kind",
-        );
+    let mut identity_mismatches = Vec::new();
+    if common.schema_version != STAGE4_COMMON_INPUT_SCHEMA_VERSION {
+        identity_mismatches.push(format!(
+            "schema_version expected {STAGE4_COMMON_INPUT_SCHEMA_VERSION}, observed {}",
+            common.schema_version
+        ));
+    }
+    if common.stage1_schema_version != STAGE1_EVIDENCE_SCHEMA_VERSION {
+        identity_mismatches.push(format!(
+            "stage1_schema_version expected {STAGE1_EVIDENCE_SCHEMA_VERSION}, observed {}",
+            common.stage1_schema_version
+        ));
+    }
+    if common.capability_id != STAGE1_CAPABILITY_ID {
+        identity_mismatches.push(format!(
+            "capability_id expected {STAGE1_CAPABILITY_ID}, observed {}",
+            common.capability_id
+        ));
+    }
+    if common.evidence_kind != crate::Stage1EvidenceKind::Execution {
+        identity_mismatches
+            .push(format!("evidence_kind expected execution, observed {:?}", common.evidence_kind));
+    }
+    if common.component_sha256 != STAGE4_ACCEPTED_COMPONENT_SHA256 {
+        identity_mismatches.push(format!(
+            "component_sha256 expected {STAGE4_ACCEPTED_COMPONENT_SHA256}, observed {}",
+            common.component_sha256
+        ));
+    }
+    if common.wit_world_name != STAGE2_WIT_WORLD_NAME {
+        identity_mismatches.push(format!(
+            "wit_world_name expected {STAGE2_WIT_WORLD_NAME}, observed {}",
+            common.wit_world_name
+        ));
+    }
+    if common.wit_world_sha256 != STAGE2_WIT_WORLD_SHA256 {
+        identity_mismatches.push(format!(
+            "wit_world_sha256 expected {STAGE2_WIT_WORLD_SHA256}, observed {}",
+            common.wit_world_sha256
+        ));
+    }
+    if !identity_mismatches.is_empty() {
+        finding(findings, "invalid-stage4-common-input-identity", identity_mismatches.join("; "));
     }
     if common.source_runtime.name != STAGE2_WASMTIME_ENVIRONMENT_NAME
         || common.source_runtime.version != STAGE2_WASMTIME_ENVIRONMENT_VERSION
