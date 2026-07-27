@@ -97,6 +97,7 @@ jobs:
         with:
           version: v0.35.0
           driver-opts: image=moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config: .github/buildkitd.toml
 
       - name: Build exact-SHA Docker development image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -218,6 +219,7 @@ jobs:
         with:
           version: v0.35.0
           driver-opts: image=moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config: .github/buildkitd.toml
 
       - name: Load exact-SHA Docker development image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -319,6 +321,7 @@ jobs:
         with:
           version: v0.35.0
           driver-opts: image=moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config: .github/buildkitd.toml
 
       - name: Load exact-SHA Stage 4 Docker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -421,6 +424,7 @@ jobs:
         with:
           version: v0.35.0
           driver-opts: image=moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config: .github/buildkitd.toml
 
       - name: Load exact-SHA Docker development image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0

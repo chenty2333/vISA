@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-23.
+Last reviewed: 2026-07-27.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -16,6 +16,8 @@ The supported development environment and current CI parity boundary is the
 
 - the `nightly-2026-06-07` Rust toolchain declared by both `Dockerfile` and
   `rust-toolchain.toml`;
+- the Debian stable-slim base OCI index bound to
+  `sha256:328d16499860ae6cb9b345e2e4cebca08c2a36e4f7278482c7bd1f39d71e5bfd`;
 - `rust-src`, `rustfmt`, `clippy`, and `llvm-tools-preview`;
 - the `wasm32-unknown-unknown`, `x86_64-unknown-none`, and
   `aarch64-unknown-linux-gnu` targets;
@@ -33,10 +35,11 @@ The supported development environment and current CI parity boundary is the
 The Node x64 and arm64 archive digests are copied from the official
 [`v24.15.0` checksum list](https://nodejs.org/dist/v24.15.0/SHASUMS256.txt).
 The Rust toolchain is date-pinned because later nightly compiler changes can
-break the bootloader dependency independently of vISA source. The
-`debian:stable-slim` base image is not digest-pinned, so this environment still
-provides local/CI parity rather than a bit-reproducible release toolchain.
-Release claims require all inputs pinned.
+break the bootloader dependency independently of vISA source. The Debian base
+filesystem is digest-pinned, while Debian package installation still resolves
+against the live stable repositories rather than a dated snapshot. This
+environment therefore provides local/CI parity and a fixed base identity, not
+a bit-reproducible release toolchain.
 
 Host-native Cargo commands are useful for short edit cycles, but the host is
 not the CI parity boundary. A host workflow must independently provide the
@@ -902,8 +905,10 @@ prerequisite job executions succeed for the same source SHA, making thirteen job
 including closure. The reference-only lane does not qualify Nexus, and neither
 joint lane substitutes for the other. Each Docker lane first makes five bounded
 attempts to preload BuildKit v0.31.2 by its exact OCI index digest, then runs the
-digest-bound driver through Buildx v0.35.0. Every Docker image is built from that
-checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
+digest-bound driver through Buildx v0.35.0. The driver resolves Docker Hub
+content through the configured `mirror.gcr.io` mirror, including the
+digest-pinned Debian base. Every Docker image is built from that checkout and
+tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
 `.ci-artifacts/` on gate success or failure. Pull-request artifacts are retained
 for 3 days and push artifacts for 14 days.
 

@@ -36,6 +36,28 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
     def test_buildx_bootstrap_is_pinned_and_ordered(self) -> None:
         CONTRACT.check_buildx_bootstrap(copy.deepcopy(self.jobs))
 
+    def test_docker_base_image_is_digest_pinned(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        CONTRACT.check_docker_base_identity(dockerfile)
+
+    def test_mutable_docker_base_image_is_rejected(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        mutable = dockerfile.replace(CONTRACT.DOCKER_BASE_IMAGE, "debian:stable-slim")
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"exact digest-pinned Debian identity",
+        ):
+            CONTRACT.check_docker_base_identity(mutable)
+
+    def test_docker_hub_mirror_drift_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"Docker Hub mirror configuration drifted",
+        ):
+            CONTRACT.check_buildkit_config(
+                {"registry": {"docker.io": {"mirrors": ["docker.io"]}}}
+            )
+
     def test_missing_buildkit_preload_is_rejected(self) -> None:
         jobs = copy.deepcopy(self.jobs)
         steps = jobs["docker-quality-gate"]["steps"]
@@ -59,7 +81,19 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
         setup["with"]["driver-opts"] = "image=moby/buildkit:buildx-stable-1"
         with self.assertRaisesRegex(
             CONTRACT.ContractError,
-            r"Buildx or BuildKit identity drifted",
+            r"Buildx, BuildKit, or registry mirror identity drifted",
+        ):
+            CONTRACT.check_buildx_bootstrap(jobs)
+
+    def test_missing_buildkit_mirror_binding_is_rejected(self) -> None:
+        jobs = copy.deepcopy(self.jobs)
+        setup = CONTRACT.steps_using(
+            jobs["docker-quality-gate"], "docker/setup-buildx-action@"
+        )[0]
+        del setup["with"]["buildkitd-config"]
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"Buildx, BuildKit, or registry mirror identity drifted",
         ):
             CONTRACT.check_buildx_bootstrap(jobs)
 

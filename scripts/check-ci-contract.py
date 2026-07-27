@@ -61,6 +61,12 @@ BUILDKIT_IMAGE = (
 )
 BUILDKIT_PRELOAD_STEP = "Preload pinned BuildKit image"
 BUILDKIT_PRELOAD_COMMAND = "scripts/prepare-buildx.sh"
+BUILDKIT_CONFIG_PATH = ".github/buildkitd.toml"
+BUILDKIT_DOCKER_MIRROR = "mirror.gcr.io"
+DOCKER_BASE_IMAGE = (
+    "debian:stable-slim@"
+    "sha256:328d16499860ae6cb9b345e2e4cebca08c2a36e4f7278482c7bd1f39d71e5bfd"
+)
 LOCKED_CARGO_WRAPPERS = (
     "scripts/run-logical-request-admission-cell.sh",
     "scripts/run-logical-request-lost-ack-cell.sh",
@@ -268,8 +274,17 @@ def check_compose() -> None:
     )
 
 
+def check_docker_base_identity(dockerfile: str) -> None:
+    matches = re.findall(r"^FROM ([^\s]+)$", dockerfile, flags=re.MULTILINE)
+    require(
+        matches == [DOCKER_BASE_IMAGE],
+        "Dockerfile base image must be the exact digest-pinned Debian identity",
+    )
+
+
 def check_toolchain_alignment() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    check_docker_base_identity(dockerfile)
     matches = re.findall(r"^ARG RUST_TOOLCHAIN=([^\s]+)$", dockerfile, flags=re.MULTILINE)
     require(len(matches) == 1, "Dockerfile must declare exactly one RUST_TOOLCHAIN default")
 
@@ -628,6 +643,18 @@ def check_exact_sha_images(jobs: dict[str, Any]) -> None:
         )
 
 
+def check_buildkit_config(config: dict[str, Any]) -> None:
+    require(
+        config
+        == {
+            "registry": {
+                "docker.io": {"mirrors": [BUILDKIT_DOCKER_MIRROR]},
+            }
+        },
+        "BuildKit Docker Hub mirror configuration drifted",
+    )
+
+
 def check_buildx_bootstrap(jobs: dict[str, Any]) -> None:
     source = (ROOT / BUILDKIT_PRELOAD_COMMAND).read_text(encoding="utf-8")
     require(
@@ -638,6 +665,12 @@ def check_buildx_bootstrap(jobs: dict[str, Any]) -> None:
         and "readonly PULL_KILL_AFTER_SECONDS=15" in source,
         "Buildx preparation script identity or retry bound drifted",
     )
+    try:
+        with (ROOT / BUILDKIT_CONFIG_PATH).open("rb") as file:
+            buildkit_config = tomllib.load(file)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ContractError(f"cannot parse {BUILDKIT_CONFIG_PATH}: {error}") from error
+    check_buildkit_config(buildkit_config)
 
     for job_name in VISA_DOCKER_GATE_JOBS:
         job = jobs[job_name]
@@ -656,8 +689,9 @@ def check_buildx_bootstrap(jobs: dict[str, Any]) -> None:
             == {
                 "version": BUILDX_VERSION,
                 "driver-opts": f"image={BUILDKIT_IMAGE}",
+                "buildkitd-config": BUILDKIT_CONFIG_PATH,
             },
-            f"{job_name}: Buildx or BuildKit identity drifted",
+            f"{job_name}: Buildx, BuildKit, or registry mirror identity drifted",
         )
 
         names = [step.get("name") for step in steps if isinstance(step, dict)]
