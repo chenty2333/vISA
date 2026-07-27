@@ -458,7 +458,7 @@
       "handoff_topology": "runner-with-dual-sidecars",
       "fault_model": "stage3a-regular-file-twelve-case",
       "verifier": "stage3a-cross-runtime-normalized",
-      "disposition": "candidate",
+      "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
       ],
@@ -486,7 +486,7 @@
       "handoff_topology": "runner-with-source-sidecar",
       "fault_model": "stage3a-regular-file-twelve-case",
       "verifier": "stage3a-cross-runtime-normalized",
-      "disposition": "candidate",
+      "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
       ],
@@ -514,7 +514,7 @@
       "handoff_topology": "runner-with-destination-sidecar",
       "fault_model": "stage3a-regular-file-twelve-case",
       "verifier": "stage3a-cross-runtime-normalized",
-      "disposition": "candidate",
+      "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
       ],
@@ -542,7 +542,7 @@
       "handoff_topology": "in-process-distinct-stores",
       "fault_model": "stage3a-regular-file-twelve-case",
       "verifier": "stage3a-cross-runtime-normalized",
-      "disposition": "candidate",
+      "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
       ],

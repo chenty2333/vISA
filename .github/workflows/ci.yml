@@ -169,7 +169,7 @@ jobs:
           - lane: stage3a-cross-runtime
             label: Stage 3A cross-runtime regular-file
             binding: stage3a-cross-runtime
-            claims: "bounded-regular-file-continuity:regresses,cross-runtime-regular-file-continuity-v1:required"
+            claims: "bounded-regular-file-continuity:regresses,cross-runtime-regular-file-continuity-v1:regresses"
             tier: system-stage3a-cross-runtime
             artifact: stage3a-cross-runtime-regular-file-system-evidence
           - lane: stage3b

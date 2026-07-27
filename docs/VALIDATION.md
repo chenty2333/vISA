@@ -1151,6 +1151,17 @@ their common input and independently recomputed normalized outputs, the full
 revision passes repository, predecessor-claim, detector, stability, relocation,
 and permanent-archive verification.
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:validation:end -->
+
+Closure receipt (2026-07-27): exact accepted revision
+`3bd9eaad5aab3e792ca793e26bd064f403f626db` passed all 13 jobs in workflow run
+[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012),
+attempt 1. The four registered regular-file runtime directions are therefore
+`qualified`, and subsequent CI binds this claim as `regresses`. The permanent
+[receipt](../claims/receipts/cross-runtime-regular-file-continuity-v1.json)
+binds immutable GitHub release
+`cross-runtime-regular-file-continuity-v1-evidence`, Zenodo DOI
+[`10.5281/zenodo.21627497`](https://doi.org/10.5281/zenodo.21627497), and archive
+SHA-256 `f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`.
 | `bounded-logical-request-continuity` | The fixed 14-case Stage 3B registry through the named Wasmtime source/destination adapter, real bounded loopback protocol and durable operation ledger, credential reacquisition, reauthorization/fencing, artifact digests, and independent bundle validation | Preservation of raw live TCP/socket state, credential transfer, generic future/stream continuation, a second runtime, or cross-ISA behavior |
 | `named-target-substrate-continuity-v1` | The fixed Wasmtime timer/KV workload across Hx -> Hx, Hx -> Qx, Qx -> Hx, and Qx -> Qx; raw x86-64 Linux host receipt; owned worker/QEMU artifacts plus loader/sysroot receipts; four complete inner validations; and equality within the seven-cell aggregate | Real hardware, a new kernel/device substrate, another runtime/resource family, or cross-host behavior |
 | `emulated-cross-isa-continuity-v1` | The fixed workload across Qx -> Qx, Qx -> Qa, Qa -> Qx, and Qa -> Qa; separate x86-64/AArch64 worker ELFs, artifact-owned QEMU executables and identified sysroots, four complete inner validations, and equality within the seven-cell aggregate | AOT binary portability, real AArch64 hardware, a second runtime, Stage 3 resources, 32-bit/big-endian targets, or cross-host behavior |

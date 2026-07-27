@@ -120,11 +120,22 @@ define or widen them.
 | `bounded-regular-file-continuity` | `earned` |
 | `cooperative-stateful-component-handoff` | `earned` |
 | `cross-execution-path-portability` | `earned` |
-| `cross-runtime-regular-file-continuity-v1` | `candidate` |
+| `cross-runtime-regular-file-continuity-v1` | `earned` |
 | `emulated-cross-isa-continuity-v1` | `earned` |
 | `named-target-substrate-continuity-v1` | `earned` |
 | `strict-cross-runtime-continuity` | `earned` |
 <!-- claims-registry:end -->
+
+`cross-runtime-regular-file-continuity-v1` is earned against exact accepted
+revision `3bd9eaad5aab3e792ca793e26bd064f403f626db` and GitHub Actions run
+[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012),
+attempt 1, whose 13 qualification jobs all succeeded. Its immutable
+[GitHub evidence release](https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence)
+and [Zenodo record](https://doi.org/10.5281/zenodo.21627497) carry the same
+16,732,160-byte archive with SHA-256
+`f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`.
+The committed receipt preserves the narrower scope and non-claims of the
+immutable semantic contract.
 
 ## The problem
 

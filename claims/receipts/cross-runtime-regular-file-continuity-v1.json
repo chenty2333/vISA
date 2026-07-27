@@ -1,0 +1,50 @@
+{
+  "accepted_source": {
+    "repository": "chenty2333/vISA",
+    "revision": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+    "tree": "66e45d0f16858f2afb8423940850b53bcd27f524"
+  },
+  "archive": {
+    "asset_name": "cross-runtime-regular-file-continuity-v1-evidence.tar",
+    "asset_sha256": "f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3",
+    "asset_size_bytes": 16732160,
+    "manifest_path": "claims/archive-manifests/cross-runtime-regular-file-continuity-v1.json",
+    "manifest_sha256": "b062074ff2f17c11fb3f53c6e22b9fe73597108d67e37787dcc06e6d96892047",
+    "release_attestation": {
+      "kind": "github-immutable-release",
+      "verification": "gh-release-verify-and-verify-asset"
+    },
+    "release_tag": "cross-runtime-regular-file-continuity-v1-evidence",
+    "release_uri": "https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence",
+    "reverify_path": "REVERIFY.md",
+    "reverify_sha256": "51f752fc99d62e204f62f5a5439601b680fd3f79f025b0138bbff2773cbe4015",
+    "sha256sums_path": "SHA256SUMS",
+    "sha256sums_sha256": "9eddd04239e6c60fad95660aea55876e62fae1b1a0729b50daff58165e435932"
+  },
+  "claim_definition_sha256": "b1ae9a9ab1ad8719dd703681520069a6ef29312db705248a1db2b405d37b62c1",
+  "claim_id": "cross-runtime-regular-file-continuity-v1",
+  "predecessor_ids": [
+    "bounded-regular-file-continuity",
+    "strict-cross-runtime-continuity"
+  ],
+  "qualification": {
+    "closure_job_id": 90008005407,
+    "closure_job_name": "Exact-SHA qualification closure",
+    "head_sha": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+    "job_count": 13,
+    "run_attempt": 1,
+    "run_id": 30269498012,
+    "workflow_id": 268601636,
+    "workflow_path": ".github/workflows/ci.yml"
+  },
+  "schema": "visa.project-claim-closure.v2",
+  "second_copy": {
+    "asset_name": "cross-runtime-regular-file-continuity-v1-evidence.tar",
+    "asset_sha256": "f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3",
+    "asset_size_bytes": 16732160,
+    "doi": "10.5281/zenodo.21627497",
+    "kind": "zenodo-record-file-v1",
+    "provider_checksum": "md5:0e23064d89478272326eb4db2a93706b",
+    "record_id": 21627497
+  }
+}

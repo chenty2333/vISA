@@ -1,0 +1,170 @@
+{
+  "accepted_source": {
+    "repository": "chenty2333/vISA",
+    "revision": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+    "tree": "66e45d0f16858f2afb8423940850b53bcd27f524"
+  },
+  "actions_artifacts": [
+    {
+      "api_digest": "sha256:11647aa6b1896422969c2f694db6d9446c5cdad03d169bac82ce7bde833d4cdd",
+      "artifact_id": 8654472999,
+      "artifact_name": "stage3a-cross-runtime-regular-file-system-evidence",
+      "expires_at": "2026-08-10T13:25:48Z",
+      "head_sha": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+      "path": "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+      "role": "workflow-artifact-01",
+      "run_attempt": 1,
+      "run_id": 30269498012,
+      "size_bytes": 4448879
+    },
+    {
+      "api_digest": "sha256:bb57158a2cb4da9471b08f73b02187d1567ac33edc765e9d0f68109fcee401ba",
+      "artifact_id": 8654323302,
+      "artifact_name": "stage3a-regular-file-system-evidence",
+      "expires_at": "2026-08-10T13:21:00Z",
+      "head_sha": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+      "path": "actions/stage3a-regular-file-system-evidence.zip",
+      "role": "workflow-artifact-02",
+      "run_attempt": 1,
+      "run_id": 30269498012,
+      "size_bytes": 64723
+    }
+  ],
+  "claim_definition_sha256": "b1ae9a9ab1ad8719dd703681520069a6ef29312db705248a1db2b405d37b62c1",
+  "claim_id": "cross-runtime-regular-file-continuity-v1",
+  "evidence_axes": [
+    {
+      "claim_ids": [
+        "cross-runtime-regular-file-continuity-v1"
+      ],
+      "id": "exact-sha-closure",
+      "member_paths": [
+        "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+        "actions/stage3a-regular-file-system-evidence.zip",
+        "sources/visa.bundle"
+      ],
+      "verifier": "scripts/check-ci-contract.py"
+    },
+    {
+      "claim_ids": [
+        "cross-runtime-regular-file-continuity-v1",
+        "strict-cross-runtime-continuity"
+      ],
+      "id": "four-direction-runtime-matrix",
+      "member_paths": [
+        "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+        "sources/visa.bundle"
+      ],
+      "verifier": "visa-conformance stage3a-cross-runtime"
+    },
+    {
+      "claim_ids": [
+        "bounded-regular-file-continuity",
+        "cross-runtime-regular-file-continuity-v1"
+      ],
+      "id": "regular-file-resource",
+      "member_paths": [
+        "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+        "actions/stage3a-regular-file-system-evidence.zip",
+        "sources/visa.bundle"
+      ],
+      "verifier": "visa-conformance stage3a"
+    },
+    {
+      "claim_ids": [
+        "cross-runtime-regular-file-continuity-v1"
+      ],
+      "id": "relocated-independent-verification",
+      "member_paths": [
+        "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+        "sources/visa.bundle"
+      ],
+      "verifier": "visa-conformance stage3a-cross-runtime"
+    },
+    {
+      "claim_ids": [
+        "cross-runtime-regular-file-continuity-v1",
+        "strict-cross-runtime-continuity"
+      ],
+      "id": "source-locked-runtime-lineage",
+      "member_paths": [
+        "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+        "sources/visa.bundle"
+      ],
+      "verifier": "scripts/wacogo-prepare-source.py check"
+    },
+    {
+      "claim_ids": [
+        "cross-runtime-regular-file-continuity-v1"
+      ],
+      "id": "typed-outer-normalization",
+      "member_paths": [
+        "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+        "sources/visa.bundle"
+      ],
+      "verifier": "visa-conformance stage3a-cross-runtime"
+    }
+  ],
+  "members": [
+    {
+      "media_type": "text/markdown",
+      "path": "REVERIFY.md",
+      "role": "offline-reverification",
+      "sha256": "51f752fc99d62e204f62f5a5439601b680fd3f79f025b0138bbff2773cbe4015",
+      "size_bytes": 2641
+    },
+    {
+      "media_type": "text/plain",
+      "path": "SHA256SUMS",
+      "role": "checksum-inventory",
+      "sha256": "9eddd04239e6c60fad95660aea55876e62fae1b1a0729b50daff58165e435932",
+      "size_bytes": 408
+    },
+    {
+      "media_type": "application/zip",
+      "path": "actions/stage3a-cross-runtime-regular-file-system-evidence.zip",
+      "role": "workflow-artifact-01",
+      "sha256": "11647aa6b1896422969c2f694db6d9446c5cdad03d169bac82ce7bde833d4cdd",
+      "size_bytes": 4448879
+    },
+    {
+      "media_type": "application/zip",
+      "path": "actions/stage3a-regular-file-system-evidence.zip",
+      "role": "workflow-artifact-02",
+      "sha256": "bb57158a2cb4da9471b08f73b02187d1567ac33edc765e9d0f68109fcee401ba",
+      "size_bytes": 64723
+    },
+    {
+      "media_type": "application/x-git-bundle",
+      "path": "sources/visa.bundle",
+      "role": "accepted-source",
+      "sha256": "04b79dff3e90443f9f50099d2db94d5da314d0e0666e9bd2eef21908416a821b",
+      "size_bytes": 12194494
+    }
+  ],
+  "predecessor_ids": [
+    "bounded-regular-file-continuity",
+    "strict-cross-runtime-continuity"
+  ],
+  "qualification": {
+    "closure_job_id": 90008005407,
+    "closure_job_name": "Exact-SHA qualification closure",
+    "head_sha": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+    "job_count": 13,
+    "run_attempt": 1,
+    "run_id": 30269498012,
+    "workflow_id": 268601636,
+    "workflow_path": ".github/workflows/ci.yml"
+  },
+  "schema": "visa.project-claim-archive.v1",
+  "source_bundles": [
+    {
+      "bundle_path": "sources/visa.bundle",
+      "bundle_ref": "refs/heads/archive/cross-runtime-regular-file-continuity-v1",
+      "id": "visa",
+      "repository": "https://github.com/chenty2333/vISA.git",
+      "revision": "3bd9eaad5aab3e792ca793e26bd064f403f626db",
+      "tree": "66e45d0f16858f2afb8423940850b53bcd27f524"
+    }
+  ]
+}

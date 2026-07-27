@@ -310,6 +310,15 @@ gate, detector contract, repeated stability gate, exact-SHA CI, and permanent
 paper-artifact receipt all close on one accepted revision.
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:scope:end -->
 
+Lifecycle closure (2026-07-27): the successor is earned at accepted revision
+`3bd9eaad5aab3e792ca793e26bd064f403f626db`. Exact-SHA workflow run
+[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012)
+completed all 13 qualification jobs on attempt 1. The immutable
+[GitHub release](https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence)
+and [Zenodo DOI](https://doi.org/10.5281/zenodo.21627497) retain identical
+archive bytes; the permanent receipt is
+[`claims/receipts/cross-runtime-regular-file-continuity-v1.json`](../claims/receipts/cross-runtime-regular-file-continuity-v1.json).
+
 ### Stage 3B -- bounded logical-request continuity
 
 Implementation status: the separate logical-request WIT world, guest, typed
