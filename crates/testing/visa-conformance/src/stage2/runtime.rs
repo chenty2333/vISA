@@ -12,10 +12,12 @@ use super::{
         STAGE2_JCO_TRANSLATION_OPTIONS, STAGE2_JCO_VERSION, STAGE2_JS_COMPONENT_BINDGEN_VERSION,
         STAGE2_NODE_VERSION, STAGE2_V8_VERSION, STAGE2_WACOGO_ENGINE_VERSION,
         STAGE2_WACOGO_ENVIRONMENT_NAME, STAGE2_WACOGO_ENVIRONMENT_VERSION,
-        STAGE2_WACOGO_IMPLEMENTATION_VERSION, STAGE2_WASMTIME_ENGINE_VERSION,
-        STAGE2_WASMTIME_ENVIRONMENT_NAME, STAGE2_WASMTIME_ENVIRONMENT_VERSION,
-        STAGE2_WASMTIME_IMPLEMENTATION_VERSION, Stage2CellDescriptor, Stage2CellId,
-        Stage2CellManifest, Stage2Runtime, Stage2TranslationProvenance, Stage2ValidationFinding,
+        STAGE2_WACOGO_IMPLEMENTATION_VERSION, STAGE2_WACOGO_SIDECAR_SHA256,
+        STAGE2_WACOGO_SIDECAR_SIZE, STAGE2_WACOGO_SOURCE_LOCK_SHA256,
+        STAGE2_WASMTIME_ENGINE_VERSION, STAGE2_WASMTIME_ENVIRONMENT_NAME,
+        STAGE2_WASMTIME_ENVIRONMENT_VERSION, STAGE2_WASMTIME_IMPLEMENTATION_VERSION,
+        Stage2CellDescriptor, Stage2CellId, Stage2CellManifest, Stage2Runtime,
+        Stage2TranslationProvenance, Stage2ValidationFinding,
     },
     strict_model::{Stage2StrictRuntimeMetadata, Stage2WacogoRuntimeLineageObservation},
 };
@@ -429,8 +431,7 @@ pub(crate) fn implementation_lineage_matches(
             }),
         ) => {
             source_lock_schema == "visa.wacogo-source-lock.v2"
-                && source_lock_sha256
-                    == "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235"
+                && source_lock_sha256 == STAGE2_WACOGO_SOURCE_LOCK_SHA256
                 && derivative_id == "partite-ai-wacogo-3de16a61796c-visa-patchset-v1"
                 && upstream_module == "github.com/partite-ai/wacogo"
                 && upstream_version == "v0.0.0-20260617023329-3de16a61796c"
@@ -447,9 +448,8 @@ pub(crate) fn implementation_lineage_matches(
                 ])
                 && patched_tree_sha256
                     == "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311"
-                && sidecar_executable_sha256
-                    == "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb"
-                && *sidecar_executable_size == 6_889_598
+                && sidecar_executable_sha256 == STAGE2_WACOGO_SIDECAR_SHA256
+                && *sidecar_executable_size == STAGE2_WACOGO_SIDECAR_SIZE
                 && *sidecar_protocol_version == 1
                 && execution_carrier == "owned-component-profile-stdin-frame-v2"
                 && wacogo_version == upstream_version

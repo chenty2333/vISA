@@ -110,8 +110,8 @@
         },
         {
           "profile": "regular-file-v1",
-          "size": 215376,
-          "sha256": "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109"
+          "size": 215370,
+          "sha256": "c7fd1ec2a2f0fa7c33c7587bbbf686c1cc04a94937c3eb25707222973af69541"
         }
       ],
       "module_path": "visa.local/wacogo-runtime",
@@ -156,14 +156,14 @@
       "binary": {
         "file": "target/visa-wacogo/visa-wacogo-runtime",
         "size": 6889598,
-        "sha256": "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb"
+        "sha256": "6a1406459cc2b42c434fb97890d45558ab7d9c495b7dafac7516e8a97f1660e8"
       },
       "go_module": {
         "directory": "crates/runtime/visa_wacogo/sidecar",
         "source_tree": {
           "algorithm": "sha256-of-sorted-sha256sum-lines-v1",
           "regular_file_count": 19,
-          "sha256": "30068dc6ff7a2176eb5613b3d36f227b8c108628d6f8692ec2dcfe72a84b54de"
+          "sha256": "26f31c58b74a3f22177c5890676d3e4bb6f41e7d53be06b80cebb47c1fb796e8"
         },
         "go_mod": {
           "file": "crates/runtime/visa_wacogo/sidecar/go.mod",

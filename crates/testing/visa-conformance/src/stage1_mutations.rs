@@ -735,13 +735,16 @@ const DEFECT_CORPUS: &[DefectCase] = &[
         apply: a1c_stale_source_authority_root,
     },
     DefectCase {
-        id: "A2a-timer-completion-after-commit",
+        id: "A2a-snapshot-timer-disposition-diverged",
         class: DefectClass::LostCancellation,
         case_id: COMMITTED_CASE,
-        mutation: "append a timer completion after the handoff commit, as if a cancel was lost",
+        mutation: "restate the sealed snapshot timer as idle without changing the completed-timer trace",
         disposition: MutationDisposition::SemanticDefect,
-        expectation: detected(&["invalid-stage1-semantic-replay"]),
-        apply: a2a_timer_completion_after_commit,
+        expectation: detected(&[
+            "inconsistent-stage1-destination-trace-base",
+            "inconsistent-stage1-snapshot-trace",
+        ]),
+        apply: a2a_snapshot_timer_disposition_diverged,
     },
     DefectCase {
         id: "A2b-freeze-disposition-rewritten",
@@ -955,12 +958,25 @@ fn a1a_stale_activation_epoch(bundle: &mut Stage1EvidenceBundle, root: &Path) {
 
 fn a1b_revoked_tombstone_generation_reset(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     mutate_source_trace_chain(bundle, root, REVOCATION_CASE, Rechain::Renumber, |trace| {
-        for state in [&mut trace.base_state, &mut trace.final_state] {
-            for grant in &mut state.authorities {
-                if grant.status == contract_core::AuthorityStatus::Revoked {
-                    grant.authority.generation = contract_core::Generation::INITIAL;
-                }
+        let mut event_rewritten = false;
+        for entry in &mut trace.entries {
+            if let contract_core::EventKind::AuthorityRevoked { revoked_generation, .. } =
+                &mut entry.event.kind
+            {
+                *revoked_generation = contract_core::Generation::INITIAL;
+                event_rewritten = true;
+                break;
             }
+        }
+        if !event_rewritten {
+            let tombstone = trace
+                .base_state
+                .authorities
+                .iter_mut()
+                .find(|grant| grant.status == contract_core::AuthorityStatus::Revoked)
+                .expect("revocation fixture starts from a revoked authority tombstone");
+            tombstone.status = contract_core::AuthorityStatus::Active;
+            tombstone.authority.generation = contract_core::Generation::INITIAL;
         }
     });
 }
@@ -974,34 +990,22 @@ fn a1c_stale_source_authority_root(bundle: &mut Stage1EvidenceBundle, root: &Pat
         contract_hex(contract_core::canonical_digest(authorities.as_slice()).unwrap());
 }
 
-fn a2a_timer_completion_after_commit(bundle: &mut Stage1EvidenceBundle, root: &Path) {
+fn a2a_snapshot_timer_disposition_diverged(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     let case_index = case_index_of(bundle, COMMITTED_CASE);
-    let timer =
-        read_trace(bundle, root, case_index, "source.json").final_state.timer.claim.resource;
-    mutate_destination_trace(bundle, root, COMMITTED_CASE, Rechain::Renumber, true, |trace| {
-        push_event(
-            trace,
-            0x5742_0001,
-            contract_core::EventKind::TimerCompleted {
-                timer,
-                arm_operation: contract_core::Identity::from_u128(0x5742_0002),
-                evidence: contract_core::EvidenceRef {
-                    identity: contract_core::Identity::from_u128(0x5742_0003),
-                    kind: contract_core::EvidenceKind::EffectOutcome,
-                    digest: contract_core::Digest::from_bytes(
-                        Sha256::digest(0x5742_0003_u128.to_be_bytes()).into(),
-                    ),
-                },
-            },
-        );
-    });
+    let reference = bundle.cases[case_index].artifacts.snapshot.as_ref().unwrap().clone();
+    let mut envelope = read_json::<contract_core::SnapshotEnvelope>(root, &reference.uri);
+    envelope.body.timer = contract_core::TimerDisposition::Idle;
+    envelope.integrity = contract_core::snapshot_integrity(&envelope.body).unwrap();
+    let reference = bundle.cases[case_index].artifacts.snapshot.as_mut().unwrap();
+    write_case_ref(root, reference, &serde_json::to_vec(&envelope).unwrap());
+    bundle.cases[case_index].state.snapshot_sha256 = Some(reference.sha256.clone());
 }
 
 fn a2b_freeze_disposition_rewritten(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     mutate_source_trace_chain(bundle, root, COMMITTED_CASE, Rechain::Renumber, |trace| {
         for entry in &mut trace.entries {
             if let contract_core::EventKind::Frozen { timer, .. } = &mut entry.event.kind {
-                *timer = contract_core::TimerDisposition::Completed;
+                *timer = contract_core::TimerDisposition::Idle;
             }
         }
     });
@@ -1046,13 +1050,79 @@ fn duplicate_entry(
 fn a3c_transcript_dump_round_trip_duplicated(bundle: &mut Stage1EvidenceBundle, root: &Path) {
     let case_index = case_index_of(bundle, COMMITTED_CASE);
     rewrite_raw_transcript(bundle, root, case_index, "destination.jsonl", |lines| {
+        let worker = format!("{COMMITTED_CASE}-destination");
         let next_sequence = lines
             .iter()
+            .filter(|line| line.get("worker").and_then(serde_json::Value::as_str) == Some(&worker))
             .filter_map(|line| line.get("sequence").and_then(serde_json::Value::as_u64))
             .max()
-            .unwrap();
-        let mut duplicated = Vec::new();
-        for (offset, index) in [2_usize, 3].into_iter().enumerate() {
+            .expect("destination worker sequence");
+        let next_request = lines
+            .iter()
+            .filter(|line| line.get("worker").and_then(serde_json::Value::as_str) == Some(&worker))
+            .filter_map(|line| {
+                let protocol = serde_json::from_str::<serde_json::Value>(
+                    line.get("line").and_then(serde_json::Value::as_str)?,
+                )
+                .ok()?;
+                protocol
+                    .get("id")?
+                    .as_str()?
+                    .strip_prefix(&format!("{worker}-"))?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .max()
+            .expect("destination request id")
+            + 1;
+        let request_index = lines
+            .iter()
+            .rposition(|line| {
+                line.get("worker").and_then(serde_json::Value::as_str) == Some(&worker)
+                    && line.get("stream").and_then(serde_json::Value::as_str)
+                        == Some("parent_request")
+                    && line
+                        .get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                        .and_then(|protocol| {
+                            protocol
+                                .pointer("/command/kind")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        })
+                        .as_deref()
+                        == Some("dump")
+            })
+            .expect("destination dump request");
+        let request_protocol = serde_json::from_str::<serde_json::Value>(
+            lines[request_index].get("line").and_then(serde_json::Value::as_str).unwrap(),
+        )
+        .unwrap();
+        let request_id = request_protocol.get("id").and_then(serde_json::Value::as_str).unwrap();
+        let response_index = lines
+            .iter()
+            .position(|line| {
+                line.get("worker").and_then(serde_json::Value::as_str) == Some(&worker)
+                    && line.get("stream").and_then(serde_json::Value::as_str)
+                        == Some("worker_response")
+                    && line
+                        .get("line")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                        .is_some_and(|protocol| {
+                            protocol.get("id").and_then(serde_json::Value::as_str)
+                                == Some(request_id)
+                                && protocol
+                                    .pointer("/outcome/result/kind")
+                                    .and_then(serde_json::Value::as_str)
+                                    == Some("dump")
+                        })
+            })
+            .expect("destination dump response");
+        let fresh_id = format!("{worker}-{next_request:06}");
+        let mut duplicated = Vec::with_capacity(2);
+        for (offset, index) in [request_index, response_index].into_iter().enumerate() {
             let mut line = lines[index].clone();
             line["sequence"] =
                 serde_json::Value::from(next_sequence + 1 + u64::try_from(offset).unwrap());
@@ -1060,8 +1130,7 @@ fn a3c_transcript_dump_round_trip_duplicated(bundle: &mut Stage1EvidenceBundle, 
                 line.get("line").and_then(serde_json::Value::as_str).unwrap(),
             )
             .unwrap();
-            let id = protocol["id"].as_str().unwrap().replace("000002", "000009");
-            protocol["id"] = serde_json::Value::String(id);
+            protocol["id"] = serde_json::Value::String(fresh_id.clone());
             line["line"] = serde_json::Value::String(serde_json::to_string(&protocol).unwrap());
             duplicated.push(line);
         }
@@ -1163,6 +1232,12 @@ fn a6d_extra_worker_stderr_observation(bundle: &mut Stage1EvidenceBundle, root: 
     let case_index = case_index_of(bundle, COMMITTED_CASE);
     let worker = format!("{COMMITTED_CASE}-source");
     rewrite_raw_transcript(bundle, root, case_index, "source.jsonl", |lines| {
+        let pid = lines
+            .iter()
+            .find(|line| line.get("worker").and_then(serde_json::Value::as_str) == Some(&worker))
+            .and_then(|line| line.get("pid"))
+            .and_then(serde_json::Value::as_u64)
+            .expect("source worker pid");
         let next_sequence = lines
             .iter()
             .filter(|line| line.get("worker").and_then(serde_json::Value::as_str) == Some(&worker))
@@ -1171,7 +1246,7 @@ fn a6d_extra_worker_stderr_observation(bundle: &mut Stage1EvidenceBundle, root: 
             .unwrap();
         lines.push(serde_json::json!({
             "worker": worker,
-            "pid": 100,
+            "pid": pid,
             "sequence": next_sequence + 1,
             "stream": "worker_stderr",
             "line": "stale key-value write probe rejected",

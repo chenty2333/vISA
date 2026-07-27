@@ -3144,7 +3144,7 @@ fn committed_case(
     Vec<contract_core::BindingReceipt>,
 ) {
     let ExportedSourceCase { source, source_trace, envelope, snapshot_record, seed } =
-        exported_source_case(case, source, contract_core::TimerDisposition::Idle);
+        exported_source_case(case, source, contract_core::TimerDisposition::Completed);
     let handoff = snapshot_record.handoff;
     let snapshot_id = snapshot_record.snapshot;
     let destination =
@@ -3977,7 +3977,7 @@ fn test_wacogo_lineage() -> serde_json::Value {
     serde_json::json!({
         "kind": "wacogo",
         "source_lock_schema": "visa.wacogo-source-lock.v2",
-        "source_lock_sha256": "f8dfe3c290bc4f6f60843316c8824da9a0bfbb30a1f4fb0bf5845a3fb81b2235",
+        "source_lock_sha256": crate::STAGE2_WACOGO_SOURCE_LOCK_SHA256,
         "derivative_id": "partite-ai-wacogo-3de16a61796c-visa-patchset-v1",
         "upstream_module": "github.com/partite-ai/wacogo",
         "upstream_version": "v0.0.0-20260617023329-3de16a61796c",
@@ -3992,8 +3992,8 @@ fn test_wacogo_lineage() -> serde_json::Value {
             "4b32fe31643aedab8472c42ae38d635abbfc9133093866b5ff1de9dcc4548d0e"
         ],
         "patched_tree_sha256": "813eb9fad2d93d0c2237edf5d55d18316d1cc313ccf033e079c01fd18f653311",
-        "sidecar_executable_sha256": "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb",
-        "sidecar_executable_size": 6889598,
+        "sidecar_executable_sha256": crate::STAGE2_WACOGO_SIDECAR_SHA256,
+        "sidecar_executable_size": crate::STAGE2_WACOGO_SIDECAR_SIZE,
         "sidecar_protocol_version": 1,
         "execution_carrier": "owned-component-profile-stdin-frame-v2",
         "wacogo_version": "v0.0.0-20260617023329-3de16a61796c",

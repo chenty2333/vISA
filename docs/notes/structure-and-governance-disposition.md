@@ -81,8 +81,9 @@ each interacts with the claim-closure machinery.
 
 ### 3.1 CI runs everything on every push
 
-`on: push` has no branch or path filter, and eleven of the twelve jobs run
-Docker builds with 120–180 minute timeouts.
+`on: push` has no branch or path filter. Ten of the thirteen expanded job
+executions run Docker builds with 60–180 minute timeouts; the other three are
+claim-closure verification, host Nexus qualification, and exact-SHA closure.
 
 Do NOT add path filters: claim promotion requires the complete workflow to
 pass at the exact governance SHA, and governance commits are frequently
@@ -99,9 +100,9 @@ Safer options, in order:
    `[claim-gate]` commit-message marker or label for pull requests only,
    never for push. Higher contract churn; only worth it if PR volume grows.
 
-### 3.2 `CI_JOB_COUNT = 12` is a hardcoded constant
+### 3.2 `CI_JOB_COUNT = 13` is a hardcoded constant
 
-`scripts/claim_archive.py:30` binds online verification to exactly twelve
+`scripts/claim_archive.py:30` binds online verification to exactly thirteen
 job executions. Any job addition silently invalidates future closure
 verification until the constant moves. Option: derive the expected job set
 from `claims/registry.json` `workflow_bindings` plus the parsed workflow

@@ -27,7 +27,7 @@ MANIFEST_MEMBER = "ARCHIVE-MANIFEST.json"
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 CLAIM_REGISTRY_PATH = "claims/registry.json"
 CI_CLOSURE_JOB_NAME = "Exact-SHA qualification closure"
-CI_JOB_COUNT = 12
+CI_JOB_COUNT = 13
 CLAIM_WORKFLOW_ROLES = ("regresses", "required", "supports")
 JOINT_SOURCE_LOCK_PATH = "third_party/joint-handoff-qualification/source-lock.json"
 NEXUS_QUALIFICATION_LOCK_PATH = (
@@ -686,7 +686,11 @@ def validate_manifest(
     require(qualification["head_sha"] == source["revision"], "manifest workflow head drifted")
 
     actions_raw = manifest["actions_artifacts"]
-    require(isinstance(actions_raw, list) and len(actions_raw) == 2, "manifest must bind two Actions artifacts")
+    expected_action_count = len(acceptance["workflow_artifacts"])
+    require(
+        isinstance(actions_raw, list) and len(actions_raw) == expected_action_count,
+        "manifest Actions artifact count differs from acceptance policy",
+    )
     actions = [
         validate_action(item, f"{claim_id}.actions_artifacts[{index}]", qualification)
         for index, item in enumerate(actions_raw)
@@ -700,10 +704,17 @@ def validate_manifest(
         [item["role"] for item in actions] == sorted({item["role"] for item in actions}),
         "manifest Actions artifact roles must be unique and sorted",
     )
-    require(len({item["artifact_id"] for item in actions}) == 2, "manifest repeats an artifact id")
+    require(
+        len({item["artifact_id"] for item in actions}) == len(actions),
+        "manifest repeats an artifact id",
+    )
 
     bundles_raw = manifest["source_bundles"]
-    require(isinstance(bundles_raw, list) and len(bundles_raw) == 3, "manifest must bind three source bundles")
+    expected_bundle_count = len(acceptance["source_repositories"])
+    require(
+        isinstance(bundles_raw, list) and len(bundles_raw) == expected_bundle_count,
+        "manifest source bundle count differs from acceptance policy",
+    )
     bundles = [
         validate_bundle(item, f"{claim_id}.source_bundles[{index}]")
         for index, item in enumerate(bundles_raw)
@@ -736,7 +747,11 @@ def validate_manifest(
     )
 
     members_raw = manifest["members"]
-    require(isinstance(members_raw, list) and len(members_raw) == 7, "manifest must describe exactly seven payload members")
+    expected_member_count = len(actions) + len(bundles) + 2
+    require(
+        isinstance(members_raw, list) and len(members_raw) == expected_member_count,
+        "manifest payload member count differs from its carriers",
+    )
     members = [
         validate_member(item, f"{claim_id}.members[{index}]")
         for index, item in enumerate(members_raw)
@@ -1146,6 +1161,20 @@ def _validate_source_bundles_against_accepted_locks(
     manifest: dict[str, Any],
 ) -> None:
     """Bind Nexus and neutral source bundles to locks in the accepted vISA tree."""
+
+    repositories = {item["repository"] for item in manifest["source_bundles"]}
+    visa_repository = github_source_url("chenty2333/vISA")
+    if repositories == {visa_repository}:
+        return
+    require(
+        repositories
+        == {
+            github_source_url("chenty2333/Nexus"),
+            visa_repository,
+            github_source_url("chenty2333/visa-nexus-handoff"),
+        },
+        "external source bundle set lacks an accepted lock validator",
+    )
 
     revision = source["revision"]
     source_lock = _json_blob_at_revision(
@@ -1664,7 +1693,10 @@ def _validate_standalone_manifest_shape(manifest: dict[str, Any]) -> None:
     )
     require(source["revision"] == qualification["head_sha"], "archive manifest head differs")
     actions_raw = manifest["actions_artifacts"]
-    require(isinstance(actions_raw, list) and len(actions_raw) == 2, "manifest must bind two Actions artifacts")
+    require(
+        isinstance(actions_raw, list) and actions_raw,
+        "manifest must bind at least one Actions artifact",
+    )
     actions = [
         validate_action(item, f"archive manifest actions_artifacts[{index}]", qualification)
         for index, item in enumerate(actions_raw)
@@ -1678,8 +1710,15 @@ def _validate_standalone_manifest_shape(manifest: dict[str, Any]) -> None:
         [item["role"] for item in actions] == sorted({item["role"] for item in actions}),
         "manifest Actions artifact roles must be unique and sorted",
     )
+    require(
+        len({item["artifact_id"] for item in actions}) == len(actions),
+        "manifest repeats an artifact id",
+    )
     bundles_raw = manifest["source_bundles"]
-    require(isinstance(bundles_raw, list) and len(bundles_raw) == 3, "manifest must bind three source bundles")
+    require(
+        isinstance(bundles_raw, list) and bundles_raw,
+        "manifest must bind at least one source bundle",
+    )
     bundles = [
         validate_bundle(item, f"archive manifest source_bundles[{index}]")
         for index, item in enumerate(bundles_raw)
@@ -1707,7 +1746,11 @@ def _validate_standalone_manifest_shape(manifest: dict[str, Any]) -> None:
         "every evidence axis must bind the current successor claim",
     )
     members_raw = manifest["members"]
-    require(isinstance(members_raw, list) and len(members_raw) == 7, "manifest must describe exactly seven payload members")
+    expected_member_count = len(actions) + len(bundles) + 2
+    require(
+        isinstance(members_raw, list) and len(members_raw) == expected_member_count,
+        "manifest payload member count differs from its carriers",
+    )
     members = [
         validate_member(item, f"archive manifest members[{index}]")
         for index, item in enumerate(members_raw)
@@ -1736,7 +1779,7 @@ def validate_archive_tar(
     expected_size_bytes: int | None = None,
     runner: Runner = default_runner,
 ) -> None:
-    """Validate the strict eight-member release tar and every embedded carrier."""
+    """Validate the strict policy-sized release tar and every embedded carrier."""
 
     try:
         archive_size = archive_path.stat().st_size
@@ -1757,7 +1800,10 @@ def validate_archive_tar(
         manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
     _validate_standalone_manifest_shape(manifest)
     members_by_path = {item["path"]: item for item in manifest["members"]}
-    require(len(members_by_path) == 7, "archive manifest member inventory is not unique")
+    require(
+        len(members_by_path) == len(manifest["members"]),
+        "archive manifest member inventory is not unique",
+    )
     expected_names = {MANIFEST_MEMBER, *members_by_path}
 
     with tempfile.TemporaryDirectory(prefix="visa-claim-archive-") as temporary:

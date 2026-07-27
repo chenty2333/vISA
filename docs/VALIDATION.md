@@ -818,7 +818,7 @@ relabel the v1 wire, source locks, schemas, artifacts, or receipts.
 
 <!-- claim-semantic-contract:bounded-joint-handoff-refinement-v2:validation:start -->
 The normative v2 acceptance contract requires one first-attempt exact-SHA push
-workflow in the canonical CI file with all 12 jobs successful, including the
+workflow in the canonical CI file with all 13 jobs successful, including the
 two named original Actions ZIPs
 `joint-handoff-reference-system-evidence` and
 `nexus-visa-same-boot-qualification-evidence`. Those exact ZIP bytes must pass
@@ -914,8 +914,8 @@ with the immutable GitHub release asset. The version DOI and record ID are used,
 never a concept DOI or `latest` alias. Zenodo is an independent long-term
 retention copy, not an absolute immutability claim: its published-record policy
 permits bounded post-publication corrections or withdrawal. As rechecked on
-2026-07-18, vISA has no GitHub Release and repository Immutable Releases are
-disabled, so candidate v2 cannot yet satisfy this gate.
+2026-07-27, repository-level Immutable Releases are enabled, but candidate v2
+still has no fixed release/Zenodo carrier and therefore cannot satisfy this gate.
 
 ### Stable artifact verification boundary
 

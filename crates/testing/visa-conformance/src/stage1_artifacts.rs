@@ -1053,11 +1053,11 @@ fn validate_case_trace_intent(
             _ => None,
         })
         .collect::<Vec<_>>();
-    if frozen_timer_dispositions != [TimerDisposition::Idle] {
+    if frozen_timer_dispositions != [TimerDisposition::Completed] {
         finding(
             findings,
             "inconsistent-stage1-timer-intent",
-            format!("{} must freeze exactly one never-armed timer as Idle", case.case_id),
+            format!("{} must freeze exactly one precompleted timer as Completed", case.case_id),
         );
     }
 }

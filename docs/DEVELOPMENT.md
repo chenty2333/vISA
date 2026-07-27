@@ -871,12 +871,12 @@ post-promotion CI verifies the committed carriers, accepted Git lineage,
 immutable GitHub release attestation, and byte-identical Zenodo record without
 depending on expiring Actions storage.
 
-As observed on 2026-07-18, this repository has no GitHub Release, Immutable
-Releases are disabled, and `master` has no branch protection. The first two
-facts block successor promotion outright. Before promotion, enable Immutable
-Releases and publish the fixed archive; separately choose and record a branch
-ruleset that requires the exact-SHA closure before `master` can advance. The
-in-repository ledger cannot enforce an external GitHub branch setting by itself.
+As rechecked on 2026-07-27, repository-level Immutable Releases are enabled.
+The permanent successor still requires its first fixed archive to be published
+and independently copied before promotion. Branch protection remains a separate
+repository policy: choose and record a ruleset that requires the exact-SHA
+closure before `master` can advance. The in-repository ledger cannot enforce an
+external GitHub branch setting by itself.
 
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.
@@ -889,20 +889,65 @@ at a different root. The complete receipt is recorded in
 [validation](VALIDATION.md#stage-4-closure-receipt).
 
 Current CI separates repository quality from claim qualification. One job runs
-`full`; six matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
-Strict Stage 2, Stage 3A, and Stage 3B; a separate lane runs the complete Stage 4
+`full`; seven matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
+Strict Stage 2, Stage 3A, cross-runtime Stage 3A, and Stage 3B; a separate lane
+runs the complete Stage 4
 aggregate, one separate Docker lane runs the bounded reference/HostSubstrate
 joint-handoff cell, and one host-built lane runs the clean exact-SHA Nexus-local,
 process, older logical-request, and admission-ordered qualification publishers.
 A host-only claim-closure lane uses only `contents: read`, `actions: read`, and
 `attestations: read` to verify committed receipts and permanent release assets.
-A final `Exact-SHA qualification closure` job fails unless all eleven
-prerequisite job executions succeed for the same source SHA, making twelve jobs
+A final `Exact-SHA qualification closure` job fails unless all twelve
+prerequisite job executions succeed for the same source SHA, making thirteen jobs
 including closure. The reference-only lane does not qualify Nexus, and neither
 joint lane substitutes for the other. Every Docker image is built from that
 checkout and tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
 `.ci-artifacts/` on gate success or failure. Pull-request artifacts are retained
 for 3 days and push artifacts for 14 days.
+
+After a clean attempt-1 push run closes all thirteen jobs for the candidate
+`cross-runtime-regular-file-continuity-v1` revision, build its permanent carrier
+without extracting or recompressing the two Actions artifacts:
+
+```sh
+python3 scripts/build-claim-archive.py \
+  --run-id <accepted-run-id> \
+  --revision <accepted-head-sha> \
+  --output target/claim-archives/cross-runtime-regular-file-continuity-v1
+```
+
+The builder rechecks the live run, every job, the exact closure job, artifact
+ids, original ZIP sizes and API SHA-256 digests; creates a single-ref Git bundle
+for the accepted revision; emits sorted `SHA256SUMS` and exact rerun commands;
+then writes and independently validates a deterministic, sorted USTAR archive.
+It refuses rerun attempts, failed jobs, a non-push run, a checkout at another
+revision, a dirty checkout, an existing output path, and any downloaded-byte
+mismatch.
+
+Publish that validated output only after the accepted run and revision have
+been recorded. `ZENODO_ACCESS_TOKEN` must be a production Zenodo token with
+`deposit:write` and `deposit:actions`; it is sent only in authorization headers.
+The release tag is fixed as
+`cross-runtime-regular-file-continuity-v1-evidence`:
+
+```sh
+ZENODO_ACCESS_TOKEN=<token> \
+python3 scripts/publish-claim-archive.py \
+  --build-root target/claim-archives/cross-runtime-regular-file-continuity-v1 \
+  --creator '<Family name, Given names>'
+```
+
+Before any remote write, the publisher revalidates the archive, manifest,
+`BUILD-RESULT.json`, candidate policy, exact accepted revision, canonical tag,
+repository immutable-release setting, and any pre-existing tag or release. It
+streams the tar through Zenodo's bucket API, verifies the resulting MD5 and
+published bytes independently by SHA-256, creates or reconciles the one-asset
+immutable GitHub release, verifies both GitHub attestations, and writes the
+closure receipt only after both permanent copies match. It records the Zenodo
+deposition id and all immutable inputs in `PUBLICATION-STATE.json`; rerun the
+same command after interruption. An explicitly supplied
+`--zenodo-deposition-id` is accepted only when it matches that state, preventing
+duplicate records or recovery against different bytes.
 
 Accepted implementation `d3b07f1114cb49e26dd62fb252a895022ac2a743`
 completed the clean local and Docker gates, the same-revision eleven-job CI

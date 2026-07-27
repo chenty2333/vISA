@@ -17,8 +17,8 @@ import (
 
 const (
 	regularFileWorkloadName            = "visa:file-continuity/workload@0.1.0"
-	regularFileAcceptedComponentSize   = 215376
-	regularFileAcceptedComponentSHA256 = "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109"
+	regularFileAcceptedComponentSize   = 215370
+	regularFileAcceptedComponentSHA256 = "c7fd1ec2a2f0fa7c33c7587bbbf686c1cc04a94937c3eb25707222973af69541"
 )
 
 var regularFileRequiredExports = [...]string{

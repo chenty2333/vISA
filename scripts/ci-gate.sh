@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=canonical-component-build-env.sh
+source "$script_dir/canonical-component-build-env.sh"
+
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-gate.sh \
@@ -186,6 +190,8 @@ gate_file_size() {
 }
 
 gate_ci_contract() {
+    run_gate "CI: canonical Component build environment" \
+        scripts/test-canonical-component-build-env.sh
     run_gate "CI: build, cache, evidence, and closure contract" \
         python3 scripts/check-ci-contract.py
     run_gate "CI: claim-to-workflow binding mutation tests" \
@@ -208,6 +214,10 @@ gate_claims_registry() {
         python3 scripts/check-claim-closures.py
     run_gate "claims: permanent archive verifier tests" \
         python3 scripts/test-claim-archive.py
+    run_gate "claims: deterministic archive builder tests" \
+        python3 scripts/test-claim-archive-builder.py
+    run_gate "claims: archive publication receipt tests" \
+        python3 scripts/test-claim-archive-publish.py
 }
 
 gate_release_contract() {
@@ -728,6 +738,9 @@ if [[ "$#" -gt 1 ]]; then
 fi
 
 tier="${1:-full}"
+if [[ "$tier" == system* && "$tier" != system-stage2-strict ]]; then
+    visa_configure_canonical_component_build_environment
+fi
 case "$tier" in
     fast) gate_fast ;;
     full) gate_full ;;

@@ -44,7 +44,7 @@
         "receipt_sha256": null,
         "semantic_contracts": {
           "scope_sha256": "360a21ad0884a90709c7ff8b1cdad20a3a39649c308ca8e06e2e8d76473162b0",
-          "validation_sha256": "554899e1ae31118ffd2bed2893fda7f6921ea3c2154df030ad8d0c621cfa6ef7"
+          "validation_sha256": "4aa64ec59c17377d188631140a57a655dbcd95e16af28ace3c462c6cf3fd0919"
         },
         "evidence_axes": [
           "admission-ordered-logical-request",

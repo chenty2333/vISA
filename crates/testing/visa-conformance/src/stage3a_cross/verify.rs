@@ -18,8 +18,8 @@ use crate::{
 };
 
 const REGULAR_FILE_COMPONENT_SHA256: &str =
-    "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109";
-const REGULAR_FILE_COMPONENT_SIZE: u64 = 215_376;
+    "c7fd1ec2a2f0fa7c33c7587bbbf686c1cc04a94937c3eb25707222973af69541";
+const REGULAR_FILE_COMPONENT_SIZE: u64 = 215_370;
 const ENVIRONMENT_SCHEMA: &str = "visa-stage3a-cross-runtime-environment-v1";
 
 pub fn gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts(

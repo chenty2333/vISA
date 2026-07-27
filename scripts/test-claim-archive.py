@@ -25,6 +25,7 @@ from claim_archive import (  # noqa: E402
     require_permanent_claims_monotonic,
     validate_archive_tar,
     validate_closure_record,
+    validate_manifest,
     verify_online,
 )
 
@@ -220,7 +221,7 @@ class Fixture:
             "head_sha": self.accepted_source["revision"],
             "closure_job_id": 7003,
             "closure_job_name": "Exact-SHA qualification closure",
-            "job_count": 12,
+            "job_count": 13,
         }
         self.actions = self._make_actions()
         self.manifest = self._make_manifest()
@@ -528,7 +529,7 @@ class Fixture:
                     (7001, "gate one"),
                     (7002, "gate two"),
                     (7003, "Exact-SHA qualification closure"),
-                    *[(job_id, f"gate {job_id - 6999}") for job_id in range(7004, 7013)],
+                    *[(job_id, f"gate {job_id - 6999}") for job_id in range(7004, 7014)],
                 ]
                 jobs = [
                     {
@@ -544,7 +545,7 @@ class Fixture:
                     }
                     for job_id, name in definitions
                 ]
-                response = {"total_count": 12, "jobs": jobs}
+                response = {"total_count": 13, "jobs": jobs}
             elif endpoint.endswith("/actions/runs/9001"):
                 response = {
                     "id": 9001,
@@ -647,6 +648,56 @@ class ClaimArchiveTests(unittest.TestCase):
                 expected_sha256=fixture.receipt["archive"]["asset_sha256"],
                 expected_size_bytes=fixture.receipt["archive"]["asset_size_bytes"],
             )
+
+    def test_policy_sized_single_repository_archive_is_accepted(self) -> None:
+        temporary, fixture = self.make_fixture()
+        with temporary:
+            retained_bundles = [
+                item
+                for item in fixture.manifest["source_bundles"]
+                if item["repository"] == "https://github.com/chenty2333/vISA.git"
+            ]
+            self.assertEqual(len(retained_bundles), 1)
+            removed_paths = {
+                item["bundle_path"]
+                for item in fixture.manifest["source_bundles"]
+                if item not in retained_bundles
+            }
+            fixture.acceptance["source_repositories"] = ["chenty2333/vISA"]
+            fixture.manifest["source_bundles"] = retained_bundles
+            fixture.manifest["claim_definition_sha256"] = claim_definition_sha256(
+                fixture.claim, fixture.acceptance
+            )
+            fixture.manifest["members"] = [
+                item
+                for item in fixture.manifest["members"]
+                if item["path"] not in removed_paths
+            ]
+            for path in removed_paths:
+                fixture.payloads.pop(path)
+            checksum_paths = sorted(
+                path for path in fixture.payloads if path != "SHA256SUMS"
+            )
+            fixture.payloads["SHA256SUMS"] = "".join(
+                f"{digest(fixture.payloads[path])}  {path}\n"
+                for path in checksum_paths
+            ).encode()
+            checksum_member = next(
+                item
+                for item in fixture.manifest["members"]
+                if item["path"] == "SHA256SUMS"
+            )
+            checksum_member["size_bytes"] = len(fixture.payloads["SHA256SUMS"])
+            checksum_member["sha256"] = digest(fixture.payloads["SHA256SUMS"])
+            fixture.manifest["members"] = sorted(
+                fixture.manifest["members"], key=lambda item: item["path"]
+            )
+
+            validate_manifest(fixture.manifest, fixture.claim, fixture.acceptance)
+            Fixture.write_tar(
+                fixture.archive_path, fixture.manifest, fixture.payloads
+            )
+            validate_archive_tar(fixture.archive_path, fixture.manifest)
 
     def test_nexus_bundle_must_match_the_accepted_source_lock(self) -> None:
         temporary, fixture = self.make_fixture()
@@ -1101,7 +1152,7 @@ class ClaimArchiveTests(unittest.TestCase):
                         (7003, "Exact-SHA qualification closure", "success"),
                         *[
                             (job_id, f"gate {job_id - 6999}", "success")
-                            for job_id in range(7004, 7013)
+                            for job_id in range(7004, 7014)
                         ],
                     ]
                     jobs = []
@@ -1119,7 +1170,7 @@ class ClaimArchiveTests(unittest.TestCase):
                                 "completed_at": "2026-07-17T06:20:00Z",
                             }
                         )
-                    response = {"total_count": 12, "jobs": jobs}
+                    response = {"total_count": 13, "jobs": jobs}
                 return subprocess.CompletedProcess(command, 0, json.dumps(response), "")
 
             with self.assertRaisesRegex(ArchiveError, "not all workflow jobs succeeded"):

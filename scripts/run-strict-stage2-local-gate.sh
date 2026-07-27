@@ -47,6 +47,8 @@ usage_error() {
 }
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=canonical-component-build-env.sh
+source "$script_dir/canonical-component-build-env.sh"
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
 default_artifact_parent=${VISA_EVIDENCE_PARENT:-$repo_root/target/visa-system}
 if [[ "$default_artifact_parent" != /* ]]; then
@@ -369,7 +371,7 @@ verify_locked_sidecar() {
     [[ "$observed_size" == 6889598 ]] \
         || fail "Wacogo sidecar size mismatch: expected 6889598, observed $observed_size"
     [[ "$observed_sha" == \
-        972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb ]] \
+        6a1406459cc2b42c434fb97890d45558ab7d9c495b7dafac7516e8a97f1660e8 ]] \
         || fail "Wacogo sidecar SHA-256 mismatch: $observed_sha"
 }
 
@@ -493,86 +495,13 @@ verify_locked_component() {
 }
 
 configure_component_build_environment() {
-    local configured_cargo_home=${CARGO_HOME:-}
-    local configured_rustup_home=${RUSTUP_HOME:-}
-    local configured_cargo_incremental=${CARGO_INCREMENTAL:-unset}
-    local canonical_cargo_home
-    local canonical_rustup_home
     local record_path="$qualification_root/component-build-environment.env"
 
-    if [[ -z "$configured_cargo_home" ]]; then
-        [[ -n "${HOME:-}" ]] \
-            || fail 'HOME is required when CARGO_HOME is unset or empty'
-        configured_cargo_home=$HOME/.cargo
-    fi
-    if [[ -z "$configured_rustup_home" ]]; then
-        [[ -n "${HOME:-}" ]] \
-            || fail 'HOME is required when RUSTUP_HOME is unset or empty'
-        configured_rustup_home=$HOME/.rustup
-    fi
-
-    [[ "$configured_cargo_home" != *[[:space:][:cntrl:]]* ]] \
-        || fail "CARGO_HOME cannot be encoded safely in locked rustflags: $configured_cargo_home"
-    [[ "$configured_rustup_home" != *[[:space:][:cntrl:]]* ]] \
-        || fail "RUSTUP_HOME cannot be encoded safely in locked rustflags: $configured_rustup_home"
-    [[ "$configured_cargo_home" != *'='* ]] \
-        || fail "CARGO_HOME cannot contain '=' in locked rustflags: $configured_cargo_home"
-    [[ "$configured_rustup_home" != *'='* ]] \
-        || fail "RUSTUP_HOME cannot contain '=' in locked rustflags: $configured_rustup_home"
-
-    canonical_cargo_home=$(canonical_directory 'actual Cargo home' "$configured_cargo_home")
-    canonical_rustup_home=$(canonical_directory 'actual Rustup home' "$configured_rustup_home")
-    [[ "$canonical_cargo_home" == /* && "$canonical_cargo_home" != / ]] \
-        || fail "actual Cargo home is not a safe absolute remap source: $canonical_cargo_home"
-    [[ "$canonical_rustup_home" == /* && "$canonical_rustup_home" != / ]] \
-        || fail "actual Rustup home is not a safe absolute remap source: $canonical_rustup_home"
-    [[ "$canonical_cargo_home" != *[[:space:][:cntrl:]]* ]] \
-        || fail "canonical Cargo home cannot be encoded safely in locked rustflags: $canonical_cargo_home"
-    [[ "$canonical_rustup_home" != *[[:space:][:cntrl:]]* ]] \
-        || fail "canonical Rustup home cannot be encoded safely in locked rustflags: $canonical_rustup_home"
-    [[ "$canonical_cargo_home" != *'='* ]] \
-        || fail "canonical Cargo home cannot contain '=' in locked rustflags: $canonical_cargo_home"
-    [[ "$canonical_rustup_home" != *'='* ]] \
-        || fail "canonical Rustup home cannot contain '=' in locked rustflags: $canonical_rustup_home"
-    [[ "$canonical_cargo_home" != "$canonical_rustup_home" ]] \
-        || fail 'actual Cargo and Rustup homes must be distinct remap sources'
-    [[ "$canonical_cargo_home/" != "$canonical_rustup_home/"* ]] \
-        || fail 'actual Cargo home must not be nested under the Rustup home'
-    [[ "$canonical_rustup_home/" != "$canonical_cargo_home/"* ]] \
-        || fail 'actual Rustup home must not be nested under the Cargo home'
-
-    component_cargo_home=$canonical_cargo_home
-    component_rustup_home=$canonical_rustup_home
-    component_target_rustflags="-C target-feature=-bulk-memory,-multivalue,-reference-types,-sign-ext,-nontrapping-fptoint --remap-path-prefix=$component_cargo_home=/home/ava/.cargo --remap-path-prefix=$component_rustup_home=/home/ava/.rustup"
-
-    unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTFLAGS
-    unset CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
-    CARGO_HOME=$component_cargo_home
-    RUSTUP_HOME=$component_rustup_home
-    CARGO_INCREMENTAL=1
-    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=$component_target_rustflags
-    export CARGO_HOME RUSTUP_HOME CARGO_INCREMENTAL
-    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
-
-    {
-        printf '%s\n' 'schema=visa.strict-stage2-component-build-environment.v1'
-        printf 'cargo-home.input=%s\n' "$configured_cargo_home"
-        printf 'cargo-home.canonical=%s\n' "$component_cargo_home"
-        printf '%s\n' 'cargo-home.remapped=/home/ava/.cargo'
-        printf 'rustup-home.input=%s\n' "$configured_rustup_home"
-        printf 'rustup-home.canonical=%s\n' "$component_rustup_home"
-        printf '%s\n' 'rustup-home.remapped=/home/ava/.rustup'
-        printf 'cargo-incremental.input=%s\n' "$configured_cargo_incremental"
-        printf '%s\n' 'cargo-incremental.locked=1'
-        printf '%s\n' 'generic-rustflags=unset'
-        printf 'target-rustflags=%s\n' "$component_target_rustflags"
-    } >"$record_path"
-    chmod 600 -- "$record_path"
-
-    printf 'component-cargo-home=%s remapped-to=/home/ava/.cargo\n' "$component_cargo_home"
-    printf 'component-rustup-home=%s remapped-to=/home/ava/.rustup\n' "$component_rustup_home"
-    printf 'component-build-environment=%s sha256=%s\n' \
-        "$record_path" "$(sha256sum "$record_path" | cut -d' ' -f1)"
+    visa_configure_canonical_component_build_environment "$record_path" \
+        || fail 'could not establish the canonical Component build environment'
+    component_cargo_home=$VISA_COMPONENT_CARGO_HOME
+    component_rustup_home=$VISA_COMPONENT_RUSTUP_HOME
+    component_target_rustflags=$VISA_COMPONENT_TARGET_RUSTFLAGS
 }
 
 prepare_component() {

@@ -56,6 +56,11 @@ pub const STAGE2_JCO_NODE_IMPLEMENTATION_VERSION: &str =
 pub const STAGE2_WACOGO_ENVIRONMENT_NAME: &str =
     "visa_wacogo adapter with partite-ai/wacogo+wazero";
 pub const STAGE2_WACOGO_IMPLEMENTATION_VERSION: &str = "0.1.0";
+pub const STAGE2_WACOGO_SOURCE_LOCK_SHA256: &str =
+    "6897b1b98cef5516fc69f7144ac43e40469c5cad60a53d7135b25e638f6d56b3";
+pub const STAGE2_WACOGO_SIDECAR_SHA256: &str =
+    "6a1406459cc2b42c434fb97890d45558ab7d9c495b7dafac7516e8a97f1660e8";
+pub const STAGE2_WACOGO_SIDECAR_SIZE: u64 = 6_889_598;
 pub const STAGE2_WACOGO_ENGINE_VERSION: &str = concat!(
     "wacogo-v0.0.0-20260617023329-3de16a61796c+visa-patchset-v1/",
     "wazero-v1.11.1-0.20260418165552-5cb4bb3ec0c1"
