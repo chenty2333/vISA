@@ -3,113 +3,159 @@
 **Portable code is only half the story. Portable state moves; native resources
 are rebound.**
 
-vISA is a research system for capability-safe state continuity and conformance
-across heterogeneous WebAssembly runtimes and substrates. Its first reference
-capability lets a stateful component stop at an explicit safe point, carry
-portable semantic state instead of native handles, reacquire authority, rebuild
-resource bindings, resume, and produce executable evidence about what happened.
+vISA is a research prototype for capability-safe state continuity across
+WebAssembly Component Model runtimes and host substrates. It defines and tests
+what must happen when a stateful component stops at an explicit safe point,
+carries portable logical state forward, reacquires authority, rebuilds
+host-bound resources, and reconciles in-flight effects.
 
-> **Project status:** research prototype. The Stage 1 named Wasmtime reference
-> cell is complete for all 31 registered lifecycle and fault cases. The legacy
-> Stage 2a, 2b, and 2c Wasmtime/JcoNode path is also complete for its original
-> `cross-execution-path-portability` claim. A separate strict v3 path now runs
-> the unchanged Component and timer/KV profile through Wasmtime and a
-> source-lock-bound Wacogo derivative whose accepted Component Model lineage is
-> independent of Wasmtime and `wasmtime-environ`. Its exact four runtime cells
-> completed 124/124 executions and 31/31 normalized equality groups in fresh
-> Host and Docker runs, with all inner and outer independent verification
-> passing. The strict verifier accepts only
-> `strict-cross-runtime-continuity`. Both evidence paths remain limited to
-> x86-64/amd64 Linux. Roadmap Stage 2 is complete for this named timer/KV
-> scope and remains the independent-runtime control baseline. Stage 3A has a
-> bounded regular-file implementation and a qualified 12-case executable
-> evidence path; Stage 3B has a bounded logical-request (reconnectable-session)
-> implementation and a qualified 14-case evidence path. Both gates and their
-> independent structural bundle verifiers passed on the stage-closing
-> implementation revision, which passed pushed CI at its exact commit. Roadmap
-> Stage 3 is complete for these two named bounded profiles. Both Stage 3 paths
-> run Wasmtime to Wasmtime, explicitly record
-> `independent_runtime_coverage=false`, list Wacogo as unsupported, and do not
-> inherit the Stage 2 cross-runtime result. Bounded Stage 4 is complete only
-> for `named-target-substrate-continuity-v1` and
-> `emulated-cross-isa-continuity-v1`. Its accepted qualification revision
-> passed both Docker jobs in the exact-SHA workflow, and the uploaded evidence
-> was downloaded under a different root and independently reverified; the
-> complete receipt is recorded in [validation](docs/VALIDATION.md#stage-4-closure-receipt).
-> It keeps the Wasmtime timer/KV workload fixed while qualifying one native
-> x86-64 Linux endpoint and two QEMU-user endpoints with artifact-owned
-> worker/QEMU executables and identified sysroots, covering 7 unique cells,
-> 217/217 case executions, and 31/31 normalized equality groups. This is
-> semantic target/substrate and emulated cross-ISA evidence, not AOT-binary
-> portability, real ARM hardware, Stage 3 resource portability across targets,
-> or a second Stage 4 runtime.
-> The earned historical bounded systems/research claim
-> `bounded-joint-handoff-refinement-v1` remains fixed to vISA implementation revision
-> `d3b07f1114cb49e26dd62fb252a895022ac2a743`. Its source lock pins
-> remote-accepted neutral implementation `f4a8211f0e5fde13e0f6101be3c3322854458c79`
-> (tree `a65f264bb7eaf390cbd6285d791b4f7f43e9be25`). The neutral implementation's
-> exact-SHA artifact was downloaded and independently reverified; `be250c30...`
-> is its receipt lineage, not the accepted vISA implementation identity. The
-> separate Nexus qualification lock remains `prospective=true`, while the
-> neutral mapping still declares `adapter_qualification=false`. The same-boot
-> vISA/reference lane maps 16
-> normative neutral cases to 16 vISA cases and keeps one supplemental
-> retained-tombstone recovery. Its online `Coordinator<SqliteProvider>`
-> HostSubstrate cell retains 14-record commit and 9-record abort WAL
-> transcripts, including the exact pre-call bytes for seven ownership/effect
-> peer-invocation classes, for strict independent replay. Nexus-local handoff
-> admission and production-Registry refinement are locked to clean revision
-> `8e5123c46569e8ebdaba9f4f56bea6584ab58586`, source fingerprint
-> `017c681b...`, matrix `9f3f1579...`, and qualification-lock `21b5404b...`.
-> The exact-binary process tests pass at the accepted vISA revision. The
-> separate supplemental logical-request cell exercises both post-durable
-> ownership Commit acknowledgement loss and loss of the terminal Nexus response
-> before adapter acceptance, but the external effect
-> completes before native Register/Prepare/Commit. It therefore does not prove
-> Nexus admission ordered the effect or execute a vISA runtime handoff. Final
-> artifacts retain the exact executed binary by content identity without
-> claiming reproducible source-to-binary derivation. Exact-SHA CI for the
-> accepted vISA revision passed, and all four post-download verifier paths
-> accepted its artifacts against the committed locks. The
-> [closure receipt](docs/VALIDATION.md#joint-handoff-closure-receipt) records
-> that documentation lineage without replacing
-> `d3b07f1114cb49e26dd62fb252a895022ac2a743` as the implementation identity.
-> The cumulative successor `bounded-joint-handoff-refinement-v2` is now a
-> candidate. It inherits every v1 evidence axis and adds one admission-ordered
-> real-Wasmtime logical-request witness: production-Registry-backed Nexus
-> Register/Prepare/Commit is accepted before the application request, a lost
-> admission Commit acknowledgement recovers by exact request-ID replay in the
-> same live child, the external effect executes once, and Nexus frozen-cohort
-> closure, vISA source fence, destination activation, and Reconcile complete in
-> that order.
-> Preliminary exact-SHA CI passed at
-> `4314a181ded0862d7b1c7054f57f1bafd0595f07`; v2 remains `candidate` until the
-> final governance SHA passes the complete workflow and its original artifacts,
-> exact source bundles, checksums, and re-verification instructions enter one
-> fixed-inventory tar on an immutable release; the same tar has an independent
-> version-specific Zenodo DOI copy; and a committed manifest plus content-
-> addressed closure receipt binds the release attestation and exact first
-> workflow attempt. Zenodo is an independent long-term retention domain, not
-> the immutable integrity anchor; downloaded SHA-256-identical bytes are.
-> The HostSubstrate result assumes `exclusive_trusted_coordinator_api=true`:
-> its owning guards constrain a non-Byzantine orchestrator, not a second raw
-> `Coordinator`/provider handle or a hostile caller of public projection APIs.
-> Confidential-continuity, stable API, and production claims also remain
-> unearned. Roadmap Stage 5 has not started.
+> Current evidence is limited to the named profiles, runtimes, and Linux cells
+> summarized below. It does not establish transparent migration, arbitrary
+> live-resource transfer, physical cross-host deployment, or production
+> readiness.
 
-The newer current-main admission-ordered checkpoint is recorded separately in
-[`status/current-capabilities.toml`](status/current-capabilities.toml). At exact
-revision `4314a181...`, the checked same-host cell performs production Nexus
-`Register`/`Prepare`/`Commit` before the external logical request, recovers a
-lost Commit acknowledgement by byte-identical replay, and then executes vISA
-freeze, Nexus closure, source fencing, destination activation, and reconcile.
-It does not replace the accepted implementation identity above and is not yet a
-long-term archived checkpoint or a qualified production adapter.
+## The problem
 
-The following table is a mechanical identity and lifecycle index of project
-claims. Scope and evidence semantics remain authoritative in the linked Roadmap
-and Validation sections; [`claims/registry.json`](claims/registry.json) cannot
-define or widen them.
+WebAssembly makes code portable. It does not by itself make a running system's
+state portable.
+
+A stateful component may own logical data while depending on host-bound files,
+clocks, pending operations, credentials, or network sessions. Copying memory or
+a runtime-private snapshot cannot safely answer:
+
+- whether an in-flight effect completed, failed, or has an indeterminate
+  outcome;
+- how a resource should be revalidated, recreated, reconnected, or rejected;
+- whether the destination may reacquire equal or narrower authority;
+- how to fence the source before activating the destination; or
+- what evidence is sufficient to compare behavior across implementations.
+
+vISA defines and exercises that system-resource continuity boundary.
+
+## Continuity contract
+
+The project concentrates portable meaning in versioned resource profiles and a
+canonical lifecycle. A profile defines:
+
+- portable logical state, never file descriptors, sockets, native pointers,
+  credentials, or runtime-private objects;
+- resource disposition and typed recovery outcomes;
+- operation identity, idempotency, replay eligibility, and reconciliation;
+- authority compatibility, attenuation, reauthorization, and revocation;
+- quiescence, handoff, source fencing, destination activation, and cleanup; and
+- normalized observations and executable conformance evidence.
+
+Engines, kernels, filesystems, network stacks, QEMU, and external ownership
+services are adapters, providers, or comparison systems. They do not define the
+portable semantic truth.
+
+## Execution model
+
+```text
+WIT/WASI component + continuity profile
+                |
+       engine/personality adapter
+                |
+                v
+       vISA runtime coordinator
+       |  preflight canonical transition
+       |  execute effect through a port
+       |  commit outcome or record abort/indeterminate
+                |
+                v
+      canonical state + effect journal
+         |              |             |
+       views      snapshot/rebind   evidence
+                |
+                v
+        substrate/provider adapters
+```
+
+## Evidence snapshot
+
+| Profile or track | Qualified cell | Important boundary |
+| --- | --- | --- |
+| Timer and durable KV | 31 cases in all four directions formed by Wasmtime and a source-locked Wacogo derivative | 124 executions and 31 normalized equality groups on x86-64 Linux under one shared coordinator |
+| Regular file | 12 cases in the same four runtime directions, with three required stability runs per cell | One bounded Linux regular-file profile on x86-64 Linux |
+| Logical request | 14 cases from Wasmtime to Wasmtime | Reconnectable logical session, not preservation of a live socket; no independent-runtime coverage |
+| Target and ISA | Fixed timer/KV workload across seven native and QEMU-user cells | QEMU-user and the host kernel, not real ARM hardware, AOT-binary portability, or physical cross-host execution |
+| Joint handoff | Bounded same-boot composition with an admission-ordered successor | `v1` is earned; `v2` remains a candidate; neither is a production Nexus adapter |
+
+These are executable research cells, not a product support matrix. Exact case
+catalogs, source lineage, acceptance receipts, and non-claims live in the
+[validation contract](docs/VALIDATION.md), [roadmap](docs/ROADMAP.md), and
+[claim registry](claims/registry.json).
+
+The standards-facing problem statement is the
+[State Continuity Profiles discussion draft](docs/proposals/continuity-profile/README.md);
+community feedback is tracked in
+[WebAssembly/WASI#946](https://github.com/WebAssembly/WASI/issues/946).
+
+## Non-goals
+
+vISA does not currently claim:
+
+- a standard memory, process, or runtime snapshot format;
+- transfer of live native handles or transparent preemptive migration;
+- universal exactly-once effects, distributed consensus, or remote-effect
+  atomicity;
+- hostile-host security, confidential continuity, or rollback protection;
+- a new WebAssembly instruction set, operating system, Linux ABI, or device
+  stack; or
+- a stable API, performance result, or production-ready system.
+
+## Repository map
+
+| Path | Purpose |
+| --- | --- |
+| [`wit/`](wit/) | Component worlds and continuity-profile interfaces |
+| [`crates/core/`](crates/core/) | Canonical contracts, state, and effect semantics |
+| [`crates/runtime/`](crates/runtime/) and [`crates/host/`](crates/host/) | Runtime coordination and host-facing adapters |
+| [`crates/testing/`](crates/testing/) | Conformance runners, matrices, and independent verifiers |
+| [`claims/`](claims/) | Mechanical claim registry and closure receipts |
+| [`scripts/`](scripts/) | Repository gates, evidence publishers, and integrity checks |
+| [`docs/`](docs/) | Architecture, roadmap, development, validation, and research detail |
+
+## Development
+
+The supported environment is Docker-based:
+
+```sh
+docker compose build dev
+docker compose run --rm dev
+```
+
+Run the ordinary edit-loop gate and the cumulative repository gate with:
+
+```sh
+scripts/run-docker-ci-gate.sh fast
+scripts/run-docker-ci-gate.sh
+```
+
+System and evidence gates intentionally remain in the
+[development guide](docs/DEVELOPMENT.md), where each command is paired with its
+prerequisites. Their claim boundaries are defined in
+[validation](docs/VALIDATION.md).
+
+## Documentation
+
+- [Vision](docs/VISION.md): project purpose, users, and ownership boundary.
+- [Architecture](docs/ARCHITECTURE.md): components, lifecycle, dependency
+  direction, and invariants.
+- [Roadmap](docs/ROADMAP.md): capability and evidence sequence.
+- [Development](docs/DEVELOPMENT.md): environment, commands, and contribution
+  workflow.
+- [Validation](docs/VALIDATION.md): gates, evidence semantics, receipts, and
+  explicit non-claims.
+- [Research](docs/RESEARCH.md): related work, novelty boundaries, and
+  falsifiable questions.
+- [Continuity profile discussion](docs/proposals/continuity-profile/README.md):
+  standards-facing pre-proposal for WIT/WASI resource continuity.
+
+## Claim lifecycle index
+
+This table is a machine-checked identity and lifecycle index. It does not widen
+the scope or evidence defined by the roadmap, validation contract, and receipts.
 
 <!-- claims-registry:start -->
 | Claim ID | Status |
@@ -126,385 +172,18 @@ define or widen them.
 | `strict-cross-runtime-continuity` | `earned` |
 <!-- claims-registry:end -->
 
-`cross-runtime-regular-file-continuity-v1` is earned against exact accepted
-revision `3bd9eaad5aab3e792ca793e26bd064f403f626db` and GitHub Actions run
-[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012),
-attempt 1, whose 13 qualification jobs all succeeded. Its immutable
-[GitHub evidence release](https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence)
-and [Zenodo record](https://doi.org/10.5281/zenodo.21627497) carry the same
-16,732,160-byte archive with SHA-256
-`f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`.
-The committed receipt preserves the narrower scope and non-claims of the
-immutable semantic contract.
-
-## The problem
-
-WebAssembly makes code portable. It does not by itself make a running system's
-state portable.
-
-A stateful component may own logical data while also depending on host-bound
-files, sockets, clocks, pending asynchronous operations, credentials, or device
-leases. Copying memory or a runtime-internal snapshot cannot safely answer:
-
-- whether an in-flight effect completed, failed, or must be retried;
-- how a resource should be recreated, reconnected, proxied, or rejected;
-- whether the destination is allowed to reacquire the same authority;
-- how to prevent the source and destination from acting at the same time; or
-- what evidence is sufficient to claim equivalent behavior after recovery.
-
-vISA is intended to define and implement that missing system-resource
-continuity boundary.
-
-## What vISA owns
-
-- a versioned semantic contract for identity, generation, authority, effects,
-  waits, cancellation, failure, cleanup, and recovery;
-- one canonical state machine and effect journal;
-- runtime coordination for canonical commit, explicit abort or indeterminate
-  outcomes, quiescence, handoff, and source fencing;
-- portable snapshot envelopes and explicit resource rebinding rules;
-- compatibility profiles and executable conformance evidence; and
-- adapter contracts for runtimes, substrates, personalities, and resource
-  providers.
-
-## What vISA integrates with
-
-WebAssembly engines, kernels, Linux personalities, Virtio devices, filesystems,
-network stacks, CRIU/QEMU, and confidential-computing services are adapters,
-reference implementations, or comparison systems. They do not define vISA's
-portable semantic truth.
-
-In particular, vISA is not intended to become another WebAssembly compute ISA,
-a new general-purpose operating system, a complete Linux compatibility layer,
-a device stack, or a transparent migration system for arbitrary native
-processes.
-
-## Target execution model
-
-```text
-WIT/WASI component + vISA profile
-                |
-       engine/personality adapter
-                |
-                v
-       vISA runtime coordinator
-       |  preflight canonical transition
-       |  execute effect through a port
-       |  commit canonical outcome or record abort/indeterminate
-                |
-                v
-      canonical state + effect journal
-         |              |             |
-       views      snapshot/rebind   evidence
-                |
-                v
-        substrate/provider adapters
-```
-
-See [the vision](docs/VISION.md) for the problem and project boundary,
-[the architecture](docs/ARCHITECTURE.md) for responsibilities and invariants,
-and [the roadmap](docs/ROADMAP.md) for the first architecture-complete
-capability.
-
-## Current repository
-
-The active continuity spine covers the Stage 1 path, the legacy Stage 2a, 2b,
-and 2c Wasmtime/JcoNode paths, the source-lock-bound Wasmtime/Wacogo
-strict-runtime adapter and matrix paths, the two Stage 3 resource
-qualification paths, and the bounded Stage 4 target/substrate and emulated
-cross-ISA matrix. It also contains the isolated joint-handoff protocol core,
-runtime projection adapter, durable recovery log, conformance oracle,
-reference protocol lane, HostSubstrate vertical, exact-binary Nexus process
-cell, supplemental logical-request dual-lost-ack experiment, admission-ordered
-real-Wasmtime logical-request handoff cell, and standalone publisher/relocation
-runners for the earned `bounded-joint-handoff-refinement-v1` and candidate
-`bounded-joint-handoff-refinement-v2` systems/research claims. The claim
-registry mechanically connects those public identities and lifecycle states to
-their canonical scope, validation sections, and CI lanes without owning the
-scope or evidence semantics. Strict
-dependency-direction, legacy-deletion, toolchain-identity, and file-size checks
-protect it. Broader pre-reset models and target experiments remain isolated as
-oracle, reference, or compile-only paths; they do not define portable semantic
-truth.
-
-The Stage 3 qualification work uses separate regular-file and logical-request
-WIT worlds, guests, Wasmtime adapters, profile state codecs, host providers,
-system runners, evidence schemas, case registries, and independent structural
-bundle verifiers.
-It reuses the canonical authority, lease, journal, snapshot, reauthorization,
-and fencing path; it does not modify or re-sign the Strict Stage 2 Component,
-timer/KV registry, normalizer, or digest locks.
-
-Current documentation:
-
-- [Vision](docs/VISION.md): why vISA exists, who it is for, and what it does not
-  own.
-- [Architecture](docs/ARCHITECTURE.md): the accepted target boundary, lifecycle,
-  dependency direction, and invariants.
-- [Roadmap](docs/ROADMAP.md): capability and evidence sequence, including the
-  first cooperative stateful handoff slice.
-- [Development](docs/DEVELOPMENT.md): current Docker, Cargo, script, and
-  worktree workflow.
-- [Validation](docs/VALIDATION.md): current gate limits, target tiers, and
-  claim-to-evidence rules.
-- [Research](docs/RESEARCH.md): related work, non-novelty boundaries, and
-  falsifiable hypotheses.
-
-## Development
-
-The current supported environment is Docker-based. See the
-[development guide](docs/DEVELOPMENT.md) for details:
-
-```sh
-docker compose build dev
-docker compose run --rm dev
-```
-
-Run the current repository gates with:
-
-```sh
-scripts/run-docker-ci-gate.sh
-```
-
-Run the ordinary edit-loop gate while developing:
-
-```sh
-scripts/run-docker-ci-gate.sh fast
-```
-
-The cumulative `full` gate additionally covers workspace and feature tests,
-selected Wasm packages, no-std and kernel target checks, benchmark compilation,
-and report fixtures. It is not a live handoff gate.
-
-Run the standalone Stage 1 system gate with:
-
-```sh
-scripts/run-docker-ci-gate.sh system
-```
-
-`system` executes the real 31-case source/destination lifecycle, retains its
-artifacts, and independently validates the resulting evidence bundle. It does
-not repeat `full`; run both tiers when validating the repository and the named
-Stage 1 reference cell together.
-
-Run the Stage 2b JcoNode same-path cell with:
-
-```sh
-scripts/run-docker-ci-gate.sh system-jco-node
-```
-
-Run the complete Stage 2c four-direction matrix with:
-
-```sh
-scripts/run-docker-ci-gate.sh system-stage2
-```
-
-`system-jco-node` runs the same 31 cases through isolated Jco-translated
-Node/V8 workers. `system-stage2` runs all four Wasmtime/JcoNode pairs, for 124
-executions, and independently verifies the normalized outer bundle. Both are
-standalone system tiers and neither proves strict runtime independence or
-cross-ISA portability.
-
-Run the strict independent-runtime matrix with:
-
-```sh
-scripts/run-docker-ci-gate.sh system-stage2-strict
-```
-
-`system-stage2-strict` qualifies and reproducibly builds the source-lock-bound
-Wacogo sidecar, runs the exact Wasmtime/Wacogo four-cell matrix over the
-unchanged 31-case timer/KV registry, and independently verifies all 124
-executions and 31 normalized equality groups. It supports only
-`strict-cross-runtime-continuity` on x86-64/amd64 Linux; it does not prove
-cross-ISA portability or additional resource profiles.
-
-Run the bounded Stage 3 resource gates separately with:
-
-```sh
-scripts/run-docker-ci-gate.sh system-stage3a
-scripts/run-docker-ci-gate.sh system-stage3b
-scripts/run-docker-ci-gate.sh system-stage3
-```
-
-`system-stage3a` exercises one bounded regular file through read/write,
-logical-offset, append, truncate, rename/replacement, external-mutation,
-durability, lock/lease, reauthorization, fencing, and cleanup cases.
-On Linux filesystems that report `STATX_BTIME`, the provider revalidates both
-the namespace root and file with the fd-derived device/inode/birth-time tuple;
-missing birth time is unsupported and never falls back to device/inode alone.
-This detects ordinary inode-number reuse with a different creation timestamp,
-but birth time is not an inode-generation counter or cryptographic identity and
-does not establish a hostile-host claim. A second SQLite immediate transaction
-rechecks the durable intent, authority, lease epoch, and pre-state and remains
-held while the provider attempts the file effect and records its outcome. This
-orders admission to a vISA provider effect against handoff commit; the file
-mutation and SQLite outcome are not atomic, so a post-effect failure remains
-outcome-unknown and is reconciled from the durable plan. External-mutation
-coverage detects identity, content, or version drift already observable before
-a provider operation. Concurrent writers are ordered or rejected only when
-they participate in the same advisory lock/lease protocol; Stage 3A does not
-provide atomic compare-and-mutate against a writer that bypasses that protocol.
-`system-stage3b` exercises logical request identity, peer and credential
-validation, operation-ID deduplication, partial responses, unknown completion,
-timeout, cancellation, reconnect/replay policy, fencing, and cleanup over a
-real bounded loopback transport. Its `VISALR03` handshake uses a fresh nonce
-and HMAC-SHA-256 challenge/response to authenticate the configured peer before
-an application request frame is sent; reusable credential material is not put
-on the wire. Lookup and Cancel frames bind the logical operation ID to the
-expected request digest. Each application frame is emitted under an SQLite
-send fence that rechecks authority, lease epoch, and resource binding, while
-ledger revisions reject stale saves and terminal, cursor, or cleanup rollback.
-These are host-local transactional guarantees for the bounded profile, not
-remote-effect atomicity or general transport encryption. Their claims exclude
-arbitrary directory trees, devices, FIFOs, arbitrary open file descriptors,
-preservation of a raw live TCP connection, runtime future/stream state, and a
-general async runtime.
-`system-stage3` runs both profiles in sequence. These are Wasmtime-only Stage 3
-qualification gates; run
-`system-stage2-strict` separately to preserve the independent-runtime control.
-Both Stage 3 profiles still trust the host process, kernel, SQLite state, and
-provider-local credential store. `STATX_BTIME`, SQLite fencing, and `VISALR03`
-peer authentication do not establish a hostile-host or confidential-channel
-boundary.
-
-Run the bounded Stage 4 aggregate gate with:
-
-```sh
-scripts/run-docker-ci-gate.sh system-stage4
-```
-
-Stage 4 holds the Stage 1 Component, Wasmtime source/destination runtime,
-timer/KV profile, 31-case registry, host kernel, and `substrate_host` SQLite
-provider fixed within the matrix while varying three named execution endpoints:
-
-- `Hx`: the artifact-owned worker runs natively on x86-64 Linux;
-- `Qx`: the artifact-owned x86-64 worker runs under the artifact-owned
-  `qemu-x86_64` with `-cpu max` and the identified `/` sysroot; and
-- `Qa`: the artifact-owned AArch64 worker runs under the artifact-owned
-  `qemu-aarch64` with `-cpu max` and the identified
-  `/usr/aarch64-linux-gnu` sysroot.
-
-The `named-target-substrate-continuity-v1` claim covers `Hx->Hx`, `Hx->Qx`,
-`Qx->Hx`, and `Qx->Qx`. The `emulated-cross-isa-continuity-v1` claim covers
-`Qx->Qx`, `Qx->Qa`, `Qa->Qx`, and `Qa->Qa`. Because `Qx->Qx` is shared, the
-aggregate contains 7 unique cells rather than 8. Every cell executes the same
-31 cases, for 31 × 7 = 217 executions, and the independent outer verifier
-recomputes 31 equality groups across all 7 cells.
-
-This proves equality of the named portable semantic observations across the
-qualified matrix. It does not prove that an AOT native binary is portable: the
-x86-64 and AArch64 workers are separately built target binaries. QEMU-user
-translates user-space instructions but still uses the same host kernel, so
-`Qa` is not a real ARM machine or an ARM-kernel result. The aggregate retains
-the raw stdout and stderr from `/usr/bin/uname -s -r -m` and verifies the host
-receipt; it does not vary the kernel or provider as another matrix dimension.
-
-The Stage 4 publisher creates a durable `stage4-incomplete` marker before
-running cells. Staged verification requires that marker, successful publication
-removes it, and published verification rejects a retained marker. The verifier
-also enforces the exact manifested artifact set and rejects missing,
-unmanifested, temporary, symlinked, hard-linked, or special entries. The local
-gate first verified the successful root, then moved that entire directory to a
-new absolute path without rewriting its JSON and verified it again. The
-recorded execution root remains historical launcher provenance, while artifact
-lookup is relative to the verifier-supplied current root. The accepted Actions
-artifact was later downloaded beneath a different parent and independently
-verified; that downloaded bundle was then moved once more without changing its
-JSON and verified again. The exact receipt is in
-[validation](docs/VALIDATION.md#stage-4-closure-receipt).
-
-The existing `performance-observations` case keeps its original 50 ms timer
-input. It records target-dependent steady-state samples, then waits for that
-timer plus the existing margin before beginning quiescence and verifies the
-fixed `Completed` continuity branch. This prevents QEMU speed from changing a
-semantic `Pending`/`Completed` outcome; it is not a production performance
-claim.
-
-The bounded matrix explicitly does not claim Stage 3 file or logical-request
-resources across targets, a second Stage 4 runtime, AOT-binary portability,
-the legacy no-std reference kernel, real device enforcement, real AArch64
-hardware, cross-host execution, 32-bit or big-endian targets, hostile-host or
-confidential continuity, or production/performance readiness. The
-implementation, exact-SHA workflow, and downloaded-artifact checks complete
-Roadmap Stage 4 only for the two named claims above; every listed exclusion
-remains unearned.
-
-Run the accepted bounded joint-handoff gate with:
-
-```sh
-scripts/run-docker-ci-gate.sh system-joint-handoff
-```
-
-This gate source-locks the 16-case neutral composition, runs 16
-production-reducer traces and 17 reference ownership/effect scenarios (16
-normative plus one supplemental retained-tombstone recovery), and executes the
-independently verified HostSubstrate commit and abort verticals. The current
-source lock pins remote-accepted neutral implementation
-`f4a8211f0e5fde13e0f6101be3c3322854458c79`; it deliberately remains
-`reference-only-not-nexus-qualified` because Nexus execution truth is carried by
-the separate v2 qualification lock.
-
-The exact-binary process lane is published with
-`scripts/run-nexus-process-joint-cell.sh`. Its runner requires clean vISA and
-Nexus checkouts, independently verifies the Nexus v2 receipt, publishes a strict
-three-file manifest/report/executed-binary artifact, verifies it in another
-process, relocates it, and verifies the same bytes again. The separate
-`run-logical-request-lost-ack-cell.sh` publisher emits a five-file supplemental
-artifact with its two SQLite databases. Both retain binary content identity but
-do not re-execute it during verification or claim reproducible derivation. The
-accepted exact-revision artifacts were generated from clean checkouts, then
-downloaded under independent roots and reverified against the committed locks.
-
-The admission-ordered successor witness is published with:
-
-```sh
-scripts/run-logical-request-admission-cell.sh \
-  --nexus-checkout <clean-nexus-checkout> \
-  --nexus-bin <exact-nexus-effect-peer> \
-  --artifact-root <new-final-artifact-root>
-```
-
-It retains a strict seven-file artifact: manifest, report, source and
-destination substrate stores, ownership log, joint-projection log, and the
-executed Nexus binary. The verifier checks that no external
-request or execution occurs before Nexus Commit, exactly one execution occurs
-after admission, the ownership decision survives lost acknowledgement and
-SQLite reopen, and Nexus frozen-cohort closure, vISA source fence, destination
-activation, and Reconcile occur in that order without duplicating the effect.
-Nexus Commit
-acknowledgement recovery uses the same live child and does not prove Nexus
-process death or restart durability. This commit-path witness is not a live
-implementation of all 16 neutral cases and does not replace the older
-dual-lost-ACK artifact, which uniquely exercises loss of the terminal Nexus
-close response.
-
-The HostSubstrate refinement assumes an exclusive trusted coordinator API. A
-second raw `Coordinator` or provider handle that bypasses the durable joint
-guard is a TCB violation; provider-level prevention of Byzantine in-process
-bypass is not claimed. Neither the vISA lane nor the native-v1 mapping
-extension or local Nexus/process evidence establishes Registry replacement,
-real OSTD execution, IRQ/SMP behavior, the production retained-tombstone path,
-cross-host execution, host-reboot or
-permanent-source-loss recovery, cryptographic authenticity, hostile rollback
-or freshness protection, TEE/KMS behavior, confidentiality, or Stage 5.
-
 ## Engineering principles
 
-- Keep one canonical model and one authoritative execution path.
+- Keep one canonical model and one authoritative execution truth.
 - Preserve portable semantic state; rebuild or explicitly reject native
   bindings.
-- Reauthorize on restore. Never treat an old native handle as authority.
-- Make failure, cancellation, cleanup, rollback, and unsupported behavior
+- Reauthorize on restore and fence the source before destination activation.
+- Make effects, failure, cancellation, cleanup, and indeterminate outcomes
   explicit.
 - Derive views, snapshots, and evidence from execution truth rather than
-  maintaining parallel ledgers.
-- Keep the project claim registry as a mechanical identity/lifecycle index;
-  narrative scope and executable evidence remain authoritative in their owning
-  documents and code.
+  parallel ledgers.
 - Tie every public claim to an executable scenario and an identified runtime,
-  ISA, substrate, resource profile, and fault boundary.
-- Keep durable documentation short; use code and tests as the final proof of
-  implemented behavior.
+  resource profile, substrate, ISA, and fault boundary.
 
 ## License
 
