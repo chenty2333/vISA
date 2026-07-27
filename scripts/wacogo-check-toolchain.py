@@ -105,8 +105,8 @@ def load_go_lock() -> dict[str, object]:
         },
         {
             "profile": "regular-file-v1",
-            "size": 215370,
-            "sha256": "c7fd1ec2a2f0fa7c33c7587bbbf686c1cc04a94937c3eb25707222973af69541",
+            "size": 215376,
+            "sha256": "d5f50655bd62916dc2b821bc3878547ed6800b16be2ab19bec5e1f39a6628109",
         },
     ]:
         fail("source lock production sidecar accepted Component registry is invalid")

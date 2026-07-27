@@ -371,7 +371,7 @@ verify_locked_sidecar() {
     [[ "$observed_size" == 6889598 ]] \
         || fail "Wacogo sidecar size mismatch: expected 6889598, observed $observed_size"
     [[ "$observed_sha" == \
-        6a1406459cc2b42c434fb97890d45558ab7d9c495b7dafac7516e8a97f1660e8 ]] \
+        972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb ]] \
         || fail "Wacogo sidecar SHA-256 mismatch: $observed_sha"
 }
 

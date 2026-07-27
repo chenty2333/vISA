@@ -8,7 +8,7 @@ pub const WACOGO_VERSION: &str = "v0.0.0-20260617023329-3de16a61796c";
 pub const WACOGO_REVISION: &str = "3de16a61796ce02d29795e4a074f37a33e6ebd87";
 pub const SOURCE_LOCK_SCHEMA: &str = "visa.wacogo-source-lock.v2";
 pub const SOURCE_LOCK_SHA256: &str =
-    "6897b1b98cef5516fc69f7144ac43e40469c5cad60a53d7135b25e638f6d56b3";
+    "7bb25d170435b604669253f67005378382ff55d48b7cf5495a586c2db1b9b755";
 pub const DERIVATIVE_ID: &str = "partite-ai-wacogo-3de16a61796c-visa-patchset-v1";
 pub const UPSTREAM_MODULE: &str = "github.com/partite-ai/wacogo";
 pub const UPSTREAM_MODULE_SUM: &str = "h1:WAxQQFk9xW0jy0cu1Ql4JaaUJTUMo0GsK5TNn5Nliiw=";
@@ -23,7 +23,7 @@ pub const TARGET: &str = "linux/amd64";
 pub const MAIN_MODULE: &str = "visa.local/wacogo-runtime";
 pub const SIDECAR_EXECUTABLE_SIZE: u64 = 6_889_598;
 pub const SIDECAR_EXECUTABLE_SHA256: &str =
-    "6a1406459cc2b42c434fb97890d45558ab7d9c495b7dafac7516e8a97f1660e8";
+    "972357e1a9fa23618372c5d4b5efb1683f742c8de991c18df5c0f05c888b9acb";
 pub const PATCH_SHA256S: [&str; 3] = [
     "c04b82a5ec2a95c45f5f81bdce5b2cbff11e25556865eb19928b48b6f94eed69",
     "3531ff7a61de7c41f4237d7077a4dd0602bedd15e3067db070fd3e659575a37e",
