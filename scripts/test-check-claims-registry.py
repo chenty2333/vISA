@@ -7,7 +7,7 @@ import copy
 import hashlib
 import importlib.util
 import json
-import shutil
+import subprocess
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -49,17 +49,11 @@ class ClaimRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(REGISTRY.RegistryError, expected_error):
             REGISTRY.validate_registry(candidate, root)
 
-    def materialize_minimal_repository(self, root: Path) -> None:
-        for relative in REGISTRY.CANONICAL_DOCS:
-            destination = root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, destination)
-
-        for claim in self.registry["claims"]:
-            for relative in claim["implementation_refs"]:
-                destination = root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.touch()
+    def materialize_repository(self, root: Path) -> None:
+        subprocess.run(
+            ["git", "clone", "--quiet", "--shared", str(ROOT), str(root)],
+            check=True,
+        )
 
     def test_repository_registry_is_valid(self) -> None:
         self.assert_baseline_valid()
@@ -137,7 +131,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_implementation_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             target = root / "fixtures/implementation-target"
             link = root / "fixtures/implementation-link"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +149,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_canonical_document_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             self.assert_baseline_valid(root)
             roadmap = root / "docs/ROADMAP.md"
             roadmap.unlink()
@@ -170,7 +164,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_readme_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             self.assert_baseline_valid(root)
             readme = root / "README.md"
             readme.unlink()
@@ -185,7 +179,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_readme_index_rejects_extra_marker_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             readme = root / "README.md"
             readme.write_text(
                 readme.read_text(encoding="utf-8").replace(
@@ -226,7 +220,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_format_only_v1_receipt_cannot_promote_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             candidate = copy.deepcopy(self.registry)
             claim = candidate["claims"][1]
             claim["status"] = "earned"
@@ -286,7 +280,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_candidate_rejects_unconsumed_closure_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             self.assert_baseline_valid(root)
 
             receipt = (
@@ -305,7 +299,7 @@ class ClaimRegistryTests(unittest.TestCase):
     def test_candidate_rejects_a_dangling_receipt_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.materialize_minimal_repository(root)
+            self.materialize_repository(root)
             receipt = (
                 root
                 / "claims/receipts/bounded-joint-handoff-refinement-v2.json"

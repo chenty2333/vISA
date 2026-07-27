@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import http.client
 import json
 import os
 import re
@@ -155,29 +154,47 @@ def upload_zenodo_bucket_file(bucket_url: str, token: str, path: Path) -> dict[s
         "Zenodo bucket URL is outside the production files API",
     )
     target = f"{parsed.path.rstrip('/')}/{urllib.parse.quote(path.name, safe='')}"
-    connection = http.client.HTTPSConnection(parsed.hostname, timeout=180)
-    try:
-        connection.putrequest("PUT", target)
-        connection.putheader("Accept", "application/json")
-        connection.putheader("Authorization", f"Bearer {token}")
-        connection.putheader("Content-Type", "application/x-tar")
-        connection.putheader("Content-Length", str(path.stat().st_size))
-        connection.endheaders()
-        with path.open("rb") as source:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                connection.send(block)
-        response = connection.getresponse()
-        payload = response.read(MAX_JSON_BYTES + 1)
-        require(len(payload) <= MAX_JSON_BYTES, "Zenodo bucket response is too large")
-        if response.status < 200 or response.status >= 300:
-            detail = payload.decode("utf-8", errors="replace")
-            raise ArchiveError(
-                f"Zenodo PUT {target} failed ({response.status}): {detail}"
-            )
-    except (OSError, http.client.HTTPException) as error:
-        raise ArchiveError(f"Zenodo bucket upload failed: {error}") from error
-    finally:
-        connection.close()
+    require(
+        re.fullmatch(r"[A-Za-z0-9._~-]+", token) is not None,
+        "Zenodo token contains unsafe curl configuration characters",
+    )
+    config = "\n".join(
+        (
+            'header = "Accept: application/json"',
+            f'header = "Authorization: Bearer {token}"',
+            'header = "Content-Type: application/x-tar"',
+            'header = "Expect: 100-continue"',
+        )
+    )
+    result = subprocess.run(
+        [
+            "curl",
+            "--config",
+            "-",
+            "--silent",
+            "--show-error",
+            "--fail-with-body",
+            "--proto",
+            "=https",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "300",
+            "--upload-file",
+            str(path),
+            "--url",
+            f"https://{parsed.hostname}{target}",
+        ],
+        input=config + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stdout.strip() or result.stderr.strip() or "nonzero exit"
+        raise ArchiveError(f"Zenodo PUT {target} failed: {detail}")
+    payload = result.stdout.encode()
+    require(len(payload) <= MAX_JSON_BYTES, "Zenodo bucket response is too large")
     try:
         value = json.loads(payload)
     except json.JSONDecodeError as error:

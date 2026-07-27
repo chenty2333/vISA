@@ -23,6 +23,7 @@ from claim_archive_publish import (  # noqa: E402
     prepare_zenodo_deposition,
     preflight_publication,
     resolve_zenodo_deposition,
+    upload_zenodo_bucket_file,
     validate_build_result,
     zenodo_file_identity,
     zenodo_metadata,
@@ -96,6 +97,36 @@ class ClaimArchivePublishTests(unittest.TestCase):
         expected = ("evidence.tar", 42, "md5:" + "a" * 32)
         self.assertEqual(zenodo_file_identity(current, "current"), expected)
         self.assertEqual(zenodo_file_identity(legacy, "legacy"), expected)
+
+    def test_bucket_upload_uses_documented_streaming_path_without_token_in_argv(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="visa-archive-curl-upload-") as temporary:
+            archive = Path(temporary) / "evidence.tar"
+            archive.write_bytes(b"archive bytes\n")
+            response = {
+                "key": archive.name,
+                "size": archive.stat().st_size,
+                "checksum": "md5:" + "a" * 32,
+            }
+            completed = subprocess.CompletedProcess(
+                ["curl"], 0, json.dumps(response), ""
+            )
+            with mock.patch(
+                "claim_archive_publish.subprocess.run", return_value=completed
+            ) as execute:
+                self.assertEqual(
+                    upload_zenodo_bucket_file(
+                        "https://zenodo.org/api/files/test-bucket",
+                        "secret-token",
+                        archive,
+                    ),
+                    response,
+                )
+            command = execute.call_args.args[0]
+            self.assertNotIn("secret-token", command)
+            self.assertIn("--upload-file", command)
+            config = execute.call_args.kwargs["input"]
+            self.assertIn("Authorization: Bearer secret-token", config)
+            self.assertIn("Expect: 100-continue", config)
 
     def test_partial_same_name_zenodo_upload_is_replaced_on_resume(self) -> None:
         with tempfile.TemporaryDirectory(prefix="visa-archive-zenodo-resume-") as temporary:
