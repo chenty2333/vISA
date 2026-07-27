@@ -1,222 +1,223 @@
 # State Continuity Profiles for WebAssembly Components
 
-A pre-proposal discussion draft prepared from the vISA reference
-implementation.
+> A portable contract for rebinding host resources, reacquiring authority,
+> and reconciling in-flight effects.
 
-Status: working draft for community discussion. This is not a WASI proposal,
-not a Component Model design document, and not a canonical vISA truth
-source. It exists to test whether the continuity-profile concept is worth
-bringing to the WASI Subgroup as a phase-0 proposal. Statements about
-executable evidence below are scoped exactly as in the vISA validation
-documents; nothing here widens them.
+Status: working discussion draft for a possible WASI Phase 0 pre-proposal.
+[Phase 0](https://github.com/WebAssembly/WASI/blob/main/CONTRIBUTING.md#the-phase-process)
+is an idea-sharing stage; this document is not proposed specification text.
 
-Champion: to be determined (vISA maintainer).
+Initial contributor: vISA maintainer. Champion or champions: to be determined
+through community discussion.
 
-## The problem
+## Summary
 
-The Component Model gives components portable code, typed interfaces, and
-resource handles with ownership and destruction semantics. WASI 0.3 adds
-native async. None of the active WASI proposals defines what happens to the
-state *between* a component and its host when the component must stop on one
-host and continue on another:
+The Component Model defines typed interfaces and ownership semantics for
+[resource handles](https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md#handles).
+WASI defines host capabilities exposed through those interfaces. The
+[current WASI proposal list](https://github.com/WebAssembly/WASI/blob/main/docs/Proposals.md)
+does not identify a cross-interface contract for host-bound state when a
+stateful component stops in one runtime or host and resumes in another.
 
-- A WIT `resource` handle is host-local. The logical thing it names — a
-  timer with remaining duration, a key-value namespace, a file cursor, an
-  in-flight outbound request — may or may not be reconstructible elsewhere.
-- Granted authority is host-local. "This component may write namespace N"
-  must be re-established under the destination's policy, possibly narrower,
-  and must become unusable at the source once the move commits.
-- An in-flight effect may have completed, failed, or be unknowable at the
-  moment of the move. Pretending any one of those is the general case
-  produces either lost effects or duplicated ones.
+That boundary has three separate problems:
 
-Today every platform that moves stateful components — stateful serverless,
-edge relocation, runtime upgrades — answers these questions privately and
-incompatibly. Machine-level snapshots (CRIU, VM migration) preserve memory
-faithfully but cannot answer them at all, because the answers are semantic:
-they are about idempotency, authority, and effect status, not bytes.
+- **Resource identity and state:** an
+  [instance-scoped capability handle](https://github.com/WebAssembly/WASI/blob/main/docs/Capabilities.md#runtime-capabilities)
+  is not a portable identity for a timer, file, namespace, request, or other
+  host object.
+- **Authority:** access must be granted again under destination policy, must
+  not become broader, and must become unusable at the source after commit.
+- **Effects:** an operation may be complete, failed, not started, or
+  indeterminate. Retry is safe only when the interface defines sufficient
+  operation identity and recovery semantics.
 
-## The claim this draft makes
+The proposed direction is a **continuity profile** associated with an existing
+WIT/WASI interface. It describes portable logical state, resource rebinding,
+effect recovery, authority compatibility, and lifecycle invariants. It does
+not serialize native handles or standardize a memory snapshot format.
 
-Portable execution requires a stable boundary between component-owned
-semantic state and host-owned native bindings. That boundary can be
-expressed as a **continuity profile** over existing WIT interfaces, without
-a new IDL, a new handle system, or a standard checkpoint format.
+The desired interoperability statement is:
 
-A continuity profile for an interface answers, per resource type and per
-operation:
+> If a component, source host, and destination host claim support for profile
+> P, the destination either resumes with P's profile-defined portable
+> observations and no broader authority, or returns a typed rejection before
+> any destination effect. Unsupported and indeterminate states never become
+> implicit success.
 
-1. **Portable state**: which logical state crosses hosts (e.g. remaining
-   logical timer duration; namespace name and last observed version; file
-   identity, cursor, and content digest; request operation-id and phase).
-   Never file descriptors, sockets, pointers, credentials, or
-   runtime-private objects.
-2. **Continuity disposition**: what the destination does to the resource —
-   `revalidate` (same underlying object, checked), `recreate` (fresh
-   binding, logical state re-applied), `reconnect` (session re-established),
-   `replay` (idempotent re-issue), or `reject` (the move must fail, before
-   any destination effect). Dispositions are declared per type, not
-   discovered at runtime.
-3. **Effect discipline**: which operations carry idempotency keys or
-   operation-ids, and what `indeterminate` means for each. An operation
-   whose completion is unknowable at a safe point must be representable as
-   explicitly unresolved, and resolvable by reconciliation, not guessed.
-4. **Authority rule**: what "equal or narrower authority" means for the
-   type, and what evidence the destination host needs to grant it.
+How a profile is encoded is deliberately open. The semantic contract should
+be agreed before choosing wrapping worlds, companion metadata, world
+composition, or a generic WIT hook.
 
-The lifecycle around the profile is deliberately small: a component reaches
-an explicit safe point (cooperative quiescence, not preemption), exports its
-portable state, is fenced at the source under an epoch, and is resumed at
-the destination with freshly granted bindings. One fencing epoch admits at
-most one active writer; a committed move makes the source unable to act; a
-failed pre-commit move leaves the destination without authority.
+## Motivating use case
 
-## Goals
+Consider a component on host A that owns a key-value namespace and issues a
+conditional write with an operation ID. The provider durably applies the
+write, but the acknowledgement is lost just before the platform must relocate
+or restart the component.
 
-- Define the vocabulary (safe point, portable state, disposition,
-  idempotency/indeterminacy, fencing epoch, attenuated reauthorization) as
-  profile annotations *around* existing WIT/WASI interfaces.
-- Make "this interface is continuity-capable under profile P" a testable,
-  runtime-neutral statement, with a conformance suite that exercises
-  success, denial, unsupported, cancellation, failure, duplicate delivery,
-  and lost-acknowledgement paths — not only the happy path.
-- Stay carrier-neutral: linear-memory capture (Asyncify, engine snapshots,
-  OSR-based approaches) is a replaceable compute-state carrier underneath
-  the same semantic contract, not part of it.
+1. The component reaches a cooperative safe point and exports namespace
+   identity, last observed version, operation ID, and request phase. It does
+   not export a resource-table index, provider connection, or credential.
+2. The source reconciles the operation by its identity. If the result cannot
+   be established under the profile, it remains explicitly `indeterminate`
+   and destination activation is blocked rather than guessed.
+3. Host A's source authority is fenced before host B becomes active. Host B
+   applies its own policy, grants equal or narrower authority, and creates a
+   fresh namespace binding.
+4. The component restores its logical state with the new binding. It does not
+   observe the old handle as having survived the move.
 
-## Non-goals
+A private platform can implement this sequence today. The interoperability gap
+is that another component or host cannot discover a standard declaration of
+the required state, outcomes, and safety conditions for the resource
+interface.
 
-- No second IDL, component linker, handle system, or async primitive. WIT
-  resources and WASI 0.3 futures/streams are the vocabulary; this profile
-  layer must reuse them or fail its own premise.
-- No standard snapshot byte format, no memory pre-copy or dirty-page
-  transport, no arbitrary-process checkpointing.
-- No claim of universal exactly-once effects. The profile makes effect
-  status explicit and reconcilable; it does not repeal distributed-systems
-  reality.
-- No transparent migration of arbitrary unmodified programs at arbitrary
-  instructions. Safe points are explicit and cooperative.
-- No security-protocol invention: attestation, key release, and transport
-  protection compose from existing mechanisms (RATS, in-toto formats) and
-  are out of scope here.
+## Proposed contract
 
-## Shape sketch (non-normative)
+A continuity profile is associated with a resource kind and the operations
+that affect its portable observations. It specifies:
 
-The reference implementation currently expresses a profile as a concrete
-WIT world plus host-side contract. The timer/key-value world that all
-cross-runtime evidence uses (`visa:continuity@0.1.0`, in
-[`wit/cooperative-handoff/world.wit`](../../../wit/cooperative-handoff/world.wit))
-illustrates the idioms a standardized profile would name generically:
+1. **Portable state.** Logical fields, versions, and validation rules. File
+   descriptors, sockets, native pointers, reusable credentials, and
+   runtime-private objects are excluded.
+2. **Resource disposition.** Allowed destination actions and their conditions:
+   `revalidate`, `recreate`, `reconnect`, or `reject`. Selection is explicit
+   and produces a typed result, not an untyped fallback.
+3. **Effect recovery.** Operation IDs or idempotency keys, completion queries,
+   replay conditions, and the meaning of `indeterminate`. Replay is an effect
+   rule, not evidence that a native resource survived.
+4. **Authority compatibility.** A profile-specific relation for an acceptable
+   destination grant. The destination may attenuate authority but may not
+   silently widen it.
+5. **Lifecycle invariants.** Safe-point requirements, source fencing before
+   destination activation, and authority state after pre-commit failure or
+   committed handoff.
 
-- Every mutating operation takes an explicit idempotency key
-  (`conditional-put(idempotency-key, key, expected-version, value)`), so
-  destination-side replay after an indeterminate outcome is safe by
-  construction.
-- Error variants distinguish `denied`, `conflict`, `stale-binding`,
-  `unavailable`, and `indeterminate` — the five answers a host can honestly
-  give across a continuity boundary. `stale-binding` is what a fenced
-  source returns after commit.
-- The component exports `freeze -> component-state` and
-  `restore(component-state, remaining-duration-ns, own<namespace>,
-  own<timer-binding>)`: portable state out, fresh owned bindings in. The
-  component never sees a rebound native handle "survive"; it is always
-  handed new ones with old logical state.
-- The logical-request world
-  ([`wit/logical-request-continuity/world.wit`](../../../wit/logical-request-continuity/world.wit))
-  adds the harder vocabulary: `delivery-policy`
-  (deduplicated / at-most-once / at-least-once / non-recoverable),
-  `replay-policy`, `request-phase` including `unknown-completion` and
-  `reconciling`, and a `continuity-disposition` enum
-  (revalidate / reconnect / replay / reject) declared per transport. A raw
-  live TCP connection is honestly `non-recoverable`: the profile's answer
-  is explicit rejection or reconnection, not silent preservation.
+`reject` is a valid interoperable result. Some resources, such as an arbitrary
+live TCP connection, may have no safe disposition under a given profile.
 
-A standardized version would likely be: a small `wasi:continuity` interface
-family (safe-point signaling, portable-state envelope, binding
-reacquisition) plus a convention for annotating existing interfaces (for
-example `wasi:keyvalue`, `wasi:clocks`-based timers, `wasi:http` outbound)
-with per-type dispositions and idempotency requirements. Whether annotation
-lives in WIT syntax, in a sidecar profile document, or in world composition
-is an open design question — deliberately not answered here.
+## Responsibility boundary
 
-## Reference implementation evidence
+| Participant | Responsibility |
+| --- | --- |
+| Interface and profile author | Defines portable state, dispositions, effect rules, authority compatibility, and typed outcomes. |
+| Component | Cooperates at a declared safe point and exports or restores profile-defined logical state. |
+| Source host or provider | Reconciles effects, freezes native bindings, and makes old authority unusable when commit requires it. |
+| Destination host or provider | Applies policy, reacquires authority, validates state, and creates fresh native bindings. |
+| Orchestrator and state carrier | Sequences the handoff and transports state; its coordination and transport protocols are outside the profile. |
 
-All evidence is x86-64 Linux, produced by exact-commit CI with independent
-verifier binaries, and each result names its own boundary; the receipts live
-in the vISA validation contract (`docs/VALIDATION.md`).
+The profile standardizes observable preconditions, results, and invariants. It
+does not require WASI itself to implement a migration coordinator or
+distributed consensus.
 
-- The timer/KV profile above completed a 31-case lifecycle/fault matrix
-  (success, denial, attenuation, unsupported profile, stale generation,
-  revocation, timer completion/cancellation during quiescence, pre/post
-  commit failure, lost acknowledgements, duplicate restore, tampered
-  snapshot, version rejection) on Wasmtime.
-- The same unchanged component and profile then ran a strict four-cell
-  cross-runtime matrix — Wasmtime and a source-locked wacogo derivative
-  with an independent Component Model lineage, in all four
-  source/destination pairings — at 124/124 case executions and 31/31
-  normalized-equality groups. This is the profile's strongest evidence:
-  continuity semantics held across two independently implemented runtimes,
-  which is exactly what a standard must survive.
-- Bounded regular-file and reconnectable logical-request profiles passed
-  their 12- and 14-case matrices (Wasmtime-to-Wasmtime only; they do not
-  inherit the cross-runtime result).
-- A target/substrate matrix held the profile fixed across one native and
-  two QEMU-user-emulated endpoints (217/217 executions). Emulated, not real
-  second-ISA hardware.
+## Goals and non-goals
 
-Equally relevant is what the reference implementation refuses to claim:
-no cross-runtime coverage for file/request profiles yet, no real ARM
-hardware, no raw TCP continuation, no general exactly-once, no production
-readiness. A profile standard needs precisely this discipline in its
-conformance tiers, and the vISA claim registry demonstrates one workable
-mechanization of it.
+Goals:
 
-## Relationship to existing work
+- Define reusable vocabulary for portable state, disposition, effect
+  reconciliation, authority attenuation, safe points, and fencing.
+- Make "interface I is continuity-capable under profile P" a testable,
+  runtime-neutral statement, including typed denial, failure, duplicate,
+  lost-acknowledgement, and indeterminate paths.
+- Reuse existing WIT/WASI vocabulary and remain independent of the
+  compute-state capture mechanism.
 
-- **WASI 0.3 / Component Model**: provides async, typed resources, and
-  ownership — the vocabulary this layers on. No active WASI proposal
-  covers checkpoint/continuity/rebinding today.
-- **Wasm migration research** (Nomad; WasmEdge/WAMR migration; OSR-based
-  cross-ISA C/R; self-hosted runtimes; Asyncify-based capture): carriers
-  for compute state. This profile is the missing contract those systems
-  each reinvent for external resources; several explicitly name
-  runtime-external state as future work.
-- **CRIU / VM migration**: precedent for versioned state, blockers, and
-  source preservation before commit; CRIU's external-resource callouts are
-  the process-level statement of the same gap.
-- **Durable execution** (Temporal, Restate): effect journaling and
-  idempotency at the workflow layer; this profile sits below, at the
-  component/host interface, and should compose with rather than replace
-  them.
+Non-goals:
 
-## Open questions for discussion
+- No second IDL, replacement handle system, new async primitive, memory
+  snapshot format, memory transport, or arbitrary-process checkpointing.
+- No serialization of native handles, credential material, or runtime-private
+  state, and no transparent preemptive migration of arbitrary unmodified
+  programs. Profile-aware continuity uses cooperative safe points.
+- No universal exactly-once guarantee. Profiles expose replay conditions,
+  reconciliation, and indeterminacy without hiding distributed-systems limits.
+- No standard consensus, attestation, key-distribution, transport-security,
+  or source-fencing protocol. Such mechanisms may satisfy profile requirements
+  but remain separate concerns.
 
-1. Is per-interface annotation (dispositions, idempotency requirements)
-   acceptable to interface owners, or must continuity remain a separate
-   wrapping world per resource family?
-2. Should safe-point/quiescence signaling be a host import, an export
-   convention (as in the reference `freeze`/`restore`), or a canonical-ABI
-   level facility?
-3. What is the minimal portable-state envelope worth standardizing —
-   opaque-bytes-plus-digest with versioning rules, or typed per-profile
-   records as the reference does?
-4. Where do conformance tiers live, and can the evidence discipline
-   (named environment, named fault matrix, no inheritance between cells)
-   be part of the standard's conformance language rather than an
-   implementation virtue?
-5. Is there appetite from a second, independent implementation? The
-   strongest current evidence used two runtime lineages under one shared
-   coordinator; a standard needs two independent full stacks.
+## Possible shape (non-normative)
 
-## Suggested next steps
+The vISA reference implementation expresses a profile as a concrete WIT world
+plus a host-side contract. Its timer/key-value world
+([`visa:continuity@0.1.0`](../../../wit/cooperative-handoff/world.wit)) uses
+three potentially reusable idioms:
 
-1. Circulate this draft in the WASI Subgroup and Component Model issue
-   trackers for temperature; collect which existing proposals' owners
-   would accept continuity annotations.
-2. If temperature warrants, extract a phase-0 proposal repository:
-   explainer, the two reference WIT worlds generalized under a neutral
-   `wasi:continuity` namespace, and the 31-case matrix restated as a
-   runtime-neutral conformance list.
-3. Recruit a second implementation before requesting phase 1; the vISA
-   Wacogo-derivative cell demonstrates feasibility but shares a
-   coordinator, so it does not count as the second stack.
+- mutating operations carry an operation or idempotency identity;
+- errors distinguish policy denial, conflict, stale binding, unavailability,
+  and indeterminate completion; and
+- `freeze` exports logical state while `restore` accepts fresh owned bindings
+  rather than reviving old handles.
+
+A standardized surface might include a small `wasi:continuity` interface
+family for safe-point signaling, a versioned state envelope, and binding
+reacquisition. Resource-family semantics could instead remain in wrapping
+worlds or companion profile documents. This draft assumes no WIT syntax or
+Canonical ABI change.
+
+## Standardization home and open questions
+
+The semantics attach to host-resource interfaces such as clocks, key-value
+stores, filesystems, and outbound requests, so WASI is the initial discussion
+venue. If profiles eventually require a generic WIT annotation or Canonical
+ABI facility, that minimal mechanism may belong in the Component Model while
+resource semantics remain with WASI interface owners.
+
+1. Is this continuity contract in scope for WASI, and is that WASI/Component
+   Model boundary correct?
+2. What is the smallest useful interoperability target: a wrapping world per
+   resource family, a separately versioned profile document, or a shared
+   interface family plus resource-specific rules?
+3. Should safe-point signaling and the state envelope be component exports,
+   host imports, composed interfaces, or something lower-level?
+4. Which interface owners and independent implementers would test one profile,
+   and which motivating use cases are missing?
+
+Detailed conformance tiers, portability criteria, and implementation-count
+requirements are later-phase questions to define with interested implementers.
+
+## Discussion path
+
+The [WASI contribution process](https://github.com/WebAssembly/WASI/blob/main/CONTRIBUTING.md#contributing-to-proposals)
+says a new API idea starts as an issue describing scope, use cases, and expected
+implementation points. No vote is required to begin Phase 0.
+
+The immediate next step is one WASI issue with a short problem statement and a
+link to this explainer. That discussion can refine scope, find champions, and
+decide whether a separate Component Model issue is needed. A proposal
+repository and formal portability criteria become relevant only if the idea
+attracts enough interest to advance.
+
+## Appendix A: Reference implementation evidence
+
+vISA is a research prototype, not the proposed standard. All evidence below is
+bounded to x86-64 Linux; exact scope lives in the
+[validation contract](../../VALIDATION.md) and
+[claim registry](../../../claims/registry.json).
+
+- The timer/key-value profile runs a fixed 31-case lifecycle/fault matrix in
+  all four source/destination directions formed by Wasmtime and the
+  source-locked Wacogo derivative: 124/124 case executions and 31/31
+  normalized equality groups.
+- The regular-file profile runs a separate 12-case matrix in the same four
+  directions, with three required stability runs per cell. Its earned claim is
+  bound by a permanent
+  [closure receipt](../../../claims/receipts/cross-runtime-regular-file-continuity-v1.json),
+  [GitHub evidence release](https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence),
+  and [Zenodo record](https://doi.org/10.5281/zenodo.21627497).
+- A reconnectable logical-request profile separately passes a 14-case
+  Wasmtime-to-Wasmtime matrix and does not inherit cross-runtime evidence.
+
+These results cover two runtime lineages under one shared vISA coordinator,
+not two independent end-to-end implementations. They do not establish physical
+cross-host deployment, unmodified upstream Wacogo support, arbitrary live-TCP
+continuation, general exactly-once effects, or production readiness.
+
+## Appendix B: Relationship to adjacent work
+
+- Component Model and WASI handles define ordinary ownership and capability
+  use; a continuity profile addresses a later stop/rebind/resume boundary.
+- Engine, process, and VM checkpoint mechanisms are possible compute-state
+  carriers. They do not by themselves standardize resource semantics across
+  WASI hosts.
+- Durable workflow systems provide effect journaling and idempotency at a
+  workflow layer. A resource profile should compose with, not replace, them.
