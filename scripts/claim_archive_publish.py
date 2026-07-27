@@ -264,6 +264,22 @@ def create_zenodo_deposition(token: str, creator: str, revision: str) -> int:
     return deposition_id
 
 
+def require_zenodo_creator(metadata: dict[str, Any], creator: str) -> None:
+    creators = metadata.get("creators")
+    require(
+        isinstance(creators, list) and len(creators) == 1,
+        "Zenodo deposition creator differs",
+    )
+    observed = creators[0]
+    require(isinstance(observed, dict), "Zenodo deposition creator differs")
+    require(
+        set(observed) <= {"name", "affiliation"}
+        and observed.get("name") == creator
+        and observed.get("affiliation") in {None, ""},
+        "Zenodo deposition creator differs",
+    )
+
+
 def prepare_zenodo_deposition(
     token: str,
     archive_path: Path,
@@ -277,7 +293,7 @@ def prepare_zenodo_deposition(
     metadata = deposition.get("metadata")
     require(isinstance(metadata, dict), "Zenodo deposition metadata is invalid")
     require(metadata.get("version") == revision, "Zenodo deposition revision differs")
-    require(metadata.get("creators") == [{"name": creator}], "Zenodo deposition creator differs")
+    require_zenodo_creator(metadata, creator)
     if deposition.get("submitted") is True:
         record_id = deposition.get("record_id")
         require(

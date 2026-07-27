@@ -105,7 +105,7 @@ class ClaimArchivePublishTests(unittest.TestCase):
                 "id": 123456,
                 "metadata": {
                     "version": "a" * 40,
-                    "creators": [{"name": "Chen, Tianyi"}],
+                    "creators": [{"name": "Chen, Tianyi", "affiliation": None}],
                 },
                 "submitted": False,
                 "files": [
@@ -135,6 +135,28 @@ class ClaimArchivePublishTests(unittest.TestCase):
                     )
                 )
             upload.assert_called_once()
+
+    def test_zenodo_creator_normalization_does_not_hide_a_change(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="visa-archive-zenodo-creator-") as temporary:
+            fixture = PublicationFixture(Path(temporary))
+            draft = {
+                "id": 123456,
+                "metadata": {
+                    "version": "a" * 40,
+                    "creators": [{"name": "Another Author", "affiliation": None}],
+                },
+                "submitted": False,
+                "files": [],
+            }
+            with mock.patch("claim_archive_publish.request_json", return_value=draft):
+                with self.assertRaisesRegex(ArchiveError, "creator differs"):
+                    prepare_zenodo_deposition(
+                        "test-token",
+                        fixture.archive_path,
+                        "Chen, Tianyi",
+                        "a" * 40,
+                        123456,
+                    )
 
     def test_publication_state_is_idempotent_and_binds_archive_bytes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="visa-archive-state-") as temporary:
