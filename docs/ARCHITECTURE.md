@@ -16,10 +16,16 @@ Stage 3A bounded regular-file and Stage 3B bounded logical-request resource
 paths are implemented, and their 12-case and 14-case executable evidence passes
 independent structural bundle verification. The stage-closing implementation
 revision passed pushed CI at its exact commit, so Roadmap Stage 3 is complete
-for these two named bounded profiles. Stage 3 evidence is
+for these two named bounded predecessor profiles. Their evidence remains
 Wasmtime-to-Wasmtime only, requires `independent_runtime_coverage=false`, and
-does not inherit the Strict Stage 2 Wasmtime/Wacogo result. Bounded Stage 4 is
-complete only for `named-target-substrate-continuity-v1` and
+does not inherit the Strict Stage 2 Wasmtime/Wacogo result. A separate
+regular-file successor now holds the unchanged 12-case profile fixed across all
+four Wasmtime/source-locked-Wacogo directions, three stability runs per
+direction, and an independently recomputed typed outer normalization. Its
+144/144 executions and permanent exact-SHA archive earn only
+`cross-runtime-regular-file-continuity-v1` on x86-64 Linux; logical requests do
+not inherit it. Bounded Stage 4 is complete only for
+`named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1`: the accepted qualification revision passed
 the complete exact-SHA workflow, and its uploaded evidence was downloaded and
 independently reverified at another root. It keeps the Wasmtime timer/KV
@@ -49,7 +55,7 @@ v1 axes and adds one admission-ordered real-Wasmtime logical-request commit
 witness. It is not earned until exact-governance-SHA CI, permanent evidence
 archival, and its closing receipt complete. This is not Roadmap Stage 5.
 
-Last reviewed: 2026-07-23.
+Last reviewed: 2026-07-28.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -213,15 +219,26 @@ Stage 3 deliberately uses separate WIT worlds, guests, adapter resource tables,
 portable state codecs, case registries, evidence schemas, and verifiers for the
 regular-file and logical-request profiles. Both feed the same canonical
 authority, lease, effect journal, snapshot, reauthorization, and fencing path;
-neither changes the frozen Stage 2 evidence contract. Their current executable
-evidence selects only the named Wasmtime Stage 3 adapter on both sides and the
-verifier rejects any independent-runtime overclaim.
+neither changes the frozen Stage 2 evidence contract. The predecessor executable
+bundles select only the named Wasmtime Stage 3 adapter on both sides and their
+verifiers reject any independent-runtime overclaim.
 
-The current Stage 3 system runner creates independent source and destination
-Wasmtime stores, coordinators, and provider instances backed by local SQLite
-continuity inside one OS process. That topology exercises the canonical
-snapshot, reauthorization, local rebinding, lease transfer, and source-fencing
-boundary for these profiles. It is not evidence for dual-worker process
+The separate Stage 3A successor qualifies the regular-file profile rather than
+copying the Strict Stage 2 conclusion into it. It fixes one immutable Component,
+WIT world, profile, provider contract, configuration, policy, and 12-case
+registry across Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo,
+Wacogo-to-Wasmtime, and Wacogo-to-Wacogo. Three runs per direction produce 12
+complete inner bundles and 144/144 executions. Its outer verifier recomputes a
+typed normalized semantic digest from each raw observable trace, checks exact
+runtime identity and no fallback, audits aggregate mutations, and accepts the
+same publication after relocation. The logical-request profile remains a
+Wasmtime-only predecessor cell.
+
+Each predecessor Stage 3 system runner creates independent source and
+destination Wasmtime stores, coordinators, and provider instances backed by
+local SQLite continuity inside one OS process. That topology exercises the
+canonical snapshot, reauthorization, local rebinding, lease transfer, and
+source-fencing boundary for these profiles. It is not evidence for dual-worker process
 isolation, cross-host transport, or a real target/ISA/substrate change; those
 remain separate qualification cells.
 
@@ -833,7 +850,10 @@ coordinator, semantic-state, and evidence boundaries without adding a second
 semantic authority. Stage 3A and Stage 3B then extend the shared profile port
 and reducer/coordinator path with bounded regular-file and logical-request
 extensions, while retaining separate resource-specific WIT, codecs, providers,
-registries, and verifiers. Bounded Stage 4 next varies the named target and
+registries, and verifiers. The later Stage 3A successor reuses those boundaries
+to qualify the regular-file profile across the four Wasmtime/Wacogo directions;
+it does not add another semantic authority or widen the logical-request profile.
+Bounded Stage 4 next varies the named target and
 QEMU-user execution endpoints around the fixed Stage 1 Wasmtime timer/KV
 control, without importing ISA-, loader-, or QEMU-specific identity into the
 portable semantic core. As the broader repository evolves:
@@ -867,9 +887,12 @@ transport, alternative persistence and lease services, compatibility windows,
 confidential continuity, performance targets, and production readiness remain
 unimplemented. Roadmap Stage 3 is complete for the two bounded resource
 profiles described above after their stage-closing implementation revision
-passed pushed CI at its exact commit. They do not claim arbitrary directory
-trees or open descriptors, preservation of raw live TCP, generic future/stream
-continuation, a general async runtime, or a qualified second Stage 3 runtime.
+passed pushed CI at its exact commit. The later regular-file successor is earned
+at exact accepted revision `3bd9eaad5aab3e792ca793e26bd064f403f626db` with
+all four runtime directions and a permanent archive receipt. These claims do not
+cover arbitrary directory trees or open descriptors, preservation of raw live
+TCP, generic future/stream continuation, a general async runtime, a second
+logical-request runtime, or an unmodified upstream Wacogo runtime.
 Bounded Stage 4 is complete for the exact Hx/Qx/Qa matrix and two named claims
 described above, including exact-SHA workflow and downloaded relocated-bundle
 verification. It does not extend the claims to real ARM hardware, AOT-binary

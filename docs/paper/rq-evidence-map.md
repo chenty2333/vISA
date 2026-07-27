@@ -3,7 +3,7 @@
 Status: working note, not a canonical truth source. Not part of the seven
 canonical documents.
 
-Last reviewed: 2026-07-26.
+Last reviewed: 2026-07-28.
 
 This note prepares paper material by re-reading what the canonical documents
 already state. It introduces no claim, no evidence, and no scope. Where this
@@ -25,16 +25,26 @@ These short names are used only inside this file.
 | `S2legacy` | Four Wasmtime/JcoNode direction cells, 124 executions, four inner validations, one normalized outer comparison | `cross-execution-path-portability` | Shared `wasmtime-environ` translator lineage is disclosed, so this is not independent-implementation evidence |
 | `S2strict` | Four Wasmtime/Wacogo direction cells, 124/124 executions, 31/31 normalized equality groups, exact lineage and no-fallback proof, fresh Host and Docker runs | `strict-cross-runtime-continuity` | x86-64/amd64 Linux, timer/KV only; the qualified subject is the source-lock-bound Wacogo derivative, not unmodified upstream wacogo |
 | `S3A` | 12 bounded regular-file cases, scoped `openat2` rebinding, `STATX_BTIME` identity tuple, SQLite admission fence | `bounded-regular-file-continuity` | Wasmtime-to-Wasmtime, one OS runner process, `independent_runtime_coverage=false` |
+| `S3AX` | The unchanged 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three stability runs per direction, 144/144 executions, one recomputed semantic digest, verifier-mutation audit, and relocated verification | `cross-runtime-regular-file-continuity-v1` (earned) | x86-64 Linux; the qualified subject is the source-locked Wacogo derivative plus its explicit regular-file patch set, not unmodified upstream wacogo; no additional ISA/substrate or arbitrary filesystem objects |
 | `S3B` | 14 bounded logical-request cases over a real `VISALR03` loopback peer with a durable operation ledger | `bounded-logical-request-continuity` | Wasmtime-to-Wasmtime, one OS runner process, raw live TCP explicitly rejected, `independent_runtime_coverage=false` |
 | `S4` | Seven Hx/Qx/Qa cells, 217/217 executions, seven inner Stage 1 validations, 31/31 normalized groups, closure receipt at `457ae1d6...` | `named-target-substrate-continuity-v1`, `emulated-cross-isa-continuity-v1` | Wasmtime and timer/KV held fixed; Qa is QEMU-user on the same host kernel; real AArch64 hardware is recorded `not-run` |
 | `J1` | Neutral 16-case registry, TLA+ safety/progress, independent oracle, 10 corrupted-trace mutations, vISA HostSubstrate 14-record commit / 9-record abort vertical, locked Nexus-local refinement, exact-binary process artifact, supplemental logical-request dual-lost-ACK artifact | `bounded-joint-handoff-refinement-v1` (earned) | Same-boot only; `exclusive_trusted_coordinator_api=true` is a declared TCB assumption; the axes stay distinct and no axis substitutes for another |
 | `J2` | Every `J1` axis plus one admission-ordered 19-step logical-request commit witness in a strict seven-file artifact | `bounded-joint-handoff-refinement-v2` (candidate) | Not earned; promotion is blocked on the governance-SHA run, immutable release, Zenodo record, manifest, and closure receipt |
 
-Two facts constrain how any of these may be cited in a paper. First, the
-matrix is additive: `S2strict` independence does not enter `S3A`/`S3B`, and
-`S4` does not inherit the cross-runtime result. Second, the joint-handoff
-evidence is a bounded composition; no monolithic execution runs all axes end to
-end.
+Two facts constrain how any of these may be cited in a paper. First, the matrix
+is additive: `S2strict` independence does not enter the predecessor `S3A` or
+`S3B` bundles; `S3AX` separately qualifies only the same bounded regular-file
+profile; and `S4` does not inherit either cross-runtime result. Second, the
+joint-handoff evidence is a bounded composition; no monolithic execution runs
+all axes end to end.
+
+The earned `S3AX` evidence is anchored at accepted revision
+`3bd9eaad5aab3e792ca793e26bd064f403f626db`, attempt-1 Actions run
+`30269498012`, immutable archive SHA-256
+`f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`, and
+version DOI `10.5281/zenodo.21627497`. These identifiers bind the matrix result
+to durable bytes; later documentation and publication-tooling revisions do not
+retarget the accepted evidence.
 
 ## 1. RQ-to-evidence map
 
@@ -50,17 +60,19 @@ injected during pending I/O, timeout, cancellation, error, and cleanup paths.
 | RQ1 sub-question | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
 | Timers and durable KV preserve the observable trace | Covered | `S1`, `S2legacy`, `S2strict`, `S4` | x86-64 Linux for `S1`/`S2`; `S4` adds QEMU-user endpoints only. The paused-duration timer profile makes no wall-clock deadline-continuity claim. |
-| Regular files | Partially covered | `S3A`, 12 cases | Wasmtime-to-Wasmtime, one OS runner process. Excludes directory trees, devices, FIFOs, arbitrary already-open fds, and atomic compare-and-mutate against a writer that bypasses the advisory lock/lease protocol. |
+| Regular files | Covered for the named bounded profile | `S3A` plus `S3AX`: the same 12 cases in all four runtime directions, three runs per direction, 144/144 executions | x86-64 Linux and the source-locked Wacogo derivative. Excludes directory trees, devices, FIFOs, arbitrary already-open fds, and atomic compare-and-mutate against a writer that bypasses the advisory lock/lease protocol. |
 | Network resources | Partially covered | `S3B`, 14 cases | The unit of continuity is a *logical request over a reconnectable session*, not a connection. Raw live TCP is an explicit typed rejection, and socket sequence state, credential bytes, and runtime future state are absent from portable state. A general network-resource result is open. |
-| Multiple independent adapters | Partially covered | `S2strict` gives two independent-lineage Component Model runtimes | Only for timer/KV. Both Stage 3 profiles record `independent_runtime_coverage=false` and list Wacogo as unsupported, so the richest resource evidence sits on the weakest runtime evidence. This is the sharpest RQ1 gap. |
-| Handoff injected during pending I/O, timeout, cancellation, error, cleanup | Covered within each named profile | `S1` failure/recovery matrix, `S3A` and `S3B` case registries | Coverage is per-profile. There is no cell in which one component holds timer, KV, file, and request resources simultaneously across a single handoff. |
-| Native bindings are not serialized | Covered as negative evidence | Stage 1 portable snapshot excludes fd, socket, native pointer, PC/SP, credential, and runtime-private objects; `S3A` excludes device, inode, birth time, fd, and the absolute provider root; `S3B` excludes socket/TCP sequence state and credential material | This is enforced structurally per profile. It is not a measurement. |
+| Multiple independent adapters | Partially covered | `S2strict` qualifies timer/KV and `S3AX` qualifies regular files across two independent-lineage Component Model runtimes | Logical requests remain Wasmtime-to-Wasmtime, and neither matrix establishes a second full coordinator/provider stack. |
+| Handoff injected during pending I/O, timeout, cancellation, error, cleanup | Covered within each named profile | `S1` failure/recovery matrix, `S3A`/`S3AX`, and `S3B` case registries | Coverage is per-profile. There is no claimed cell in which one component holds timer, KV, file, and request resources simultaneously across a faulted handoff. |
+| Native bindings are not serialized | Covered as negative evidence | Stage 1 portable snapshot excludes fd, socket, native pointer, PC/SP, credential, and runtime-private objects; `S3A`/`S3AX` exclude device, inode, birth time, fd, and the absolute provider root; `S3B` excludes socket/TCP sequence state and credential material | This is enforced structurally per profile. It is not a measurement. |
 | Falsifier: the core keeps expanding until it duplicates runtime, Linux, or device state | Partially covered (measured, one growth step) | Static repository measurement, 2026-07-26; see "Measured core growth" below | Doubling the resource-family count (2 to 4) cost the canonical core +67 lines, one new type, and one new opaque `EffectKind` variant, against 5,748 provider-side lines for the same two families. The typed extension layer (`visa_profile`) grew by ~1,900 lines and must be disclosed alongside. Only one measurement step exists because both Stage 3 families landed in a single commit, so this is a two-point observation, not a curve. |
 
-Overall RQ1: **partially covered.** The timer/KV axis is strong and replicated
-across runtimes and emulated targets. Files and requests are each one bounded
-Wasmtime-only profile. The composition case and the general network case are
-open; the core-growth falsifier now has one measured data point (below).
+Overall RQ1: **partially covered.** Timer/KV and the bounded regular-file profile
+are replicated across independent runtime lineages; timer/KV separately reaches
+the emulated target matrix. Logical requests remain Wasmtime-only. The general
+network case and a faulted all-resource composition remain open; the core-growth
+falsifier has one measured family-doubling step plus one zero-core-change
+composition observation (below).
 
 #### Measured core growth (static measurement, 2026-07-26)
 
@@ -68,14 +80,14 @@ Measurement taken at four commits: `be7b7591` (Stage 1 complete, two
 resource families: timer, KV), `5ceaa78c` (strict Stage 2, same two
 families), `620dda73` (both Stage 3 families landed — regular file and
 logical request arrived in this single commit, so the family count moves 2
-to 4 in one step), and `90d54173` (current HEAD). Line counts are
+to 4 in one step), and `90d54173` (the dated measurement snapshot). Line counts are
 `git show <sha>:<file> | wc -l` sums over `git ls-tree`; type and variant
 counts are grep/awk over the same blobs. `crates/oracle/` is excluded
 throughout.
 
 Canonical core (`crates/core/contract_core/src`), family count 2 to 4:
 
-| Metric | Stage 1 | Stage 3 | HEAD | Delta over the family doubling |
+| Metric | Stage 1 | Stage 3 | Measurement snapshot | Delta over the family doubling |
 | --- | --- | --- | --- | --- |
 | Total lines | 1,046 | 1,113 | 1,116 | +67 (+6.4%) |
 | `pub struct` + `pub enum` | 57 | 58 | 58 | +1 |
@@ -98,7 +110,7 @@ Where the Stage 3 commit's 8,576 inserted lines actually landed:
 | `substrate_host` (provider implementations) | 5,670 |
 | WIT worlds | 311 |
 
-At HEAD the two Stage 3 families occupy 5,748 provider-side lines
+At the measurement snapshot the two Stage 3 families occupy 5,748 provider-side lines
 (`regular_file.rs` 2,680 + `logical_request.rs` 3,068) against the +67
 canonical-core lines — roughly 86:1. Structurally, all three core crates
 are `#![no_std]`, a word-boundary grep for native-binding types
@@ -160,18 +172,19 @@ hold under adversarial in-process bypass.
 
 | RQ3 sub-question | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
-| An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer that recomputes normalization rather than trusting the publisher cache; Stage 3A/3B structural bundle verifiers; Stage 4 verifier that reconstructs the common input and re-runs all seven inner validations; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
-| The verifier independently reimplements the semantic decision | Covered for Stage 1/2/4 and the joint neutral axis; **not** covered for Stage 3 | VALIDATION states plainly that Stage 3 evidence is "runner-produced semantic evidence plus independent structural verification, not a second independent semantic implementation" | The Stage 3 verifiers fix schema, registry, order, terminal classes, assertion shape, digests, epochs, and identities, but do not recompute case assertions from `trace.json` and the raw bytes. `S3B` peer/credential negative assertions are runner-produced and the raw frames are not published. Profile/config JSON is byte-checked but not semantically parsed. |
-| Detection of injected semantic defects is measured | Covered for Stage 1 (measured, 2026-07-26); joint axis has the prior 10-mutation suite; Stages 2-4 remain open | Stage 1 defect corpus (`crates/testing/visa-conformance/src/stage1_mutations.rs`, run via `defect_corpus_tests` or the feature-gated `visa-defect-corpus` bin): 26 resealed mutations across the eight RQ3 injection classes, every entry recomputing the full digest closure so only semantic rules can reject it (integrity-family hits asserted zero). Measured detection: 19/25 overall (0.76); per class — stale-generation 3/3, incorrect-error-mapping 3/3, late-profile-checks 3/3, silent-authority-downgrade 3/3, omitted-events 3/3, missing-source-fencing 3/4, lost-cancellation 1/3, duplicate-close 0/3. Plus the neutral verifier's 10 corrupted-trace mutations on the joint axis. | The duplicate-close 0/3 is absorption, not misses: the canonical core accepts byte-identical duplicated terminal events as no-change replays by design, so duplicate close is not an observable defect at this layer — state it that way, never as detection failure. The six genuinely undetected entries share one structure: the verifier re-checks that what the journal claims is self-consistent and reducer-legal, but has no external anchor for intent that never entered the journal (erased cancel round-trips, unclaimed transcript additions, consistently restated profile digests). The corpus is Stage 1 only; extending to Stages 2-4 needs per-stage reseal primitives. |
-| Specific injections named in RQ3 | Partially covered | Stale-generation acceptance, missing source fencing, and silent authority downgrade map onto `S1` cases and `J1` verifier checks; omitted events map onto exact-inventory and publication-completeness checks, including a negative Stage 4 unit test that adds an extra file plus temporary, symlink, hardlink, and socket entries and requires rejection; lost cancellation, duplicate close, incorrect error mapping, and late profile checks map onto `S1`/`S3` cases | These are *scenarios the system handles*, not *defects deliberately introduced into a verifier-under-test and then measured for detection*. The distinction matters for RQ3 specifically, because RQ3 is a claim about the detector, not about the system. |
-| Falsifier: an observable semantic error passes verification | Partially answered for Stage 1 (measured) | The Stage 1 defect corpus above | Six resealed defects do pass verification, all sharing one structure: intent that never entered the journal has no external anchor for the verifier to check against. Whether these six count as "observable semantic errors" in the falsifier's sense is a definitional question the paper must argue — they are unobservable precisely at the boundary the evidence model draws. |
+| An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer; Stage 3A/3B predecessor structural bundle verifiers; the `S3AX` outer normalizer and mutation audit; Stage 4 reconstruction and seven inner validations; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
+| The verifier independently reimplements the semantic decision | Covered for Stage 1/2/4 and the joint neutral axis; partial for Stage 3 | The predecessor Stage 3 verifiers remain structural. `S3AX` independently recomputes typed normalized semantics from every raw observable trace and checks cross-cell equality. | `S3AX` does not recompute every inner file-profile case assertion. `S3B` peer/credential negative assertions remain runner-produced and the raw frames are not published. Profile/config JSON is byte-checked but not semantically parsed. |
+| Detection of injected semantic defects is measured | Covered for the calibrated Stage 1 corpus (2026-07-27); the joint axis retains its separate 10-mutation suite; later-stage efficacy denominators remain open | The 26-entry Stage 1 corpus is preclassified before execution: 22 semantic defects, three benign-equivalent no-change replays, and one specification boundary. Every entry is fully resealed. The verifier detected 22/22 defects across stale generation 3/3, lost cancellation 3/3, incorrect error mapping 3/3, late profile checks 3/3, missing source fencing 4/4, silent authority downgrade 3/3, and omitted events 3/3; it recognized all 3/3 duplicate-close equivalents and recorded the one boundary separately, with zero mismatches and zero integrity-family hits. | The accepted duplicate commit, resume, and transcript-dump mutations are reducer-defined equivalents, not misses. The boundary consistently restates the resource-profile digest; an external anchor is required to decide whether that new digest names the intended profile. The quantified denominator is Stage 1 only. |
+| Specific injections named in RQ3 | Covered for the Stage 1 corpus | All eight named classes are deliberately mutated, fully resealed, assigned an expected disposition/finding family, and passed through the verifier under test. Stage 4 inventory mutations and the joint suite remain separate contract tests. | Scenario coverage and detector efficacy are no longer conflated. The 22/22 result cannot be copied to Stage 2--4 verifiers without their own preclassified corpora. |
+| Falsifier: an observable semantic error passes verification | Answered for the preclassified Stage 1 corpus | No semantic-defect entry passed; 22/22 were rejected with the predicted semantic finding families | The three equivalents are semantically unchanged, and the sole accepted boundary requires intent outside the evidence envelope. This is not an efficacy estimate for later-stage verifiers. |
 | Falsifier: detection requires recording nearly all native execution state | Partially covered | The exclusion lists under RQ1 show that detection currently works without fds, sockets, PC/SP, credentials, socket sequence state, or device/inode metadata; one `SnapshotSize` sample exists per Stage 1 run | There is no evidence-size-versus-detection-coverage curve, which is the quantitative form of this falsifier. |
 
-Overall RQ3: **partially covered, and it is the weakest of the four for paper
-purposes.** The infrastructure is strong and the boundary documentation is
-unusually honest. What is missing is the experiment that would turn RQ3 from an
-architecture description into a result: a systematic corpus of injected
-semantic defects with a measured detection rate and a stated evidence budget.
+Overall RQ3: **covered as a calibrated Stage 1 detector result and partially
+covered across the system.** The preclassified 22/22 + 3/3 + one-boundary
+experiment turns the detector from an architecture description into a measured
+result without counting equivalent mutations as defects. Remaining work is to
+build separate efficacy corpora for later-stage verifiers and an
+evidence-size-versus-detection-coverage curve.
 
 ### RQ4: Minimal semantic handoff across authority domains
 
@@ -205,7 +218,8 @@ These qualifiers apply to every RQ above and should appear once, prominently,
 in any paper rather than being repeated per result.
 
 - x86-64/amd64 Linux for all natively executed evidence.
-- Wasmtime-to-Wasmtime for both Stage 3 resource profiles.
+- Four Wasmtime/source-locked-Wacogo directions for the bounded regular-file
+  successor; Wasmtime-to-Wasmtime only for logical requests.
 - Same-boot for all joint-handoff evidence.
 - `exclusive_trusted_coordinator_api=true` as a declared TCB assumption on the
   HostSubstrate axis.
@@ -256,16 +270,20 @@ Component, WIT world, profile, configuration, policy, case registry, fault
 schedules, typed timer strategies, and schema identities; four direction cells;
 complete inner validation per cell; a versioned typed normalization recomputed
 by an independent outer verifier; exact requested-to-prepared-to-live runtime
-identity chains; and explicit no-fallback proof. The result is 124/124
-executions and 31/31 normalized equality groups across Wasmtime and an
-independent-lineage Wacogo derivative.
+identity chains; and explicit no-fallback proof. The timer/KV control completed
+124/124 executions and 31/31 normalized equality groups. The regular-file
+successor reused the methodology with a new typed normalization, completing
+144/144 case executions over three stability runs per direction with one
+recomputed semantic digest across Wasmtime and an independent-lineage Wacogo
+derivative.
 
 Assessment: **this is the more defensible primary contribution.** It is a
 methodology claim backed by a complete executable matrix, it has a crisp
 falsification story (a normalization version may exclude only its declared
 non-portable observations and cannot expand exclusions to conceal a
 difference), and it does not depend on the joint-handoff track closing. Its
-weakness is scope: it holds for the timer/KV profile only.
+scope remains bounded to timer/KV and regular files on x86-64 Linux, under one
+shared coordinator and the named source-locked Wacogo derivative.
 
 Recommendation: lead with Candidate B as the concrete methodological result and
 position Candidate A as the architectural thesis that the methodology serves.
@@ -332,8 +350,10 @@ container, and leaves the policy to the caller; vISA supplies the missing
 semantic contract that decides whether an external resource is portable,
 recreated, reconnected, reattached, proxied, replayed, or a blocker, and
 produces per-disposition executable evidence. Honesty constraint: vISA has
-executed exactly two external-resource families, both Wasmtime-only and both in
-one OS runner process, so the taxonomy is far broader than the evidence.
+executed exactly two rich external-resource families. Regular files now have a
+qualified four-direction Wasmtime/Wacogo matrix, while logical requests remain
+Wasmtime-only in one OS runner process, so the taxonomy is still broader than
+the evidence.
 *Documented delta* on the division of responsibility; *asserted delta* on
 novelty of the disposition taxonomy itself, which the review must check against
 CRIU plugin and container-migration literature.
@@ -403,24 +423,24 @@ must resolve at minimum:
    different name — the most likely places are confidential VM migration,
    stateful serverless, and edge-continuum work.
 
-## 3. Paper gap list, by priority
+## 3. Paper readiness status
 
-### P0 — blocks submission
+### P0 — submission claims and deliberately scoped exclusions
 
-**P0.1 Systematic literature review.** Section 2 is currently a set of
-hypotheses. Nothing in it can appear in a paper as a novelty claim until the
-five questions above are answered against the literature. RESEARCH's
-maintenance rule deliberately keeps detailed reading notes outside the
-repository, so the review output belongs in the paper draft rather than in
-`docs/`. This is the single highest-value remaining task, and it gates the
-choice of primary contribution.
+**P0.1 Literature review — integrated for the current manuscript.** The current
+related-work section checks the five questions above across WebAssembly
+migration, differential testing and multi-client execution, process/VM
+migration, capability systems, accountable/TEE migration, durable execution,
+and stateful serverless systems. Novelty statements remain qualified as "to our
+knowledge" and require a date-bounded refresh at venue freeze; this working note
+is not itself the citation authority.
 
 **P0.2 Close `bounded-joint-handoff-refinement-v2`.** Any RQ4 result that
-includes admission-before-send depends on the candidate. The recorded blocking
-facts are concrete: as rechecked on 2026-07-18, vISA has no GitHub Release and
-repository Immutable Releases are disabled, so the gate cannot currently be
-satisfied. Promotion requires a final governance revision passing the complete
-exact-SHA workflow on **attempt 1** (closure accepts only attempt 1 because
+includes admission-before-send depends on the candidate. The project has since
+proved the immutable GitHub/Zenodo/receipt lifecycle for `S3AX`, but `J2` still
+lacks its own claim-specific immutable release, DOI record, manifest, and
+closure receipt. Promotion requires a final governance revision passing the
+complete exact-SHA workflow on **attempt 1** (closure accepts only attempt 1 because
 GitHub's run-level artifact response carries no attempt identity), both joint
 ZIPs downloaded and semantically reverified, one fixed-inventory evidence tar as
 the sole asset of an immutable release, the same tar as the sole file of a
@@ -429,15 +449,16 @@ manifest enumerating every member by size, SHA-256, role, source revision,
 evidence axis, and verifier, and a content-addressed closure receipt whose
 commit is a strict descendant of the accepted governance SHA.
 
-If P0.2 slips, the fallback is to write RQ4 against earned v1 only and describe
-admission ordering as ongoing work. That fallback is viable and should be
-planned for rather than discovered late.
+The current manuscript takes that bounded path: RQ4 cites earned v1 only and
+labels admission ordering as candidate work. `J2` promotion remains a separate
+future evidence lifecycle rather than a submission dependency.
 
-### P1 — needed for a credible evaluation chapter
+### P1 — evaluation scope and remaining upgrades
 
-**P1.1 Performance and cost metrics — the largest concrete gap.**
+**P1.1 Performance and cost metrics — preliminary characterization complete.**
 
-What exists today is three metrics from exactly one of 31 Stage 1 cases
+Before the dedicated evaluation harness, the repository exposed only three
+metrics from exactly one of 31 Stage 1 cases
 (`performance-observations`, `crates/testing/visa-system/src/runner/scenarios/success.rs`):
 
 - `SteadyStateCost`: five samples, each the wall-clock duration of one
@@ -447,7 +468,7 @@ What exists today is three metrics from exactly one of 31 Stage 1 cases
 - `HandoffInterruption`: one sample, nanoseconds from handoff start to
   destination resume (`crates/testing/visa-system/src/runner/harness.rs:639`).
 
-Every canonical document states that these are raw target-speed-dependent
+The canonical documents state that these are raw target-speed-dependent
 observations recorded specifically *without* being converted into a performance
 claim, and Stage 2's strict model records `performance: NotClaimed`.
 
@@ -465,13 +486,14 @@ the oracle runtime rather than the Wasmtime adapter and coordinator. Separately,
 `full` only *compiles* benchmarks; nothing in CI executes them, so no results
 are retained anywhere.
 
-Consequently the evaluation chapter needs a purpose-built harness on the
-production spine. This now exists: `crates/benchmarks/visa-eval`
+The resulting purpose-built production-spine harness now exists:
+`crates/benchmarks/visa-eval`
 (2026-07-26) covers all four items below with JSONL samples and a
 summarizer (`scripts/eval-summarize.py`). First quick-tier numbers
-(release, btrfs, 200 iters x 3 runs; rerun at the full tier before
-publication): a KV compare-and-set through the coordinator is p50
-2.62 ms against a 1.63 ms three-transaction raw-SQLite baseline — about
+(release, btrfs, 200 iterations x 3 runs; preliminary engineering
+characterization, not a full-tier performance claim): a KV compare-and-set
+through the coordinator is p50 2.62 ms against a 1.63 ms three-transaction
+raw-SQLite baseline — about
 62% unavoidable fsync floor, 38% coordinator CPU (reducer plus two
 whole-state digests per journal entry); handoff wall time is dominated
 75-80% by Wasmtime compilation at every tested journal length, with the
@@ -514,25 +536,23 @@ paper needs the emulation qualifier attached at every occurrence, including the
 abstract. Real hardware would remove a standing reviewer objection and is
 already tracked as separate preparation work.
 
-**P1.3 Stage 3 independent-runtime coverage.** Both resource profiles record
-`independent_runtime_coverage=false`. This is the structural weakness in RQ1:
-the strongest runtime-independence evidence (`S2strict`) and the richest
-resource evidence (`S3A`/`S3B`) do not overlap. Running either Stage 3 profile
-through the Wacogo derivative would close the most-asked question about the RQ1
-result. This is a large engineering task and may not be feasible before
-submission; if not, the limitation should be stated as a named future cell
-rather than glossed.
+**P1.3 Stage 3 independent-runtime coverage — done for regular files
+(2026-07-27).** `S3AX` carries the unchanged 12-case regular-file profile through
+all four Wasmtime/source-locked-Wacogo directions, with three stability runs per
+direction, 144/144 executions, independently recomputed typed normalization,
+no-fallback proof, mutation audit, and relocated verification. This closes the
+runtime/resource overlap for one bounded rich-resource family. Logical requests
+remain `independent_runtime_coverage=false`; no result transfers to them.
 
-### P2 — improves the paper substantially
+### P2 — completed improvements and remaining extensions
 
-**P2.1 RQ3 detector-efficacy experiment.** As analysed in section 1, RQ3 is
-currently an architecture description rather than a result. What would change
-that is a systematic corpus of injected semantic defects spanning the eight
-injection classes RESEARCH names, applied across stages rather than only on the
-joint-handoff axis, with a measured detection rate and an explicit statement of
-which defects the Stage 3 structural verifiers cannot catch by construction.
-The existing 10 neutral mutations are the template. Being explicit about the
-Stage 3 structural-only boundary would strengthen rather than weaken the paper.
+**P2.1 RQ3 detector-efficacy experiment — done for Stage 1 (2026-07-27).**
+The 26-entry, fully resealed corpus spans all eight named classes and is
+preclassified as 22 semantic defects, three benign equivalents, and one
+specification boundary. The measured result is 22/22 detected, 3/3 equivalents
+recognized, one boundary recorded, zero mismatches, and zero integrity-family
+hits. Remaining work is explicitly separate: later-stage verifier corpora and
+an evidence-budget curve.
 
 **P2.2 Composed-resource cell.** Done (2026-07-26):
 `crates/testing/visa-composite-cell` runs one component holding all four
@@ -542,15 +562,14 @@ extensions if the paper wants more: run it under the Wacogo cell for
 cross-runtime composition, and add fault cases (composition currently
 exercises the success path plus idempotent replay and fencing only).
 
-**P2.3 WASI and Component Model continuity-profile positioning.** RESEARCH
-states that active WASI proposals define no general checkpoint,
-state-continuity, cross-host resource-rebinding, or handoff protocol, and that
-vISA must define continuity profiles around existing WIT/WASI interfaces rather
-than inventing another IDL or handle system. A short standards-positioning
-subsection turns this from a constraint into a contribution framing. Separate
-discussion-draft work is already tracked for this.
+**P2.3 WASI and Component Model continuity-profile positioning — done as a
+bounded design direction (2026-07-28).** The current manuscript contains a short
+standards-positioning section, and
+`docs/proposals/continuity-profile/README.md` carries the separate Phase 0
+discussion draft. Neither is a submitted or adopted standard, and neither
+widens the two qualified reference profiles.
 
-### P2 — writing-layer artifacts
+### Writing-layer artifacts
 
 Figures and tables the draft will need. None of these require new evidence;
 all are re-presentations of what the canonical documents already contain.
@@ -558,11 +577,11 @@ all are re-presentations of what the canonical documents already contain.
 | ID | Artifact | Purpose | Source |
 | --- | --- | --- | --- |
 | F1 | Vertical-slice dependency chain, component through evidence | Establishes the architecture in one image and shows that every stage crosses the full chain | ROADMAP "Why a vertical slice" |
-| F2 | Evidence matrix: claim × runtime × ISA/substrate × resource profile × fault boundary, with covered / unsupported / not-run cells rendered distinctly | The honesty centrepiece. Makes the additive-matrix rule visible and preempts overreading | VALIDATION claim-evidence matrix plus the per-stage boundaries |
+| F2 | Six-dimensional evidence matrix: runtime × resource profile × ISA/substrate × handoff topology × fault model × verifier, with qualified / supporting / candidate / declared-gap cells rendered distinctly | The honesty centrepiece. Makes the additive-matrix rule visible and preempts overreading | `claims/evidence-matrix.json`, VALIDATION claim-evidence matrix, and per-stage boundaries |
 | F3 | Handoff lifecycle state machine with the ten-step path, the fence point, and the pre-commit/post-commit divide annotated | Needed for RQ2; the pre/post-commit divide is where four of the five properties live | VALIDATION "Required successful path" and the failure/recovery matrix |
 | F4 | Authority timeline: generation, lease epoch, attenuation, revocation, and fence, with the five RQ2 properties placed on it | Turns the five-line property block into something a reader can check against the timeline | RQ2 definition plus Stage 1 authority cases |
 | F5 | Joint-handoff sequence diagram for the 19-step admission-ordered cell, marking both lost-acknowledgement recovery points and the source fence | Carries RQ4; the ordering is the whole result and prose does not convey it | ROADMAP joint track, VALIDATION admission-ordered section |
-| F6 | Evidence-bundle anatomy, annotated with what each verifier independently recomputes versus what it checks structurally | Supports RQ3 and makes the Stage 3 structural-only boundary explicit rather than buried | VALIDATION verifier sections |
+| F6 | Evidence-bundle anatomy, annotated with what each verifier independently recomputes versus what it checks structurally | Supports RQ3 and makes the predecessor structural-only versus successor outer-normalization boundary explicit | VALIDATION verifier sections |
 | T1 | Condensed RQ-to-evidence table with covered / partially covered / open and a one-clause boundary per row | Section 1 of this note, compressed to roughly one page | This note |
 | T2 | Nearest-neighbour delta table | Section 2 of this note, compressed; only survives the literature review | This note |
 
@@ -570,12 +589,12 @@ A caption discipline worth adopting: every figure and table that reports a
 result should name its execution boundary in the caption itself, so that no
 figure can be lifted out of context and read as a broader claim than it is.
 
-## Open questions for the team
+## Resolved decisions for the current manuscript
 
-1. Does the paper target RQ1 through RQ3 with RQ4 as a bounded research track,
-   or all four as equal contributions? The answer determines whether P0.2 is
-   blocking or merely desirable.
-2. Is Candidate B accepted as the primary contribution framing? If so, the
-   literature review should prioritise question 1 in the list above.
-3. Is the restart-plus-external-storage baseline in scope for the evaluation?
-   Recommended yes — RESEARCH raises it first, so a reviewer will too.
+1. RQ1--RQ3 form the evaluated core; RQ4 remains a separately bounded research
+   track, so the unclosed `J2` claim does not block the current paper result.
+2. Candidate B, the equivalence-evidence methodology, is the primary
+   contribution framing; Candidate A is the architectural thesis it serves.
+3. The restart-plus-external-storage baseline is included in the preliminary
+   engineering characterization together with its explicitly named semantic
+   losses. It is not promoted into a full-tier performance claim.

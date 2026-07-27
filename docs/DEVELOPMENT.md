@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-27.
+Last reviewed: 2026-07-28.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -123,6 +123,13 @@ Run the bounded Stage 3A regular-file gate with:
 
 ```sh
 scripts/run-docker-ci-gate.sh system-stage3a
+```
+
+Run the qualified four-direction Wasmtime/Wacogo regular-file successor using
+three stability runs per direction with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stage3a-cross-runtime
 ```
 
 Run the bounded Stage 3B logical-request gate with:
@@ -593,6 +600,21 @@ establish atomic compare-and-mutate against an uncooperative writer that
 bypasses it. Birth time is not a cryptographic identity or a Stage 5
 host-attestation mechanism.
 
+`system-stage3a-cross-runtime` is a successor gate, not a widening of the
+Wasmtime-only predecessor bundle. It requires a clean exact-SHA checkout,
+revalidates and builds the source-locked Wacogo derivative, runs the calibrated
+Stage 1 detector corpus, then holds one regular-file Component, WIT world,
+profile, provider contract, configuration, policy, and 12-case registry fixed
+across Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo, Wacogo-to-Wasmtime, and
+Wacogo-to-Wacogo. Each direction runs three times: 12 cell-runs and 144/144
+case executions in total. A separate outer verifier recomputes the typed
+normalized semantics, checks exact runtime identity and no-fallback lineage,
+audits four outer-verifier mutations, and accepts the byte-identical publication
+again after relocation. The qualified boundary is the named bounded
+regular-file profile on x86-64 Linux; it does not cover unmodified upstream
+Wacogo, logical requests, another ISA/substrate, cross-host execution, or
+arbitrary filesystem objects.
+
 `system-stage3b` follows the same two-step runner/verifier shape for the fixed
 14-case logical-request registry. It uses a real bounded loopback TCP
 protocol/peer and a durable provider operation ledger, but it preserves logical
@@ -609,24 +631,29 @@ not a general encrypted-channel or remote-effect atomicity claim.
 `system-stage3` runs these two standalone gates in sequence and retains one
 artifact root per profile.
 
-The Stage 3 conformance commands are independent **structural bundle
-verifiers**. The executable runner evaluates the case semantics; the verifier
-then fixes the accepted registry and assertion shape, checks scope and runtime
-identities, and revalidates the published artifact sizes and digests. Unlike
-the typed Stage 2 normalizer, it does not recompute every semantic assertion
-from the raw trace and request/response bytes.
+The predecessor `system-stage3a` and `system-stage3b` conformance commands use
+independent **structural bundle verifiers**. The executable runner evaluates the
+case semantics; the verifier then fixes the accepted registry and assertion
+shape, checks scope and runtime identities, and revalidates the published
+artifact sizes and digests. Unlike the typed Stage 2 normalizer, it does not
+recompute every semantic assertion from the raw trace and request/response
+bytes. The cross-runtime Stage 3A successor adds an independently recomputed
+typed normalization over all raw observable traces and cross-cell equality. Its
+inner per-case decisions still come from the Stage 3A runner; the outer
+normalizer is not a second full implementation of every file-profile assertion.
 
-Both Stage 3 gates currently use separate source and destination Wasmtime
-stores, coordinators, and provider instances backed by local SQLite continuity
-within one OS system-runner process on x86-64 Linux. This validates the current
-local-rebinding profiles, not dual-worker process isolation, cross-host
-transport, or a target change. Their bundles require
+The two predecessor Stage 3 profile gates use separate source and destination
+Wasmtime stores, coordinators, and provider instances backed by local SQLite
+continuity within one OS system-runner process on x86-64 Linux. This validates
+the current local-rebinding profiles, not dual-worker process isolation,
+cross-host transport, or a target change. Their bundles require
 `independent_runtime_coverage=false` and list Wacogo as unsupported. Run
 `system-stage2-strict` separately when checking the independent-runtime
-timer/KV control; its conclusion does not transfer to Stage 3. The Stage 3 gates
-do not claim arbitrary directory trees, devices, FIFOs, open fds, arbitrary
-live TCP, socket state, generic future/stream continuation, or a general async
-runtime.
+timer/KV control; its conclusion does not transfer to either predecessor
+profile. Only `system-stage3a-cross-runtime` supplies the separately qualified
+regular-file runtime matrix. No Stage 3 gate claims arbitrary directory trees,
+devices, FIFOs, open fds, arbitrary live TCP, socket state, generic
+future/stream continuation, or a general async runtime.
 
 `system-stage4` holds the Wasmtime implementation, timer/KV profile, and
 31-case Stage 1 registry fixed while varying three target execution endpoints:
@@ -708,6 +735,7 @@ scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-jco-node
 scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage2
 scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage2-strict
 scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage3a
+scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage3a-cross-runtime
 scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage3b
 scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-stage4
 scripts/run-docker-ci-gate.sh --ci-cache --skip-build system-joint-handoff
@@ -751,8 +779,11 @@ public API. Use them according to their current role:
    `system-stage2` preserve the Stage 1 and legacy v2 paths;
    `system-stage2-strict` adds the unified locked Wasmtime/Wacogo v3 path;
    `system-stage3a` and `system-stage3b` add the two bounded Wasmtime-only
-   resource profiles, while `system-stage3` invokes both. `system-stage4`
-   supplies the bounded native/QEMU-user target and cross-ISA aggregate;
+   resource-profile predecessors, while `system-stage3` invokes both;
+   `system-stage3a-cross-runtime` separately qualifies the regular-file
+   successor across all four Wasmtime/source-locked-Wacogo directions with
+   three stability runs per direction. `system-stage4` supplies the bounded
+   native/QEMU-user target and cross-ISA aggregate;
    `system-stage4-target` and `system-stage4-isa` currently invoke that same
    full matrix. `system-joint-handoff` source-locks the neutral contract, runs
    production-reducer replay plus reference ownership/effect peers, and executes

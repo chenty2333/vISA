@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-23.
+Last reviewed: 2026-07-28.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
@@ -240,11 +240,14 @@ production-readiness, or broader runtime claim follows.
 
 ## Stage 3: Rich external resources
 
-Status: complete for the two named bounded Wasmtime-to-Wasmtime resource
+Status: complete for the two named bounded Wasmtime-to-Wasmtime predecessor
 profiles on x86-64/amd64 Linux. Stage 3A and Stage 3B passed their executable
-runners and independent structural bundle verifiers, the unchanged Strict
-Stage 2 control remained green on the stage-closing implementation revision,
-and that revision passed pushed CI at its exact commit.
+runners and independent structural bundle verifiers, the unchanged Strict Stage
+2 control remained green on the stage-closing implementation revision, and that
+revision passed pushed CI at its exact commit. The separate Stage 3A
+regular-file successor is also earned across all four
+Wasmtime/source-locked-Wacogo directions under the lifecycle closure recorded
+below; Stage 3B remains Wasmtime-to-Wasmtime.
 
 The completed Strict Stage 2 timer/KV matrix is the immutable control baseline
 for this widening step. Stage 3 does not modify or re-sign its Component,
@@ -355,16 +358,17 @@ transport, socket sequence state, generic future/stream continuation, and a
 general asynchronous runtime. The authenticated loopback protocol is not a
 general encrypted transport or TLS replacement.
 
-### Stage 3 qualification boundary
+### Stage 3 predecessor qualification boundary
 
-Both current Stage 3 runners use separate source and destination Wasmtime
+Both predecessor Stage 3 runners use separate source and destination Wasmtime
 stores, coordinators, and provider instances backed by local SQLite continuity
 within one OS system-runner process on x86-64/amd64 Linux. This is sufficient
-for the current local-rebinding profiles; it is not dual-worker, process-
+for those local-rebinding profiles; it is not dual-worker, process-
 isolation, cross-host, or cross-target evidence. Their evidence requires
 `independent_runtime_coverage=false` and lists Wacogo as an unsupported Stage 3
-runtime. The independent Wasmtime/Wacogo result earned in Strict Stage 2
-therefore does not carry into either Stage 3 resource profile.
+runtime. The independent Wasmtime/Wacogo result earned in Strict Stage 2 did not
+carry into either predecessor profile; the Stage 3A successor instead earned a
+new, profile-specific runtime matrix through its own gate and receipt.
 
 Exit conditions:
 
@@ -383,6 +387,11 @@ Claim on exit: only the two named Wasmtime-to-Wasmtime resource profiles and
 their declared dispositions are supported. Independent-runtime Stage 3,
 cross-ISA/substrate, confidential-continuity, and production claims do not
 follow.
+
+The later `cross-runtime-regular-file-continuity-v1` lifecycle closure adds only
+the four-direction regular-file successor described above. It does not
+retroactively change this predecessor exit condition, qualify logical requests,
+or add another ISA/substrate.
 
 ## Stage 4: Target, ISA, and substrate qualification
 

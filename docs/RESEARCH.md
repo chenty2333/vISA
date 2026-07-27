@@ -2,7 +2,7 @@
 
 Status: current related-work and hypothesis summary.
 
-Last reviewed: 2026-07-23.
+Last reviewed: 2026-07-28.
 
 This document records why vISA exists alongside WebAssembly, WASI, checkpoint
 systems, capability systems, and durable execution platforms. It is not a claim
@@ -252,6 +252,16 @@ it does not imply cross-ISA, file/network, confidential-continuity, production,
 or unmodified-upstream-wacogo support. This is the evidence basis for the
 completed named Stage 2 scope; every broader claim still requires its own
 Roadmap gate and pushed exact-commit evidence.
+
+The later regular-file successor satisfies that rule rather than inheriting the
+timer/KV result. It holds the bounded 12-case file profile fixed across the same
+four runtime directions, uses three stability runs per direction, recomputes one
+typed semantic digest across 144/144 executions, and is permanently archived at
+accepted revision `3bd9eaad5aab3e792ca793e26bd064f403f626db`. This establishes
+only `cross-runtime-regular-file-continuity-v1` for the explicit downstream
+regular-file patch set. Logical requests, another ISA/substrate, unmodified
+upstream Wacogo, and a second full coordinator/provider stack remain outside the
+result.
 
 ## Claims vISA must not make without new evidence
 
