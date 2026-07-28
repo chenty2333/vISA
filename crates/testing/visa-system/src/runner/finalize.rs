@@ -103,7 +103,16 @@ pub(super) fn finalize_case(
                     WorkerCommand::Initialize {
                         role: WorkerRole::Source,
                         runtime: harness.source_runtime,
-                        database_path: harness.database.path().to_string_lossy().into_owned(),
+                        database_path: harness
+                            .launchers
+                            .source()
+                            .database_locator(harness.database.path())
+                            .map_err(|source| RunnerError::Assertion {
+                                case_id: harness.definition.id.to_owned(),
+                                detail: format!(
+                                    "cannot construct source-audit provider locator: {source}"
+                                ),
+                            })?,
                         options: harness.plan.options.clone(),
                         fault: None,
                     },
@@ -235,7 +244,16 @@ pub(super) fn finalize_case(
                     WorkerCommand::Initialize {
                         role: WorkerRole::Source,
                         runtime: harness.source_runtime,
-                        database_path: harness.database.path().to_string_lossy().into_owned(),
+                        database_path: harness
+                            .launchers
+                            .source()
+                            .database_locator(harness.database.path())
+                            .map_err(|source| RunnerError::Assertion {
+                                case_id: harness.definition.id.to_owned(),
+                                detail: format!(
+                                    "cannot construct source-audit provider locator: {source}"
+                                ),
+                            })?,
                         options: harness.plan.options.clone(),
                         fault: None,
                     },

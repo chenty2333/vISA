@@ -9,6 +9,7 @@ use visa_conformance::{
     gate_stage3_evidence_bundle_json_with_artifacts,
     gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts,
     gate_stage4_evidence_bundle_json_with_artifacts,
+    gate_stage4_native_evidence_bundle_json_with_artifacts,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +21,7 @@ enum Command {
     Stage3ACrossRuntime,
     Stage3B,
     Stage4,
+    Stage4Native,
     JointHandoff,
 }
 
@@ -44,7 +46,7 @@ fn run() -> Result<(), (u8, String)> {
         return Err((
             64,
             format!(
-                "usage: {} <stage1|stage2|stage2-strict|stage3a|stage3a-cross-runtime|stage3b|stage4> <bundle.json> <artifact-root>\n       {} joint-handoff <bundle.json> <artifact-root> <visa-sha> <nexus-sha> <neutral-sha> <neutral-tree> <neutral-bundle-sha256> <source-lock-sha256> <protocol-markdown-sha256> <machine-toml-sha256> <refinement-map-sha256> <abstract-registry-sha256>",
+                "usage: {} <stage1|stage2|stage2-strict|stage3a|stage3a-cross-runtime|stage3b|stage4|stage4-native> <bundle.json> <artifact-root>\n       {} joint-handoff <bundle.json> <artifact-root> <visa-sha> <nexus-sha> <neutral-sha> <neutral-tree> <neutral-bundle-sha256> <source-lock-sha256> <protocol-markdown-sha256> <machine-toml-sha256> <refinement-map-sha256> <abstract-registry-sha256>",
                 PathBuf::from(&program).display(),
                 PathBuf::from(program).display()
             ),
@@ -112,6 +114,13 @@ fn run() -> Result<(), (u8, String)> {
                 &artifact_root,
             )),
         ),
+        Some(Command::Stage4Native) => (
+            "Stage 4 native",
+            serde_json::to_value(gate_stage4_native_evidence_bundle_json_with_artifacts(
+                &bytes,
+                &artifact_root,
+            )),
+        ),
         Some(Command::JointHandoff) => (
             "Joint handoff",
             serde_json::to_value(
@@ -172,6 +181,7 @@ fn parse_command(command: Option<&std::ffi::OsStr>) -> Option<Command> {
         Some("stage3a-cross-runtime") => Some(Command::Stage3ACrossRuntime),
         Some("stage3b") => Some(Command::Stage3B),
         Some("stage4") => Some(Command::Stage4),
+        Some("stage4-native") => Some(Command::Stage4Native),
         Some("joint-handoff") => Some(Command::JointHandoff),
         _ => None,
     }
@@ -195,6 +205,7 @@ mod tests {
         );
         assert_eq!(parse_command(Some(OsStr::new("stage3b"))), Some(Command::Stage3B));
         assert_eq!(parse_command(Some(OsStr::new("stage4"))), Some(Command::Stage4));
+        assert_eq!(parse_command(Some(OsStr::new("stage4-native"))), Some(Command::Stage4Native));
         assert_eq!(parse_command(Some(OsStr::new("joint-handoff"))), Some(Command::JointHandoff));
         for rejected in [None, Some(OsStr::new("strict-stage2")), Some(OsStr::new("stage2-v3"))] {
             assert_eq!(parse_command(rejected), None);

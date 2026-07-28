@@ -3,6 +3,7 @@ pub mod component;
 pub mod evidence;
 pub mod fixture;
 pub mod protocol;
+pub mod provider_rpc;
 pub mod runner;
 pub mod target;
 pub mod worker;

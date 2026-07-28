@@ -49,19 +49,24 @@ pub(super) fn spawn_initialized(
 ) -> Result<WorkerClient, RunnerError> {
     let WorkerInitialization { label, role, runtime, database, options, fault } = initialization;
     let worker_label = format!("{case_id}-{label}");
-    let mut client =
-        WorkerClient::spawn_with_launcher(launchers.for_role(role), &worker_label, WORKER_TIMEOUT)
-            .map_err(|source| RunnerError::Worker {
-                case_id: case_id.to_owned(),
-                role: role_label(role),
-                source,
-            })?;
+    let launcher = launchers.for_role(role);
+    let database_path =
+        launcher.database_locator(database).map_err(|source| RunnerError::Assertion {
+            case_id: case_id.to_owned(),
+            detail: format!("cannot construct worker provider locator: {source}"),
+        })?;
+    let mut client = WorkerClient::spawn_with_launcher(launcher, &worker_label, WORKER_TIMEOUT)
+        .map_err(|source| RunnerError::Worker {
+            case_id: case_id.to_owned(),
+            role: role_label(role),
+            source,
+        })?;
     let result = client
         .request_success_with_timeout(
             WorkerCommand::Initialize {
                 role,
                 runtime,
-                database_path: database.to_string_lossy().into_owned(),
+                database_path,
                 options: options.clone(),
                 fault,
             },

@@ -1,5 +1,6 @@
 use std::{
     ffi::{OsStr, OsString},
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -21,6 +22,7 @@ pub struct WorkerLauncher {
     program: PathBuf,
     prefix_args: Vec<OsString>,
     env_overrides: Vec<(OsString, OsString)>,
+    provider_socket: Option<PathBuf>,
 }
 
 impl WorkerLauncher {
@@ -36,6 +38,7 @@ impl WorkerLauncher {
             program: program.as_ref().to_path_buf(),
             prefix_args: prefix_args.into_iter().map(Into::into).collect(),
             env_overrides: Vec::new(),
+            provider_socket: None,
         }
     }
 
@@ -56,6 +59,11 @@ impl WorkerLauncher {
         self
     }
 
+    pub fn with_provider_socket(mut self, socket: impl AsRef<Path>) -> Self {
+        self.provider_socket = Some(socket.as_ref().to_path_buf());
+        self
+    }
+
     pub fn program(&self) -> &Path {
         &self.program
     }
@@ -66,6 +74,20 @@ impl WorkerLauncher {
 
     pub fn env_overrides(&self) -> &[(OsString, OsString)] {
         &self.env_overrides
+    }
+
+    pub fn database_locator(&self, local_database: &Path) -> Result<String, WorkerLauncherError> {
+        let Some(socket) = &self.provider_socket else {
+            return Ok(local_database.to_string_lossy().into_owned());
+        };
+        let mut digest = Sha256::new();
+        digest.update(b"visa-provider-database-id-v1\0");
+        digest.update(local_database.as_os_str().as_bytes());
+        crate::provider_rpc::ProviderLocator::new(socket, format!("{:x}", digest.finalize()))
+            .map(|locator| locator.to_string())
+            .map_err(|source| WorkerLauncherError::InvalidProviderLocator {
+                detail: source.to_string(),
+            })
     }
 
     pub fn probe_target(&self) -> Result<TargetHelloObservation, WorkerLauncherError> {
@@ -181,6 +203,7 @@ pub enum WorkerLauncherError {
     InvalidOutput { detail: String },
     InvalidJson { detail: String },
     InvalidHello { detail: String },
+    InvalidProviderLocator { detail: String },
 }
 
 impl std::fmt::Display for WorkerLauncherError {
@@ -200,6 +223,9 @@ impl std::fmt::Display for WorkerLauncherError {
                 write!(formatter, "invalid target hello JSON: {detail}")
             }
             Self::InvalidHello { detail } => write!(formatter, "invalid target hello: {detail}"),
+            Self::InvalidProviderLocator { detail } => {
+                write!(formatter, "invalid provider locator: {detail}")
+            }
         }
     }
 }
@@ -278,6 +304,26 @@ mod tests {
 
         assert_eq!(launchers.for_role(WorkerRole::Source), &source);
         assert_eq!(launchers.for_role(WorkerRole::Destination), &destination);
+    }
+
+    #[test]
+    fn provider_locators_use_endpoint_sockets_and_one_database_identity() {
+        let database = Path::new("/artifacts/cell/.runner-work/case.sqlite3");
+        let hx = WorkerLauncher::direct("/owned/hx-worker")
+            .with_provider_socket("/artifacts/provider.sock");
+        let ha = WorkerLauncher::direct("/owned/ssh")
+            .with_provider_socket("/tmp/visa-stage4-native.ABC/provider.sock");
+        let hx_locator = crate::provider_rpc::ProviderLocator::parse(
+            &hx.database_locator(database).expect("Hx locator"),
+        )
+        .expect("parse Hx locator");
+        let ha_locator = crate::provider_rpc::ProviderLocator::parse(
+            &ha.database_locator(database).expect("Ha locator"),
+        )
+        .expect("parse Ha locator");
+
+        assert_ne!(hx_locator.socket_path(), ha_locator.socket_path());
+        assert_eq!(hx_locator.database_id(), ha_locator.database_id());
     }
 
     #[test]

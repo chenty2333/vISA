@@ -15,6 +15,7 @@ mod stage2_normalize;
 mod stage3;
 mod stage3a_cross;
 mod stage4;
+mod stage4_native;
 
 pub const JCO_NODE_EXECUTION_CARRIER: &str = "owned-bytes-stdin-frame-v1";
 
@@ -28,6 +29,7 @@ pub use stage2_normalize::*;
 pub use stage3::*;
 pub use stage3a_cross::*;
 pub use stage4::*;
+pub use stage4_native::*;
 
 #[cfg(test)]
 mod defect_corpus_tests;

@@ -5,7 +5,6 @@ use contract_core::{
     Replay, SchemaVersion, TimerDisposition,
 };
 use substrate_api::{JournalPort, KvPort, LeasePort};
-use substrate_host::SqliteProvider;
 use visa_profile::ProviderSupport;
 use visa_runtime::{
     CommandReceipt, Coordinator, RuntimeError, SafePointTimer, SnapshotExpectations, TimerPoll,
@@ -19,7 +18,7 @@ use visa_wasmtime::{
 };
 
 use crate::{
-    fixture::{FixtureError, FixtureSpec, OpenProviders, derive_identity},
+    fixture::{FixtureError, FixtureSpec, OpenWorkerProviders, derive_identity},
     protocol::{
         AdapterFailureKindView, ComponentStatusView, CrashMode, DestinationSupportMode,
         FaultObservationView, INVALID_REQUEST_ID, ImplementationLineageView, LeaseRecordView,
@@ -32,10 +31,13 @@ use crate::{
 };
 
 mod runtime_registry;
+#[path = "worker_provider.rs"]
+pub(crate) mod worker_provider;
 
 use runtime_registry::{
     Adapter, PreparedAdapter, RuntimeMetadata, instantiate_prepared_adapter, preflight_adapter,
 };
+use worker_provider::WorkerProvider;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 
@@ -57,7 +59,7 @@ struct SourceWorker {
 }
 
 struct DestinationPending {
-    provider: Option<SqliteProvider>,
+    provider: Option<WorkerProvider>,
     prepared: Option<PreparedAdapter>,
     runtime: RuntimeImplementation,
 }
@@ -78,7 +80,7 @@ struct PendingTimerDelivery {
 }
 
 struct DestinationWorker {
-    coordinator: Option<Coordinator<SqliteProvider>>,
+    coordinator: Option<Coordinator<WorkerProvider>>,
     adapter: Option<Adapter>,
     prepared: Option<PreparedAdapter>,
     portable_state: PortableComponentState,
@@ -87,7 +89,7 @@ struct DestinationWorker {
 }
 
 impl DestinationWorker {
-    fn coordinator(&self) -> Result<&Coordinator<SqliteProvider>, WorkerError> {
+    fn coordinator(&self) -> Result<&Coordinator<WorkerProvider>, WorkerError> {
         if let Some(adapter) = &self.adapter {
             Ok(adapter.coordinator())
         } else {
@@ -97,7 +99,7 @@ impl DestinationWorker {
         }
     }
 
-    fn coordinator_mut(&mut self) -> Result<&mut Coordinator<SqliteProvider>, WorkerError> {
+    fn coordinator_mut(&mut self) -> Result<&mut Coordinator<WorkerProvider>, WorkerError> {
         if let Some(adapter) = &mut self.adapter {
             Ok(adapter.coordinator_mut())
         } else {
@@ -224,13 +226,15 @@ impl Worker {
         }
 
         let fixture = FixtureSpec::with_options(options).map_err(fixture_error)?;
-        let OpenProviders { mut source, mut destination } =
-            fixture.open_providers(database_path).map_err(fixture_error)?;
+        let OpenWorkerProviders { mut source, mut destination } =
+            fixture.open_worker_providers(database_path).map_err(fixture_error)?;
         let fault = fault.map(Into::into);
         let (state, prepared_runtime, live_runtime) = match role {
             WorkerRole::Source => {
                 if let Some(fault) = fault {
-                    source.inject_failure_once(fault);
+                    source.inject_failure_once(fault).map_err(|error| {
+                        WorkerError::provider("injecting source provider fault failed", error)
+                    })?;
                 }
                 let coordinator = Coordinator::recover(fixture.source_state.clone(), source)
                     .map_err(runtime_error)?;
@@ -277,7 +281,9 @@ impl Worker {
             }
             WorkerRole::Destination => {
                 if let Some(fault) = fault {
-                    destination.inject_failure_once(fault);
+                    destination.inject_failure_once(fault).map_err(|error| {
+                        WorkerError::provider("injecting destination provider fault failed", error)
+                    })?;
                 }
                 let prepared = preflight_adapter(
                     runtime,
@@ -586,7 +592,7 @@ impl Worker {
             })?,
             kind,
         };
-        let mut provider = SqliteProvider::open(
+        let mut provider = WorkerProvider::open(
             database_path,
             fixture.config_digest_input.source_scope.to_runtime(),
         )
@@ -920,9 +926,16 @@ impl Worker {
             .as_ref()
             .map(|prepared| prepared.bindings.clone())
             .unwrap_or_default();
-        let fault_observation = coordinator.provider().fault_observation().map(|observation| {
-            FaultObservationView { point: observation.point.into(), count: observation.count }
-        });
+        let fault_observation = coordinator
+            .provider()
+            .fault_observation()
+            .map_err(|error| {
+                WorkerError::provider("reading provider fault observation failed", error)
+            })?
+            .map(|observation| FaultObservationView {
+                point: observation.point.into(),
+                count: observation.count,
+            });
         let key_value_entry = coordinator
             .provider()
             .inspect_key_value(canonical_state.key_value.claim.resource, &key)
@@ -1460,14 +1473,14 @@ mod tests {
             component_digest: fixture.component_digest,
             profile_digest: fixture.profile_digest,
         };
-        let first = ComponentAdapter::<SqliteProvider>::preflight(
+        let first = ComponentAdapter::<WorkerProvider>::preflight(
             crate::component::bytes(),
             &fixture.profile,
             &support,
             expectations,
         )
         .unwrap();
-        let second = ComponentAdapter::<SqliteProvider>::preflight(
+        let second = ComponentAdapter::<WorkerProvider>::preflight(
             crate::component::bytes(),
             &fixture.profile,
             &support,
@@ -1476,7 +1489,7 @@ mod tests {
         .unwrap();
         drop((first, second));
 
-        let invalid = ComponentAdapter::<SqliteProvider>::preflight(
+        let invalid = ComponentAdapter::<WorkerProvider>::preflight(
             b"not-a-component",
             &fixture.profile,
             &support,
@@ -1488,7 +1501,7 @@ mod tests {
         .expect_err("invalid Component Model bytes must fail before instantiation");
         assert_eq!(invalid.kind(), AdapterFailureKind::InvalidComponent);
 
-        let digest_mismatch = ComponentAdapter::<SqliteProvider>::preflight(
+        let digest_mismatch = ComponentAdapter::<WorkerProvider>::preflight(
             crate::component::bytes(),
             &fixture.profile,
             &support,

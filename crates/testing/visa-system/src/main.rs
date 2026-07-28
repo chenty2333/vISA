@@ -31,6 +31,7 @@ use visa_system::{
 };
 
 mod stage4_command;
+mod stage4_native_command;
 
 const EXPECTED_STAGE1_CASES: usize = 31;
 const BASELINE_CASE_ID: &str = "evidence-verification";
@@ -64,6 +65,31 @@ fn run() -> Result<ExitCode, (u8, String)> {
         Mode::Stage2(artifact_root) => run_stage2_command(&artifact_root),
         Mode::Stage2Strict(artifact_root) => run_stage2_strict_command(&artifact_root),
         Mode::Stage4(artifact_root) => stage4_command::run_stage4_command(&artifact_root),
+        Mode::Stage4Native {
+            artifact_root,
+            aarch64_worker,
+            ssh_program,
+            known_hosts,
+            identity_file,
+            remote_host,
+            remote_worker,
+        } => stage4_native_command::run_stage4_native_command(
+            &artifact_root,
+            &aarch64_worker,
+            &ssh_program,
+            &known_hosts,
+            &identity_file,
+            &remote_host,
+            &remote_worker,
+        ),
+        Mode::Stage4NativeHost { nonce, host_id } => {
+            stage4_native_command::run_stage4_native_host_observation(&nonce, host_id)
+        }
+        Mode::Stage4NativeProviderProbe { locator } => {
+            visa_system::provider_rpc::probe(&locator)
+                .map_err(|source| (2, format!("native provider probe failed: {source}")))?;
+            Ok(ExitCode::SUCCESS)
+        }
         Mode::Cell { source, destination, artifact_root } => {
             run_cell_command(&artifact_root, source, destination)
         }
@@ -80,6 +106,22 @@ enum Mode {
     Stage2(PathBuf),
     Stage2Strict(PathBuf),
     Stage4(PathBuf),
+    Stage4Native {
+        artifact_root: PathBuf,
+        aarch64_worker: PathBuf,
+        ssh_program: PathBuf,
+        known_hosts: PathBuf,
+        identity_file: PathBuf,
+        remote_host: OsString,
+        remote_worker: PathBuf,
+    },
+    Stage4NativeHost {
+        nonce: String,
+        host_id: visa_conformance::Stage4NativeHostId,
+    },
+    Stage4NativeProviderProbe {
+        locator: String,
+    },
     Cell {
         source: RuntimeImplementation,
         destination: RuntimeImplementation,
@@ -118,6 +160,55 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
         {
             Ok(Mode::Stage4(PathBuf::from(artifact_root)))
         }
+        [
+            command,
+            artifact_root,
+            aarch64_worker,
+            ssh_program,
+            known_hosts,
+            identity_file,
+            remote_host,
+            remote_worker,
+        ] if command == "stage4-native"
+            && !artifact_root.as_os_str().is_empty()
+            && !aarch64_worker.as_os_str().is_empty()
+            && !ssh_program.as_os_str().is_empty()
+            && !known_hosts.as_os_str().is_empty()
+            && !identity_file.as_os_str().is_empty()
+            && !remote_host.is_empty()
+            && !remote_worker.as_os_str().is_empty() =>
+        {
+            Ok(Mode::Stage4Native {
+                artifact_root: PathBuf::from(artifact_root),
+                aarch64_worker: PathBuf::from(aarch64_worker),
+                ssh_program: PathBuf::from(ssh_program),
+                known_hosts: PathBuf::from(known_hosts),
+                identity_file: PathBuf::from(identity_file),
+                remote_host: remote_host.clone(),
+                remote_worker: PathBuf::from(remote_worker),
+            })
+        }
+        [command, nonce, host_id] if command == "stage4-native-host" => {
+            let nonce = nonce
+                .to_str()
+                .ok_or_else(|| (64, "native host nonce must be valid UTF-8".to_owned()))?;
+            visa_system::target::validate_target_nonce(nonce)
+                .map_err(|error| (64, error.to_string()))?;
+            let host_id = match host_id.to_str() {
+                Some("Hx") => visa_conformance::Stage4NativeHostId::HxHost,
+                Some("Ha") => visa_conformance::Stage4NativeHostId::HaHost,
+                _ => return Err((64, "native host id must be Hx or Ha".to_owned())),
+            };
+            Ok(Mode::Stage4NativeHost { nonce: nonce.to_owned(), host_id })
+        }
+        [command, locator] if command == "stage4-native-provider-probe" => {
+            let locator = locator
+                .to_str()
+                .ok_or_else(|| (64, "native provider locator must be valid UTF-8".to_owned()))?;
+            visa_system::provider_rpc::ProviderLocator::parse(locator)
+                .map_err(|source| (64, format!("invalid native provider locator: {source}")))?;
+            Ok(Mode::Stage4NativeProviderProbe { locator: locator.to_owned() })
+        }
         [command, source, destination, artifact_root]
             if command == "cell" && !artifact_root.as_os_str().is_empty() =>
         {
@@ -133,7 +224,10 @@ fn parse_mode(program: &OsStr, arguments: &[OsString]) -> Result<Mode, (u8, Stri
 
 fn usage(program: &OsStr) -> String {
     format!(
-        "usage: {} target-hello <64-lowercase-hex-nonce>\n       {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} stage2-strict <artifact-root>\n       {} stage4 <artifact-root>\n       {} cell <wasmtime|jco-node|wacogo> <wasmtime|jco-node|wacogo> <artifact-root>",
+        "usage: {} target-hello <64-lowercase-hex-nonce>\n       {} worker\n       {} stage1 <artifact-root>\n       {} stage2 <artifact-root>\n       {} stage2-strict <artifact-root>\n       {} stage4 <artifact-root>\n       {} stage4-native <artifact-root> <aarch64-worker> <ssh-program> <known-hosts> <identity-file> <remote-host> <remote-worker>\n       {} stage4-native-host <64-lowercase-hex-nonce> <Hx|Ha>\n       {} stage4-native-provider-probe <provider-locator>\n       {} cell <wasmtime|jco-node|wacogo> <wasmtime|jco-node|wacogo> <artifact-root>",
+        PathBuf::from(program).display(),
+        PathBuf::from(program).display(),
+        PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
         PathBuf::from(program).display(),
@@ -779,6 +873,44 @@ mod tests {
             parse_mode(
                 program,
                 &[
+                    OsString::from("stage4-native"),
+                    OsString::from("target/stage4-native"),
+                    OsString::from("target/aarch64/visa-system"),
+                    OsString::from("/usr/bin/ssh"),
+                    OsString::from("target/known-hosts"),
+                    OsString::from("target/id_ed25519"),
+                    OsString::from("pi@arm-host"),
+                    OsString::from("/opt/visa/visa-system"),
+                ],
+            ),
+            Ok(Mode::Stage4Native {
+                artifact_root: PathBuf::from("target/stage4-native"),
+                aarch64_worker: PathBuf::from("target/aarch64/visa-system"),
+                ssh_program: PathBuf::from("/usr/bin/ssh"),
+                known_hosts: PathBuf::from("target/known-hosts"),
+                identity_file: PathBuf::from("target/id_ed25519"),
+                remote_host: OsString::from("pi@arm-host"),
+                remote_worker: PathBuf::from("/opt/visa/visa-system"),
+            })
+        );
+        assert_eq!(
+            parse_mode(
+                program,
+                &[
+                    OsString::from("stage4-native-host"),
+                    OsString::from(TARGET_NONCE),
+                    OsString::from("Ha"),
+                ],
+            ),
+            Ok(Mode::Stage4NativeHost {
+                nonce: TARGET_NONCE.to_owned(),
+                host_id: visa_conformance::Stage4NativeHostId::HaHost,
+            })
+        );
+        assert_eq!(
+            parse_mode(
+                program,
+                &[
                     OsString::from("cell"),
                     OsString::from("jco-node"),
                     OsString::from("wasmtime"),
@@ -848,6 +980,7 @@ mod tests {
             vec![OsString::from("stage2-strict"), OsString::new()],
             vec![OsString::from("stage4")],
             vec![OsString::from("stage4"), OsString::new()],
+            vec![OsString::from("stage4-native"), OsString::from("root")],
             vec![OsString::from("worker"), OsString::from("extra")],
             vec![OsString::from("stage1"), OsString::from("root"), OsString::from("extra")],
             vec![

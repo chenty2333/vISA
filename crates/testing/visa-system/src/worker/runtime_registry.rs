@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use contract_core::Identity;
-use substrate_host::SqliteProvider;
 use visa_component_adapter::{
     ActivationRequest, AdapterError, ComponentSafePoint, ComponentStatus,
     CooperativeRuntimeFactory, CooperativeRuntimeInstance, PortableComponentState,
@@ -15,7 +14,7 @@ use visa_runtime::Coordinator;
 use visa_wacogo::{PreparedWacogoComponent, WacogoAdapter, WacogoProvenance, WacogoRuntime};
 use visa_wasmtime::{ComponentAdapter, PreparedComponent, WasmtimeRuntime};
 
-use crate::protocol::RuntimeImplementation;
+use crate::{protocol::RuntimeImplementation, worker::worker_provider::WorkerProvider};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RuntimeMetadata {
@@ -29,12 +28,12 @@ trait RuntimeInstanceMetadata {
     fn implementation_lineage(&self) -> Option<WacogoProvenance>;
     fn into_coordinator_boxed(
         self: Box<Self>,
-    ) -> Result<Coordinator<SqliteProvider>, Box<RecoverableInstantiation<SqliteProvider>>>;
+    ) -> Result<Coordinator<WorkerProvider>, Box<RecoverableInstantiation<WorkerProvider>>>;
     fn inject_unsupported_live_resource(&mut self) -> Result<(), AdapterError>;
     fn clear_unsupported_live_resource(&mut self) -> Result<(), AdapterError>;
 }
 
-impl RuntimeInstanceMetadata for ComponentAdapter<SqliteProvider> {
+impl RuntimeInstanceMetadata for ComponentAdapter<WorkerProvider> {
     fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
         None
     }
@@ -45,7 +44,7 @@ impl RuntimeInstanceMetadata for ComponentAdapter<SqliteProvider> {
 
     fn into_coordinator_boxed(
         self: Box<Self>,
-    ) -> Result<Coordinator<SqliteProvider>, Box<RecoverableInstantiation<SqliteProvider>>> {
+    ) -> Result<Coordinator<WorkerProvider>, Box<RecoverableInstantiation<WorkerProvider>>> {
         Ok(ComponentAdapter::into_coordinator(*self))
     }
 
@@ -58,7 +57,7 @@ impl RuntimeInstanceMetadata for ComponentAdapter<SqliteProvider> {
     }
 }
 
-impl RuntimeInstanceMetadata for JcoNodeAdapter<SqliteProvider> {
+impl RuntimeInstanceMetadata for JcoNodeAdapter<WorkerProvider> {
     fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
         Some(JcoNodeAdapter::translation_provenance(self).clone())
     }
@@ -69,7 +68,7 @@ impl RuntimeInstanceMetadata for JcoNodeAdapter<SqliteProvider> {
 
     fn into_coordinator_boxed(
         self: Box<Self>,
-    ) -> Result<Coordinator<SqliteProvider>, Box<RecoverableInstantiation<SqliteProvider>>> {
+    ) -> Result<Coordinator<WorkerProvider>, Box<RecoverableInstantiation<WorkerProvider>>> {
         Ok(JcoNodeAdapter::into_coordinator(*self))
     }
 
@@ -82,7 +81,7 @@ impl RuntimeInstanceMetadata for JcoNodeAdapter<SqliteProvider> {
     }
 }
 
-impl RuntimeInstanceMetadata for WacogoAdapter<SqliteProvider> {
+impl RuntimeInstanceMetadata for WacogoAdapter<WorkerProvider> {
     fn translation_provenance(&self) -> Option<JcoTranslationProvenance> {
         None
     }
@@ -93,7 +92,7 @@ impl RuntimeInstanceMetadata for WacogoAdapter<SqliteProvider> {
 
     fn into_coordinator_boxed(
         self: Box<Self>,
-    ) -> Result<Coordinator<SqliteProvider>, Box<RecoverableInstantiation<SqliteProvider>>> {
+    ) -> Result<Coordinator<WorkerProvider>, Box<RecoverableInstantiation<WorkerProvider>>> {
         WacogoAdapter::into_coordinator(*self)
     }
 
@@ -107,12 +106,12 @@ impl RuntimeInstanceMetadata for WacogoAdapter<SqliteProvider> {
 }
 
 trait ErasedRuntimeInstance:
-    CooperativeRuntimeInstance<SqliteProvider> + RuntimeInstanceMetadata
+    CooperativeRuntimeInstance<WorkerProvider> + RuntimeInstanceMetadata
 {
 }
 
 impl<T> ErasedRuntimeInstance for T where
-    T: CooperativeRuntimeInstance<SqliteProvider> + RuntimeInstanceMetadata
+    T: CooperativeRuntimeInstance<WorkerProvider> + RuntimeInstanceMetadata
 {
 }
 
@@ -139,11 +138,11 @@ impl Adapter {
         }
     }
 
-    pub(super) fn coordinator(&self) -> &Coordinator<SqliteProvider> {
+    pub(super) fn coordinator(&self) -> &Coordinator<WorkerProvider> {
         self.inner().coordinator()
     }
 
-    pub(super) fn coordinator_mut(&mut self) -> &mut Coordinator<SqliteProvider> {
+    pub(super) fn coordinator_mut(&mut self) -> &mut Coordinator<WorkerProvider> {
         self.inner_mut().coordinator_mut()
     }
 
@@ -211,13 +210,13 @@ impl Adapter {
     #[cfg(test)]
     fn into_coordinator(
         mut self,
-    ) -> Result<Coordinator<SqliteProvider>, Box<RecoverableInstantiation<SqliteProvider>>> {
+    ) -> Result<Coordinator<WorkerProvider>, Box<RecoverableInstantiation<WorkerProvider>>> {
         let inner = self.inner.take().expect("live runtime has not been consumed");
         inner.into_coordinator_boxed()
     }
 }
 
-trait RegisteredRuntime: CooperativeRuntimeFactory<SqliteProvider>
+trait RegisteredRuntime: CooperativeRuntimeFactory<WorkerProvider>
 where
     Self::Instance: ErasedRuntimeInstance + 'static,
     Self::Prepared: 'static,
@@ -235,7 +234,7 @@ where
 impl RegisteredRuntime for WasmtimeRuntime {
     const IMPLEMENTATION: RuntimeImplementation = RuntimeImplementation::Wasmtime;
 
-    fn prepared_runtime_metadata(prepared: &PreparedComponent<SqliteProvider>) -> RuntimeMetadata {
+    fn prepared_runtime_metadata(prepared: &PreparedComponent<WorkerProvider>) -> RuntimeMetadata {
         RuntimeMetadata {
             identity: prepared.runtime_identity(),
             translation_provenance: None,
@@ -277,8 +276,8 @@ trait ErasedPrepared: 'static {
     fn teardown(self: Box<Self>) -> Result<(), AdapterError>;
     fn instantiate(
         self: Box<Self>,
-        coordinator: Coordinator<SqliteProvider>,
-    ) -> Result<Adapter, Box<RecoverableInstantiation<SqliteProvider>>>;
+        coordinator: Coordinator<WorkerProvider>,
+    ) -> Result<Adapter, Box<RecoverableInstantiation<WorkerProvider>>>;
 }
 
 struct TypedPrepared<F>
@@ -307,8 +306,8 @@ where
 
     fn instantiate(
         self: Box<Self>,
-        coordinator: Coordinator<SqliteProvider>,
-    ) -> Result<Adapter, Box<RecoverableInstantiation<SqliteProvider>>> {
+        coordinator: Coordinator<WorkerProvider>,
+    ) -> Result<Adapter, Box<RecoverableInstantiation<WorkerProvider>>> {
         let prepared_metadata = F::prepared_runtime_metadata(&self.prepared);
         let instance = F::instantiate_prepared_recoverable(self.prepared, coordinator)?;
         let live_metadata = RuntimeMetadata {
@@ -447,8 +446,8 @@ pub(super) fn preflight_adapter(
 
 pub(super) fn instantiate_prepared_adapter(
     mut prepared: PreparedAdapter,
-    coordinator: Coordinator<SqliteProvider>,
-) -> Result<Adapter, Box<RecoverableInstantiation<SqliteProvider>>> {
+    coordinator: Coordinator<WorkerProvider>,
+) -> Result<Adapter, Box<RecoverableInstantiation<WorkerProvider>>> {
     prepared.inner.take().expect("prepared runtime has not been consumed").instantiate(coordinator)
 }
 
@@ -493,13 +492,13 @@ mod tests {
     }
 
     struct TrackingInstance {
-        coordinator: Option<Coordinator<SqliteProvider>>,
+        coordinator: Option<Coordinator<WorkerProvider>>,
         identity: RuntimeIdentity,
         teardowns: Arc<AtomicU64>,
         teardown_fails: bool,
     }
 
-    impl CooperativeRuntimeInstance<SqliteProvider> for TrackingInstance {
+    impl CooperativeRuntimeInstance<WorkerProvider> for TrackingInstance {
         fn runtime_identity(&self) -> RuntimeIdentity {
             self.identity.clone()
         }
@@ -508,11 +507,11 @@ mod tests {
             self.coordinator().state().component_digest
         }
 
-        fn coordinator(&self) -> &Coordinator<SqliteProvider> {
+        fn coordinator(&self) -> &Coordinator<WorkerProvider> {
             self.coordinator.as_ref().expect("tracking coordinator has not been consumed")
         }
 
-        fn coordinator_mut(&mut self) -> &mut Coordinator<SqliteProvider> {
+        fn coordinator_mut(&mut self) -> &mut Coordinator<WorkerProvider> {
             self.coordinator.as_mut().expect("tracking coordinator has not been consumed")
         }
 
@@ -575,7 +574,7 @@ mod tests {
 
         fn into_coordinator_boxed(
             mut self: Box<Self>,
-        ) -> Result<Coordinator<SqliteProvider>, Box<RecoverableInstantiation<SqliteProvider>>>
+        ) -> Result<Coordinator<WorkerProvider>, Box<RecoverableInstantiation<WorkerProvider>>>
         {
             self.teardowns.fetch_add(1, Ordering::SeqCst);
             let coordinator =
@@ -605,7 +604,7 @@ mod tests {
         )
     }
 
-    impl CooperativeRuntimeFactory<SqliteProvider> for TrackingFactory {
+    impl CooperativeRuntimeFactory<WorkerProvider> for TrackingFactory {
         type Instance = TrackingInstance;
         type Prepared = TrackingPrepared;
 
@@ -626,8 +625,8 @@ mod tests {
 
         fn instantiate_prepared_recoverable(
             prepared: Self::Prepared,
-            coordinator: Coordinator<SqliteProvider>,
-        ) -> Result<Self::Instance, Box<RecoverableInstantiation<SqliteProvider>>> {
+            coordinator: Coordinator<WorkerProvider>,
+        ) -> Result<Self::Instance, Box<RecoverableInstantiation<WorkerProvider>>> {
             Ok(TrackingInstance {
                 coordinator: Some(coordinator),
                 identity: prepared.live_identity,
@@ -654,8 +653,8 @@ mod tests {
         }
     }
 
-    impl CooperativeRuntimeFactory<SqliteProvider> for FakeFactory {
-        type Instance = ComponentAdapter<SqliteProvider>;
+    impl CooperativeRuntimeFactory<WorkerProvider> for FakeFactory {
+        type Instance = ComponentAdapter<WorkerProvider>;
         type Prepared = FakePrepared;
 
         fn identity() -> RuntimeIdentity {
@@ -673,8 +672,8 @@ mod tests {
 
         fn instantiate_prepared_recoverable(
             _: Self::Prepared,
-            coordinator: Coordinator<SqliteProvider>,
-        ) -> Result<Self::Instance, Box<RecoverableInstantiation<SqliteProvider>>> {
+            coordinator: Coordinator<WorkerProvider>,
+        ) -> Result<Self::Instance, Box<RecoverableInstantiation<WorkerProvider>>> {
             FAKE_FACTORY_CALLED.store(true, Ordering::SeqCst);
             Err(Box::new(RecoverableInstantiation {
                 error: AdapterError::ResourceBinding(ResourceBindingError::Inactive),
@@ -695,12 +694,12 @@ mod tests {
         }
     }
 
-    impl CooperativeRuntimeFactory<SqliteProvider> for MetadataDriftFactory {
-        type Instance = ComponentAdapter<SqliteProvider>;
-        type Prepared = PreparedComponent<SqliteProvider>;
+    impl CooperativeRuntimeFactory<WorkerProvider> for MetadataDriftFactory {
+        type Instance = ComponentAdapter<WorkerProvider>;
+        type Prepared = PreparedComponent<WorkerProvider>;
 
         fn identity() -> RuntimeIdentity {
-            <WasmtimeRuntime as CooperativeRuntimeFactory<SqliteProvider>>::identity()
+            <WasmtimeRuntime as CooperativeRuntimeFactory<WorkerProvider>>::identity()
         }
 
         fn preflight(
@@ -709,7 +708,7 @@ mod tests {
             support: &ProviderSupport,
             expectations: PreflightExpectations,
         ) -> Result<Self::Prepared, AdapterError> {
-            <WasmtimeRuntime as CooperativeRuntimeFactory<SqliteProvider>>::preflight(
+            <WasmtimeRuntime as CooperativeRuntimeFactory<WorkerProvider>>::preflight(
                 component_bytes,
                 profile,
                 support,
@@ -719,9 +718,9 @@ mod tests {
 
         fn instantiate_prepared_recoverable(
             prepared: Self::Prepared,
-            coordinator: Coordinator<SqliteProvider>,
-        ) -> Result<Self::Instance, Box<RecoverableInstantiation<SqliteProvider>>> {
-            <WasmtimeRuntime as CooperativeRuntimeFactory<SqliteProvider>>::instantiate_prepared_recoverable(
+            coordinator: Coordinator<WorkerProvider>,
+        ) -> Result<Self::Instance, Box<RecoverableInstantiation<WorkerProvider>>> {
+            <WasmtimeRuntime as CooperativeRuntimeFactory<WorkerProvider>>::instantiate_prepared_recoverable(
                 prepared,
                 coordinator,
             )
@@ -731,7 +730,7 @@ mod tests {
     impl RegisteredRuntime for MetadataDriftFactory {
         const IMPLEMENTATION: RuntimeImplementation = RuntimeImplementation::Wasmtime;
 
-        fn prepared_runtime_metadata(_: &PreparedComponent<SqliteProvider>) -> RuntimeMetadata {
+        fn prepared_runtime_metadata(_: &PreparedComponent<WorkerProvider>) -> RuntimeMetadata {
             RuntimeMetadata {
                 identity: RuntimeIdentity::new("drifted", "1", "drifted-engine", "1"),
                 translation_provenance: None,
@@ -797,7 +796,7 @@ mod tests {
             std::process::id(),
             NEXT_DATABASE.fetch_add(1, Ordering::Relaxed)
         ));
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let expected_state = coordinator.state().clone();
@@ -823,7 +822,7 @@ mod tests {
         assert_eq!(failure.coordinator.state(), &expected_state);
         assert_eq!(failure.coordinator.state_digest().unwrap(), expected_digest);
         assert_eq!(failure.coordinator.journal_position(), expected_journal_position);
-        assert!(failure.coordinator.provider().fault_observation().is_none());
+        assert!(failure.coordinator.provider().fault_observation().unwrap().is_none());
 
         drop(providers.destination);
         drop(failure);
@@ -840,7 +839,7 @@ mod tests {
             std::process::id(),
             NEXT_DATABASE.fetch_add(1, Ordering::Relaxed)
         ));
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let expected_state = coordinator.state().clone();
@@ -848,7 +847,7 @@ mod tests {
         let support =
             ProviderSupport::cooperative_handoff_v1(fixture.profile.required_extensions.clone());
         let prepared =
-            <MetadataDriftFactory as CooperativeRuntimeFactory<SqliteProvider>>::preflight(
+            <MetadataDriftFactory as CooperativeRuntimeFactory<WorkerProvider>>::preflight(
                 crate::component::bytes(),
                 &fixture.profile,
                 &support,
@@ -887,7 +886,7 @@ mod tests {
         let normal_count = Arc::new(AtomicU64::new(0));
         let fixture = FixtureSpec::new("tracking-normal-eof").unwrap();
         let database = test_database("tracking-normal-eof");
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let adapter = tracking_adapter(coordinator, Arc::clone(&normal_count), "tracking-normal");
@@ -914,7 +913,7 @@ mod tests {
         let crash_count = Arc::new(AtomicU64::new(0));
         let fixture = FixtureSpec::new("tracking-immediate-crash").unwrap();
         let database = test_database("tracking-immediate-crash");
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let adapter = tracking_adapter(coordinator, Arc::clone(&crash_count), "tracking-crash");
@@ -947,7 +946,7 @@ mod tests {
         let live_count = Arc::new(AtomicU64::new(0));
         let fixture = FixtureSpec::new("tracking-pending-eof").unwrap();
         let database = test_database("tracking-pending-eof");
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         drop(providers.source);
         let mut worker = Worker {
             fixture: None,
@@ -978,7 +977,7 @@ mod tests {
         let explicit_count = Arc::new(AtomicU64::new(0));
         let fixture = FixtureSpec::new("tracking-explicit-into").unwrap();
         let database = test_database("tracking-explicit-into");
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let adapter =
@@ -1038,7 +1037,7 @@ mod tests {
         let live_count = Arc::new(AtomicU64::new(0));
         let fixture = FixtureSpec::new("tracking-metadata-drift").unwrap();
         let database = test_database("tracking-metadata-drift");
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let prepared = tracking_prepared(
@@ -1068,7 +1067,7 @@ mod tests {
         let live_count = Arc::new(AtomicU64::new(0));
         let fixture = FixtureSpec::new("tracking-eof-failure").unwrap();
         let database = test_database("tracking-eof-failure");
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let coordinator =
             Coordinator::recover(fixture.source_state.clone(), providers.source).unwrap();
         let adapter = Adapter {
@@ -1127,7 +1126,7 @@ mod tests {
     }
 
     fn tracking_adapter(
-        coordinator: Coordinator<SqliteProvider>,
+        coordinator: Coordinator<WorkerProvider>,
         teardowns: Arc<AtomicU64>,
         label: &str,
     ) -> Adapter {
@@ -1189,7 +1188,7 @@ mod tests {
             std::process::id(),
             NEXT_DATABASE.fetch_add(1, Ordering::Relaxed)
         ));
-        let providers = fixture.open_providers(&database).unwrap();
+        let providers = fixture.open_worker_providers(&database).unwrap();
         let support =
             ProviderSupport::cooperative_handoff_v1(fixture.profile.required_extensions.clone());
         let prepared = preflight_adapter(
@@ -1225,7 +1224,7 @@ mod tests {
         assert_eq!(failure.coordinator.state(), &expected_state);
         assert_eq!(failure.coordinator.state_digest().unwrap(), expected_digest);
         assert_eq!(failure.coordinator.journal_position(), expected_journal_position);
-        assert!(failure.coordinator.provider().fault_observation().is_none());
+        assert!(failure.coordinator.provider().fault_observation().unwrap().is_none());
 
         drop(providers.destination);
         drop(failure);

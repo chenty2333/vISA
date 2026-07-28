@@ -14,6 +14,8 @@ use substrate_host::SqliteProvider;
 use visa_profile::CooperativeHandoffProfile;
 use visa_runtime::{AuthorityPlan, EncodeError, canonical_digest};
 
+use crate::worker::worker_provider::WorkerProvider;
+
 const ID_DOMAIN: &[u8] = b"visa-system-stage1-fixture-v1\0";
 const INITIAL_LEASE_EPOCH: LeaseEpoch = LeaseEpoch(1);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -402,11 +404,35 @@ impl FixtureSpec {
 
     pub fn open_providers(&self, path: impl AsRef<Path>) -> Result<OpenProviders, FixtureError> {
         let path = path.as_ref();
-        let mut source =
+        let source =
             SqliteProvider::open(path, self.config_digest_input.source_scope.to_runtime())?;
-        let mut destination =
+        let destination =
             SqliteProvider::open(path, self.config_digest_input.destination_scope.to_runtime())?;
+        let (source, destination) = self.configure_providers(source, destination)?;
+        Ok(OpenProviders { source, destination })
+    }
 
+    pub(crate) fn open_worker_providers(
+        &self,
+        locator: impl AsRef<Path>,
+    ) -> Result<OpenWorkerProviders, FixtureError> {
+        let locator = locator.as_ref();
+        let source =
+            WorkerProvider::open(locator, self.config_digest_input.source_scope.to_runtime())?;
+        let destination =
+            WorkerProvider::open(locator, self.config_digest_input.destination_scope.to_runtime())?;
+        let (source, destination) = self.configure_providers(source, destination)?;
+        Ok(OpenWorkerProviders { source, destination })
+    }
+
+    fn configure_providers<P>(
+        &self,
+        mut source: P,
+        mut destination: P,
+    ) -> Result<(P, P), FixtureError>
+    where
+        P: FixtureProvider,
+    {
         for policy in &self.policy_digest_input.source_policies {
             source.install_policy(policy.as_provider())?;
         }
@@ -433,13 +459,68 @@ impl FixtureSpec {
                 .provision_key_value_namespace_availability(self.ids.destination_node, namespace)?;
         }
 
-        Ok(OpenProviders { source, destination })
+        Ok((source, destination))
     }
 }
 
 pub struct OpenProviders {
     pub source: SqliteProvider,
     pub destination: SqliteProvider,
+}
+
+pub(crate) struct OpenWorkerProviders {
+    pub(crate) source: WorkerProvider,
+    pub(crate) destination: WorkerProvider,
+}
+
+trait FixtureProvider: AuthorityPort {
+    fn provision_key_value_namespace(
+        &mut self,
+        resource: EntityRef,
+        namespace: Identity,
+    ) -> Result<(), ProviderError>;
+
+    fn provision_key_value_namespace_availability(
+        &mut self,
+        node: NodeIdentity,
+        namespace: Identity,
+    ) -> Result<(), ProviderError>;
+}
+
+impl FixtureProvider for SqliteProvider {
+    fn provision_key_value_namespace(
+        &mut self,
+        resource: EntityRef,
+        namespace: Identity,
+    ) -> Result<(), ProviderError> {
+        SqliteProvider::provision_key_value_namespace(self, resource, namespace)
+    }
+
+    fn provision_key_value_namespace_availability(
+        &mut self,
+        node: NodeIdentity,
+        namespace: Identity,
+    ) -> Result<(), ProviderError> {
+        SqliteProvider::provision_key_value_namespace_availability(self, node, namespace)
+    }
+}
+
+impl FixtureProvider for WorkerProvider {
+    fn provision_key_value_namespace(
+        &mut self,
+        resource: EntityRef,
+        namespace: Identity,
+    ) -> Result<(), ProviderError> {
+        WorkerProvider::provision_key_value_namespace(self, resource, namespace)
+    }
+
+    fn provision_key_value_namespace_availability(
+        &mut self,
+        node: NodeIdentity,
+        namespace: Identity,
+    ) -> Result<(), ProviderError> {
+        WorkerProvider::provision_key_value_namespace_availability(self, node, namespace)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
