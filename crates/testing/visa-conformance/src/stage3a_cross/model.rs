@@ -142,11 +142,12 @@ pub fn normalize_stage3a_semantics(
     for case in &bundle.cases {
         let before = unique_artifact(&case.artifacts, "file-before.bin")?;
         let after = unique_artifact(&case.artifacts, "file-after.bin")?;
+        let assertions = canonical_assertions(&case.case_id, &case.assertions);
         cases.push(Stage3aNormalizedCase {
             case_id: case.case_id.clone(),
             terminal: case.terminal,
             passed: case.passed,
-            assertions: case.assertions.clone(),
+            assertions,
             canonical_before_sha256: case.canonical_before_sha256.clone(),
             canonical_after_sha256: case.canonical_after_sha256.clone(),
             source_epoch: case.source_epoch,
@@ -165,6 +166,27 @@ pub fn normalize_stage3a_semantics(
         wit_world_sha256: bundle.wit_world.sha256.clone(),
         cases,
     })
+}
+
+fn canonical_assertions(case_id: &str, assertions: &[Stage3Assertion]) -> Vec<Stage3Assertion> {
+    let required = Stage3Profile::RegularFile
+        .cases()
+        .iter()
+        .find(|definition| definition.id == case_id)
+        .map(|definition| definition.required_assertions)
+        .unwrap_or_default();
+    let mut canonical = assertions.to_vec();
+    canonical.sort_by(|left, right| {
+        let left_position =
+            required.iter().position(|name| *name == left.name).unwrap_or(usize::MAX);
+        let right_position =
+            required.iter().position(|name| *name == right.name).unwrap_or(usize::MAX);
+        left_position
+            .cmp(&right_position)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.passed.cmp(&right.passed))
+    });
+    canonical
 }
 
 pub fn normalized_stage3a_semantics_sha256(
@@ -191,5 +213,21 @@ fn unique_artifact<'a>(
 impl From<&Stage3ArtifactReference> for EvidenceMatrixArtifactReference {
     fn from(reference: &Stage3ArtifactReference) -> Self {
         Self { uri: reference.uri.clone(), sha256: reference.sha256.clone(), size: reference.size }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_assertions_are_normalized_as_a_set() {
+        let first = Stage3Assertion { name: "transient_observe_retried".to_owned(), passed: true };
+        let second = Stage3Assertion { name: "bytes_preserved".to_owned(), passed: true };
+
+        assert_eq!(
+            canonical_assertions("read-write-offset", &[second, first.clone()]),
+            vec![first, Stage3Assertion { name: "bytes_preserved".to_owned(), passed: true },]
+        );
     }
 }

@@ -7,10 +7,18 @@
 use std::path::{Path, PathBuf};
 
 use visa_eval::{
-    EvalOptions, Measure,
+    EvalOptions, Measure, counterbalanced_values,
     output::{SampleSink, percentile},
     phases, restart, snapshot_size, steady_state,
 };
+
+#[test]
+fn three_value_catalog_covers_every_order_across_six_runs() {
+    let observed = (0..6)
+        .map(|run| counterbalanced_values(&[10, 100, 1_000], run))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(observed.len(), 6);
+}
 
 /// One temporary directory per test, removed when the test finishes.
 struct Scratch(PathBuf);
@@ -48,6 +56,8 @@ fn smoke_options(root: &Path) -> EvalOptions {
         runs: 1,
         effects_before_handoff: vec![2],
         digest_operations: vec![2],
+        evidence_root: None,
+        paper_grade: false,
     }
 }
 

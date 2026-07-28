@@ -32,30 +32,25 @@ const FALLBACK_ENTRY_BYTES: usize = 512;
 
 pub fn run(options: &EvalOptions, sink: &mut SampleSink) -> Result<(), String> {
     for run in 0..options.runs {
-        let entry_bytes = coordinator_arms(options, sink, run)?;
+        let entry_bytes = key_value_arm(options, sink, run)?;
         sink.record(
             Sample::new(MEASURE, "journal-entry", "postcard-length")
                 .at(run, 0)
                 .bytes(entry_bytes as u64),
         )?;
-        for transactions in [1_u64, 3] {
-            baseline_arm(options, sink, run, transactions, entry_bytes)?;
+        if run.is_multiple_of(2) {
+            timer_arm(options, sink, run)?;
+            for transactions in [1_u64, 3] {
+                baseline_arm(options, sink, run, transactions, entry_bytes)?;
+            }
+        } else {
+            for transactions in [3_u64, 1] {
+                baseline_arm(options, sink, run, transactions, entry_bytes)?;
+            }
+            timer_arm(options, sink, run)?;
         }
     }
     Ok(())
-}
-
-/// Both coordinator arms, each on its own fixture so one arm's operation
-/// ledger cannot inflate the other's. Returns the median encoded length of the
-/// journal entries the key-value arm actually produced.
-fn coordinator_arms(
-    options: &EvalOptions,
-    sink: &mut SampleSink,
-    run: u32,
-) -> Result<usize, String> {
-    let entry_bytes = key_value_arm(options, sink, run)?;
-    timer_arm(options, sink, run)?;
-    Ok(entry_bytes)
 }
 
 fn key_value_arm(options: &EvalOptions, sink: &mut SampleSink, run: u32) -> Result<usize, String> {

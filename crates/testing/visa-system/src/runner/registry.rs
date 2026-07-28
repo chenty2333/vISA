@@ -461,6 +461,8 @@ mod tests {
             long_delay_cases,
             BTreeSet::from([
                 "safe-point-unreachable",
+                "timer-paused-during-long-handoff",
+                "timer-positive-duration-at-freeze",
                 "timer-semantics-unsupported",
                 "unsupported-live-resource-or-borrow",
             ])

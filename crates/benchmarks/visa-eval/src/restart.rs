@@ -30,7 +30,8 @@ use visa_composite_cell::{adapter::CompositeAdapter, component};
 use visa_runtime::Coordinator;
 
 use crate::{
-    EvalOptions, LONG_TIMER_NANOS, activate_source, adapter_error, case_id, create_fixture, nanos,
+    EvalOptions, LONG_TIMER_NANOS, activate_source, adapter_error, case_id, counterbalanced_values,
+    create_fixture, nanos,
     output::{Sample, SampleSink},
     provider_error, runtime_error, spawn_peer, timer_kv_state,
 };
@@ -48,8 +49,8 @@ pub const LOSSY_NOTES: &[&str] = &[
 ];
 
 pub fn run(options: &EvalOptions, sink: &mut SampleSink) -> Result<(), String> {
-    for effects in options.effects_before_handoff.clone() {
-        for run in 0..options.runs {
+    for run in 0..options.runs {
+        for effects in counterbalanced_values(&options.effects_before_handoff, run) {
             let root = options.run_root(MEASURE, run).join(format!("effects-{effects}"));
             one_restart(&root, run, effects, sink)?;
         }
@@ -67,13 +68,59 @@ struct RestartTarget {
     timer_remaining: LogicalDurationNanos,
 }
 
+struct PreparedRestart {
+    initial_state: contract_core::CanonicalState,
+    target: RestartTarget,
+}
+
 fn one_restart(root: &Path, run: u32, effects: u64, sink: &mut SampleSink) -> Result<(), String> {
     let case = case_id(&format!("restart-{effects}"), run);
+    let production_root = root.join("coordinator-replay");
+    let raw_root = root.join("raw-sqlite");
+    // Build two identical workloads in separate provider databases. The
+    // measured arms therefore cannot share SQLite page-cache state or rows.
+    let (production, raw) = if run.is_multiple_of(2) {
+        let production = prepare_restart(&production_root, &case, effects)?;
+        let raw = prepare_restart(&raw_root, &case, effects)?;
+        (production, raw)
+    } else {
+        let raw = prepare_restart(&raw_root, &case, effects)?;
+        let production = prepare_restart(&production_root, &case, effects)?;
+        (production, raw)
+    };
+
+    // Alternate the measured arm order as well as the preparation order.
+    if run.is_multiple_of(2) {
+        coordinator_replay_arm(
+            &case,
+            &production.initial_state,
+            &production.target,
+            run,
+            effects,
+            sink,
+        )?;
+        raw_sqlite_arm(&raw.target, run, effects, sink)?;
+    } else {
+        raw_sqlite_arm(&raw.target, run, effects, sink)?;
+        coordinator_replay_arm(
+            &case,
+            &production.initial_state,
+            &production.target,
+            run,
+            effects,
+            sink,
+        )?;
+    }
+    Ok(())
+}
+
+fn prepare_restart(root: &Path, case: &str, effects: u64) -> Result<PreparedRestart, String> {
     let peer = spawn_peer()?;
-    let fixture = create_fixture(root, &case, &peer)?;
-    let cell = activate_source(fixture, &case)?;
+    let fixture = create_fixture(root, case, &peer)?;
+    let cell = activate_source(fixture, case)?;
     let ids = cell.ids;
     let initial_state = cell.initial_state;
+    let database = cell.paths.database.clone();
     let mut adapter = cell.adapter;
 
     for index in 0..effects {
@@ -87,23 +134,18 @@ fn one_restart(root: &Path, run: u32, effects: u64, sink: &mut SampleSink) -> Re
         other => return Err(format!("timer did not arm before the restart: {other:?}")),
     };
     let target = RestartTarget {
-        database: cell.paths.database.clone(),
+        database,
         scope: JournalScope { node: ids.source_node, component: ids.source_component.identity },
         key_value_resource: ids.key_value,
         guest_key: visa_composite_cell::cell::BASELINE_KEY.as_bytes().to_vec(),
         timer_remaining,
     };
 
-    // Simulated kill: the store, the coordinator, and the SQLite connection go
-    // away with no shutdown path. Nothing is flushed that was not already
-    // durable, which is the point of the measurement.
+    // Simulated kill: the store, coordinator, and SQLite connection go away
+    // without a clean shutdown path before either measured arm starts.
     drop(adapter);
-
-    coordinator_replay_arm(&case, &initial_state, &target, run, effects, sink)?;
-    raw_sqlite_arm(&target, run, effects, sink)?;
-
     drop(peer);
-    Ok(())
+    Ok(PreparedRestart { initial_state, target })
 }
 
 /// The production path: reopen, replay every journal entry, compile, instantiate,

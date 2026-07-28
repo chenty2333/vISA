@@ -10,15 +10,27 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
 use serde_json::{Value, json};
 
 pub const SAMPLE_SCHEMA: &str = "visa-eval-sample-v1";
-pub const META_SCHEMA: &str = "visa-eval-meta-v1";
+pub const META_SCHEMA: &str = "visa-eval-meta-v2";
 pub const SAMPLES_FILE: &str = "samples.jsonl";
 pub const META_FILE: &str = "meta.json";
+pub const COMPLETION_FILE: &str = "completion.json";
+pub const COMPLETION_SCHEMA: &str = "visa-eval-completion-v1";
+pub(crate) const BUILD_GIT_COMMIT: &str = env!("VISA_EVAL_BUILD_GIT_COMMIT");
+const BUILD_GIT_DIRTY: &str = env!("VISA_EVAL_BUILD_GIT_DIRTY");
+const BUILD_RUSTC_VERSION: &str = env!("VISA_EVAL_BUILD_RUSTC_VERSION");
+const BUILD_TARGET: &str = env!("VISA_EVAL_BUILD_TARGET");
+const BUILD_PROFILE: &str = env!("VISA_EVAL_BUILD_PROFILE");
+const BUILD_OPT_LEVEL: &str = env!("VISA_EVAL_BUILD_OPT_LEVEL");
+const BUILD_CARGO_LOCK_SHA256: &str = env!("VISA_EVAL_BUILD_CARGO_LOCK_SHA256");
+
+type ValuesByRun = BTreeMap<u32, Vec<u64>>;
 
 /// One measurement. `value_ns` carries a duration, `bytes` carries a size;
 /// a size-only sample leaves `value_ns` null and vice versa.
@@ -92,8 +104,8 @@ impl Sample {
 pub struct SampleSink {
     writer: BufWriter<File>,
     path: PathBuf,
-    durations: BTreeMap<String, Vec<u64>>,
-    sizes: BTreeMap<String, Vec<u64>>,
+    durations: BTreeMap<String, ValuesByRun>,
+    sizes: BTreeMap<String, ValuesByRun>,
     written: u64,
 }
 
@@ -123,10 +135,15 @@ impl SampleSink {
             .map_err(|error| format!("cannot write {}: {error}", self.path.display()))?;
         let group = sample.group();
         if let Some(value) = sample.value_ns {
-            self.durations.entry(group.clone()).or_default().push(value);
+            self.durations
+                .entry(group.clone())
+                .or_default()
+                .entry(sample.run)
+                .or_default()
+                .push(value);
         }
         if let Some(bytes) = sample.bytes {
-            self.sizes.entry(group).or_default().push(bytes);
+            self.sizes.entry(group).or_default().entry(sample.run).or_default().push(bytes);
         }
         self.written += 1;
         Ok(())
@@ -146,31 +163,37 @@ impl SampleSink {
         &self.path
     }
 
-    /// Terminal recap: p50/p95/count per group, durations then sizes.
+    /// Terminal recap over independent run medians, durations then sizes.
     pub fn report(&self) -> String {
         let mut lines = Vec::new();
-        for (label, values) in &self.durations {
-            let mut sorted = values.clone();
-            sorted.sort_unstable();
-            lines.push(format!(
-                "  {label}  n={} p50={} p95={} (ns)",
-                sorted.len(),
-                percentile(&sorted, 50.0),
-                percentile(&sorted, 95.0),
-            ));
+        for (label, by_run) in &self.durations {
+            lines.push(report_group(label, by_run, "ns"));
         }
-        for (label, values) in &self.sizes {
-            let mut sorted = values.clone();
-            sorted.sort_unstable();
-            lines.push(format!(
-                "  {label}  n={} p50={} p95={} (bytes)",
-                sorted.len(),
-                percentile(&sorted, 50.0),
-                percentile(&sorted, 95.0),
-            ));
+        for (label, by_run) in &self.sizes {
+            lines.push(report_group(label, by_run, "bytes"));
         }
         lines.join("\n")
     }
+}
+
+fn report_group(label: &str, by_run: &ValuesByRun, unit: &str) -> String {
+    let samples = by_run.values().map(Vec::len).sum::<usize>();
+    let mut medians = by_run
+        .values()
+        .map(|values| {
+            let mut sorted = values.clone();
+            sorted.sort_unstable();
+            percentile(&sorted, 50.0)
+        })
+        .collect::<Vec<_>>();
+    medians.sort_unstable();
+    format!(
+        "  {label}  runs={} samples={} run-p50={} run-p95={} ({unit})",
+        medians.len(),
+        samples,
+        percentile(&medians, 50.0),
+        percentile(&medians, 95.0),
+    )
 }
 
 /// Nearest-rank percentile over an already sorted slice. The summarize script
@@ -188,14 +211,32 @@ pub fn percentile(sorted: &[u64], percent: f64) -> u64 {
 /// Environment receipt written next to the samples.
 pub fn write_meta(directory: &Path, parameters: Value) -> Result<PathBuf, String> {
     let filesystem = filesystem_for(directory);
+    let workspace = workspace_root();
+    let runtime_commit = git_output(&workspace, &["rev-parse", "HEAD"]);
+    let runtime_dirty =
+        git_output(&workspace, &["status", "--porcelain", "--untracked-files=normal"])
+            .map(|status| !status.is_empty());
     let meta = json!({
         "schema": META_SCHEMA,
-        "git_commit": command_output("git", &["rev-parse", "HEAD"]),
-        "git_dirty": command_output("git", &["status", "--porcelain"])
-            .map(|status| !status.is_empty()),
-        "rustc_version": command_output("rustc", &["--version"]),
-        "hostname": hostname(),
-        "target_triple": std::env::consts::ARCH.to_owned() + "-" + std::env::consts::OS,
+        "git_commit": BUILD_GIT_COMMIT,
+        "git_dirty": BUILD_GIT_DIRTY == "true",
+        "rustc_version": BUILD_RUSTC_VERSION,
+        "cargo_lock_sha256": BUILD_CARGO_LOCK_SHA256,
+        "binary_sha256": std::env::current_exe().ok().as_deref().and_then(sha256_file),
+        "runtime_source_checkout": {
+            "workspace_root": workspace.display().to_string(),
+            "git_commit": runtime_commit,
+            "git_dirty": runtime_dirty,
+            "cargo_lock_sha256": sha256_file(&workspace.join("Cargo.lock")),
+        },
+        "build_profile": BUILD_PROFILE,
+        "opt_level": BUILD_OPT_LEVEL,
+        "kernel": command_output("uname", &["-s", "-r", "-v", "-m"]),
+        "cpu": cpu_receipt(),
+        "memory_total_kib": memory_total_kib(),
+        "process_cpu_affinity": process_status_value("Cpus_allowed_list"),
+        "cpu_governor": read_trimmed("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+        "target_triple": BUILD_TARGET,
         "output_directory": directory.display().to_string(),
         "filesystem": filesystem,
         "parameters": parameters,
@@ -206,6 +247,132 @@ pub fn write_meta(directory: &Path, parameters: Value) -> Result<PathBuf, String
     std::fs::write(&path, encoded)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     Ok(path)
+}
+
+/// Digest-bound commit marker for a complete measurement artifact. Failed
+/// invocations may retain diagnostics, but never receive this marker.
+pub fn write_completion(directory: &Path, sample_count: u64) -> Result<PathBuf, String> {
+    let samples = directory.join(SAMPLES_FILE);
+    let meta = directory.join(META_FILE);
+    sync_regular_file(&samples, "completed samples")?;
+    sync_regular_file(&meta, "completed metadata")?;
+    let document = json!({
+        "schema": COMPLETION_SCHEMA,
+        "git_commit": BUILD_GIT_COMMIT,
+        "sample_count": sample_count,
+        "samples_sha256": sha256_file(&samples).ok_or("cannot hash completed samples")?,
+        "meta_sha256": sha256_file(&meta).ok_or("cannot hash completed metadata")?,
+        "finished_at_unix_ms": u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| "system clock is before the Unix epoch")?
+                .as_millis()
+        )
+        .map_err(|_| "completion timestamp exceeds u64")?,
+    });
+    let encoded = serde_json::to_vec_pretty(&document)
+        .map_err(|error| format!("cannot encode completion receipt: {error}"))?;
+    let path = directory.join(COMPLETION_FILE);
+    let temporary = directory.join(".completion.json.tmp");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("cannot create {}: {error}", temporary.display()))?;
+    file.write_all(&encoded)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
+    std::fs::rename(&temporary, &path)
+        .map_err(|error| format!("cannot publish {}: {error}", path.display()))?;
+    File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("cannot sync {}: {error}", directory.display()))?;
+    Ok(path)
+}
+
+fn sync_regular_file(path: &Path, label: &str) -> Result<(), String> {
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("cannot sync {label} {}: {error}", path.display()))
+}
+
+/// Refuse conditions that would make a paper-facing run ambiguous or merge
+/// samples from different invocations. Normal smoke runs retain the convenient
+/// append behaviour used by existing tests.
+pub fn ensure_measurement_preconditions(
+    directory: &Path,
+    paper_grade: bool,
+    runs: u32,
+    iters: u64,
+    warmup: u64,
+) -> Result<(), String> {
+    if !paper_grade {
+        return Ok(());
+    }
+    if runs < 10 {
+        return Err("--paper-grade requires at least 10 independent runs".to_owned());
+    }
+    if iters == 0 {
+        return Err("--paper-grade requires at least one measured iteration per run".to_owned());
+    }
+    if warmup == 0 {
+        return Err("--paper-grade requires at least one discarded warmup iteration".to_owned());
+    }
+    if cfg!(debug_assertions) || BUILD_PROFILE != "release" || BUILD_OPT_LEVEL == "0" {
+        return Err("--paper-grade requires a --release build".to_owned());
+    }
+    if BUILD_GIT_DIRTY != "false" {
+        return Err("--paper-grade requires a binary built from a clean worktree".to_owned());
+    }
+    if !valid_sha(BUILD_GIT_COMMIT) {
+        return Err("--paper-grade binary does not embed a full Git SHA".to_owned());
+    }
+    let workspace = workspace_root();
+    let commit = git_output(&workspace, &["rev-parse", "HEAD"])
+        .ok_or("--paper-grade requires a Git worktree with a resolved HEAD")?;
+    if !valid_sha(&commit) {
+        return Err("--paper-grade could not resolve a full 40-character Git SHA".to_owned());
+    }
+    if commit != BUILD_GIT_COMMIT {
+        return Err(format!(
+            "--paper-grade source checkout {commit} differs from binary build {BUILD_GIT_COMMIT}"
+        ));
+    }
+    let status = git_output(&workspace, &["status", "--porcelain", "--untracked-files=normal"])
+        .ok_or("--paper-grade could not inspect the Git worktree")?;
+    if !status.is_empty() {
+        return Err("--paper-grade requires a clean exact-SHA worktree".to_owned());
+    }
+    if sha256_file(&workspace.join("Cargo.lock")).as_deref() != Some(BUILD_CARGO_LOCK_SHA256) {
+        return Err("--paper-grade Cargo.lock differs from the binary build receipt".to_owned());
+    }
+    if is_memory_backed_path(directory) {
+        return Err("--paper-grade refuses a memory-backed output filesystem".to_owned());
+    }
+    if directory.exists() {
+        let mut entries = std::fs::read_dir(directory)
+            .map_err(|error| format!("cannot inspect {}: {error}", directory.display()))?;
+        if entries.next().is_some() {
+            return Err(format!(
+                "--paper-grade refuses non-empty output directory {}",
+                directory.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn valid_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
 
 /// Mount point and filesystem type backing `directory`, from `/proc/mounts`.
@@ -293,11 +460,47 @@ fn unescape_mount(field: &str) -> String {
     out
 }
 
-fn hostname() -> Value {
-    match std::fs::read_to_string("/proc/sys/kernel/hostname") {
-        Ok(name) => Value::String(name.trim().to_owned()),
-        Err(_) => command_output("hostname", &[]).map_or(Value::Null, Value::String),
+fn cpu_receipt() -> Value {
+    let logical_cpus = std::thread::available_parallelism().ok().map(std::num::NonZero::get);
+    let model = std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|contents| {
+        contents.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            (key.trim() == "model name").then(|| value.trim().to_owned())
+        })
+    });
+    json!({"model": model, "logical_cpus_available": logical_cpus})
+}
+
+fn memory_total_kib() -> Option<u64> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = contents.lines().find(|line| line.starts_with("MemTotal:"))?;
+    line.split_whitespace().nth(1)?.parse().ok()
+}
+
+fn process_status_value(key: &str) -> Option<String> {
+    let contents = std::fs::read_to_string("/proc/self/status").ok()?;
+    contents.lines().find_map(|line| {
+        let (candidate, value) = line.split_once(':')?;
+        (candidate == key).then(|| value.trim().to_owned())
+    })
+}
+
+fn read_trimmed(path: &str) -> Option<String> {
+    std::fs::read_to_string(path).ok().map(|value| value.trim().to_owned())
+}
+
+fn sha256_file(path: &Path) -> Option<String> {
+    use sha2::{Digest as _, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn git_output(workspace: &Path, arguments: &[&str]) -> Option<String> {
+    let output = Command::new("git").arg("-C").arg(workspace).args(arguments).output().ok()?;
+    if !output.status.success() {
+        return None;
     }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
@@ -306,4 +509,43 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paper_grade_rejects_zero_iterations_before_source_checks() {
+        let error = ensure_measurement_preconditions(Path::new("unused"), true, 10, 0, 1)
+            .expect_err("zero iterations must fail");
+        assert!(error.contains("measured iteration"));
+    }
+
+    #[test]
+    fn paper_grade_rejects_zero_warmup_before_source_checks() {
+        let error = ensure_measurement_preconditions(Path::new("unused"), true, 10, 1, 0)
+            .expect_err("zero warmup must fail");
+        assert!(error.contains("warmup"));
+    }
+
+    #[test]
+    fn terminal_summary_uses_one_median_per_run() {
+        let root = std::env::temp_dir().join(format!(
+            "visa-eval-output-summary-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let mut sink = SampleSink::open(&root).unwrap();
+        for (run, values) in [(0, [1, 100]), (1, [10, 20])] {
+            for (iter, value) in values.into_iter().enumerate() {
+                sink.record(Sample::new("m", "a", "p").at(run, iter as u64).nanos(value)).unwrap();
+            }
+        }
+
+        let report = sink.report();
+        assert!(report.contains("runs=2 samples=4 run-p50=1 run-p95=10"));
+        drop(sink);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

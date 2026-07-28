@@ -9,6 +9,8 @@
 //! * `snapshot_size` — how large the portable snapshot is, field by field.
 //! * `restart_baseline` — what a full journal replay costs against a lossy
 //!   read-the-last-value restart.
+//! * `evidence_overhead` — what producer-side normalization and independent
+//!   outer verification cost against a publisher-summary-only control.
 //!
 //! The harness measures the real crates. Nothing here reimplements coordinator
 //! or provider behaviour; the baselines are deliberately separate code paths
@@ -39,6 +41,7 @@ use visa_runtime::{AuthorityPlan, Coordinator, ProfileAuthorityPlan, SnapshotExp
 
 pub mod behavior;
 pub mod digest_spike;
+pub mod evidence;
 pub mod output;
 pub mod phases;
 pub mod restart;
@@ -57,6 +60,7 @@ pub enum Measure {
     SnapshotSize,
     RestartBaseline,
     DigestCost,
+    EvidenceOverhead,
 }
 
 impl Measure {
@@ -68,6 +72,7 @@ impl Measure {
             Self::SnapshotSize => "snapshot-size",
             Self::RestartBaseline => "restart-baseline",
             Self::DigestCost => "digest-cost",
+            Self::EvidenceOverhead => "evidence-overhead",
         }
     }
 
@@ -94,6 +99,12 @@ pub struct EvalOptions {
     pub effects_before_handoff: Vec<u64>,
     /// Operation counts used by the independent digest-cost spike.
     pub digest_operations: Vec<u64>,
+    /// Accepted cross-runtime Stage 3A artifact used by the evidence-path
+    /// measurement. Only `evidence-overhead` consumes it.
+    pub evidence_root: Option<PathBuf>,
+    /// Reject measurements that cannot be bound to a clean release-build
+    /// source revision and a fresh output directory.
+    pub paper_grade: bool,
 }
 
 impl Default for EvalOptions {
@@ -105,6 +116,8 @@ impl Default for EvalOptions {
             runs: 30,
             effects_before_handoff: vec![10, 100, 1_000],
             digest_operations: vec![10, 100, 1_000, 5_000],
+            evidence_root: None,
+            paper_grade: false,
         }
     }
 }
@@ -116,6 +129,23 @@ impl EvalOptions {
     pub fn run_root(&self, measure: &str, run: u32) -> PathBuf {
         self.out.join("work").join(measure).join(format!("run-{run:04}"))
     }
+}
+
+/// Rotate and reverse a configuration catalog across runs. For three entries,
+/// six consecutive runs cover all six permutations, preventing configuration
+/// size from being confounded with one fixed place in the measurement order.
+#[must_use]
+pub fn counterbalanced_values(values: &[u64], run: u32) -> Vec<u64> {
+    let mut ordered = values.to_vec();
+    if ordered.len() < 2 {
+        return ordered;
+    }
+    let length = ordered.len();
+    ordered.rotate_left(run as usize % length);
+    if !(run as usize / length).is_multiple_of(2) {
+        ordered.reverse();
+    }
+    ordered
 }
 
 /// Start the loopback peer the logical-request claim binds to. The fixture

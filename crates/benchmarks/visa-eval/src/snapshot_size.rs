@@ -15,7 +15,8 @@ use contract_core::{Extension, Identity, SnapshotBody, SnapshotEnvelope, canonic
 use visa_profile::{FileDurability, LOGICAL_REQUEST_EXTENSION_ID, REGULAR_FILE_EXTENSION_ID};
 
 use crate::{
-    EvalOptions, LONG_TIMER_NANOS, activate_source, adapter_error, case_id, create_fixture, derive,
+    EvalOptions, LONG_TIMER_NANOS, activate_source, adapter_error, case_id, counterbalanced_values,
+    create_fixture, derive,
     output::{Sample, SampleSink},
     phases::drain_request,
     runtime_error, snapshot_evidence, spawn_peer,
@@ -24,8 +25,8 @@ use crate::{
 pub const MEASURE: &str = "snapshot-size";
 
 pub fn run(options: &EvalOptions, sink: &mut SampleSink) -> Result<(), String> {
-    for effects in options.effects_before_handoff.clone() {
-        for run in 0..options.runs {
+    for run in 0..options.runs {
+        for effects in counterbalanced_values(&options.effects_before_handoff, run) {
             let root = options.run_root(MEASURE, run).join(format!("effects-{effects}"));
             one_export(&root, run, effects, sink)?;
         }

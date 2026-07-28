@@ -2623,6 +2623,7 @@ dependencies = [
  "substrate_api",
  "substrate_host",
  "visa-composite-cell",
+ "visa-conformance",
  "visa_component_adapter",
  "visa_profile",
  "visa_runtime",

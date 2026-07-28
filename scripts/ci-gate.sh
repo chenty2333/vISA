@@ -198,6 +198,10 @@ gate_ci_contract() {
         python3 scripts/check-ci-contract.py
     run_gate "CI: claim-to-workflow binding mutation tests" \
         python3 scripts/test-check-ci-contract.py
+    run_gate "CI: Stage 3A outer-verifier corpus unit tests" \
+        python3 scripts/test-stage3a-cross-runtime-verifier-audit.py
+    run_gate "CI: run-level evaluation summary tests" \
+        python3 scripts/test-eval-summarize.py
 }
 
 gate_claims_registry() {

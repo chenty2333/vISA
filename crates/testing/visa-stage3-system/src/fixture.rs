@@ -119,12 +119,7 @@ impl Stage3aFixture {
         };
         let extension = regular_file_extension(&regular_file)
             .map_err(|error| format!("cannot encode regular-file extension: {error:?}"))?;
-        let profile = CooperativeHandoffProfile::v1(vec![ExtensionSupport {
-            id: REGULAR_FILE_EXTENSION_ID,
-            version: REGULAR_FILE_EXTENSION_VERSION,
-        }]);
-        let profile_digest = canonical_digest(&profile)
-            .map_err(|error| format!("cannot digest Stage 3A profile: {error:?}"))?;
+        let (profile, profile_digest) = stage3a_profile()?;
         let claims = ResourceClaims {
             timer: TimerClaim {
                 resource: ids.timer,
@@ -313,7 +308,7 @@ impl FixturePaths {
 }
 
 impl FixtureIds {
-    fn for_case(case_id: &str) -> Self {
+    pub(crate) fn for_case(case_id: &str) -> Self {
         let component = derive_identity(case_id, "component");
         Self {
             source_node: NodeIdentity::new(derive_identity(case_id, "source-node")),
@@ -363,15 +358,25 @@ fn entity(case_id: &str, label: &str) -> EntityRef {
     EntityRef::initial(derive_identity(case_id, label))
 }
 
-const fn timer_rights() -> Rights {
+pub(crate) fn stage3a_profile() -> Result<(CooperativeHandoffProfile, Digest), String> {
+    let profile = CooperativeHandoffProfile::v1(vec![ExtensionSupport {
+        id: REGULAR_FILE_EXTENSION_ID,
+        version: REGULAR_FILE_EXTENSION_VERSION,
+    }]);
+    let digest = canonical_digest(&profile)
+        .map_err(|error| format!("cannot digest Stage 3A profile: {error:?}"))?;
+    Ok((profile, digest))
+}
+
+pub(crate) const fn timer_rights() -> Rights {
     Rights::TIMER_ARM.union(Rights::TIMER_CANCEL).union(Rights::REBIND)
 }
 
-const fn key_value_rights() -> Rights {
+pub(crate) const fn key_value_rights() -> Rights {
     Rights::KV_READ.union(Rights::KV_WRITE).union(Rights::REBIND)
 }
 
-const fn profile_rights() -> Rights {
+pub(crate) const fn profile_rights() -> Rights {
     Rights::PROFILE_READ
         .union(Rights::PROFILE_WRITE)
         .union(Rights::PROFILE_CONTROL)

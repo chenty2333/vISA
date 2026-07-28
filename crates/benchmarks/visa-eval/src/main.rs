@@ -8,8 +8,11 @@ use std::{path::PathBuf, process::ExitCode};
 
 use serde_json::json;
 use visa_eval::{
-    EvalOptions, Measure, behavior, digest_spike,
-    output::{SampleSink, is_memory_backed_path, write_meta},
+    EvalOptions, Measure, behavior, digest_spike, evidence,
+    output::{
+        SampleSink, ensure_measurement_preconditions, is_memory_backed_path, write_completion,
+        write_meta,
+    },
     phases, restart, snapshot_size, steady_state,
 };
 
@@ -22,8 +25,10 @@ subcommands:
   snapshot-size      portable snapshot size, field by field
   restart-baseline   journal replay against a lossy read-the-last-value restart
   digest-cost        full-state replay cost versus an independent Merkle prototype
+  evidence-overhead  producer normalization and outer verification of retained Stage 3A evidence
   behavior-defects   independent feature-gated behavior-injection driver
   all                every production measurement above, in that order
+  paper              production measurements plus evidence-overhead
 
 options:
   --out <dir>                    output directory (default target/visa-eval)
@@ -34,6 +39,8 @@ options:
                                  effect counts used as the independent variable
   --digest-operations <n>[,<n>...]
                                  operation counts used by digest-cost
+  --evidence-root <dir>          accepted Stage 3A cross-runtime artifact root
+  --paper-grade                  require clean SHA, release build, >=10 runs, and fresh output
 ";
 
 fn main() -> ExitCode {
@@ -66,6 +73,17 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    let evidence_input = measures
+        .contains(&Measure::EvidenceOverhead)
+        .then(|| evidence::preflight(&options))
+        .transpose()?;
+    ensure_measurement_preconditions(
+        &options.out,
+        options.paper_grade,
+        options.runs,
+        options.iters,
+        options.warmup,
+    )?;
     std::fs::create_dir_all(&options.out)
         .map_err(|error| format!("cannot create {}: {error}", options.out.display()))?;
     if is_memory_backed_path(&options.out) {
@@ -86,6 +104,14 @@ fn run() -> Result<(), String> {
             "runs": options.runs,
             "effects_before_handoff": options.effects_before_handoff,
             "digest_operations": options.digest_operations,
+            "evidence_root": options.evidence_root,
+            "evidence_input": evidence_input,
+            "paper_grade": options.paper_grade,
+            "ordering": {
+                "effect_configurations": "counterbalanced six-permutation catalog across runs",
+                "steady_state": "key-value arm fixed first; timer and SQLite baselines alternate by run",
+                "evidence": "core and child-gate arm order counterbalanced by run and iteration",
+            },
         }),
     )?;
 
@@ -98,13 +124,19 @@ fn run() -> Result<(), String> {
             Measure::SnapshotSize => snapshot_size::run(&options, &mut sink)?,
             Measure::RestartBaseline => restart::run(&options, &mut sink)?,
             Measure::DigestCost => digest_spike::run(&options, &mut sink)?,
+            Measure::EvidenceOverhead => evidence::run(&options, &mut sink)?,
         }
         sink.flush()?;
     }
     sink.flush()?;
+    let completion =
+        options.paper_grade.then(|| write_completion(&options.out, sink.written())).transpose()?;
 
     println!("\nsamples: {} ({})", sink.written(), sink.path().display());
     println!("meta:    {}", meta.display());
+    if let Some(completion) = completion {
+        println!("complete: {}", completion.display());
+    }
     println!("\n{}", sink.report());
     Ok(())
 }
@@ -116,7 +148,15 @@ fn measures_for(subcommand: &str) -> Result<Vec<Measure>, String> {
         "snapshot-size" => Ok(vec![Measure::SnapshotSize]),
         "restart-baseline" => Ok(vec![Measure::RestartBaseline]),
         "digest-cost" => Ok(vec![Measure::DigestCost]),
+        "evidence-overhead" => Ok(vec![Measure::EvidenceOverhead]),
         "all" => Ok(Measure::all().to_vec()),
+        "paper" => Ok(vec![
+            Measure::SteadyState,
+            Measure::HandoffPhases,
+            Measure::SnapshotSize,
+            Measure::RestartBaseline,
+            Measure::EvidenceOverhead,
+        ]),
         "behavior-defects" => Ok(Vec::new()),
         other => {
             eprint!("{USAGE}");
@@ -156,12 +196,14 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<EvalOptions,
                     .split(',')
                     .map(|part| parse_number(part.trim(), &flag))
                     .collect::<Result<Vec<_>, _>>()?;
-                if options.digest_operations.is_empty()
-                    || options.digest_operations.iter().any(|count| *count == 0)
-                {
+                if options.digest_operations.is_empty() || options.digest_operations.contains(&0) {
                     return Err(format!("{flag} needs positive operation counts"));
                 }
             }
+            "--evidence-root" => {
+                options.evidence_root = Some(PathBuf::from(next_value(&mut arguments, &flag)?));
+            }
+            "--paper-grade" => options.paper_grade = true,
             other => {
                 eprint!("{USAGE}");
                 return Err(format!("unknown option {other}"));

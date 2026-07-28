@@ -17,8 +17,8 @@ use visa_profile::FileDurability;
 use visa_runtime::{Coordinator, SafePointTimer, validate_snapshot};
 
 use crate::{
-    EvalOptions, LONG_TIMER_NANOS, activate_source, adapter_error, case_id, create_fixture, derive,
-    expectations,
+    EvalOptions, LONG_TIMER_NANOS, activate_source, adapter_error, case_id, counterbalanced_values,
+    create_fixture, derive, expectations,
     output::{Sample, SampleSink},
     runtime_error, snapshot_evidence, spawn_peer,
 };
@@ -28,8 +28,8 @@ pub const MEASURE: &str = "handoff-phases";
 const DRAIN_ATTEMPTS: usize = 16;
 
 pub fn run(options: &EvalOptions, sink: &mut SampleSink) -> Result<(), String> {
-    for effects in options.effects_before_handoff.clone() {
-        for run in 0..options.runs {
+    for run in 0..options.runs {
+        for effects in counterbalanced_values(&options.effects_before_handoff, run) {
             let root = options.run_root(MEASURE, run).join(format!("effects-{effects}"));
             one_handoff(&root, run, effects, sink)?;
         }

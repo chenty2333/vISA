@@ -2,9 +2,10 @@
 """Summarize visa-eval sample files into a Markdown and CSV table.
 
 Reads one or more `samples.jsonl` files produced by `visa-eval`, groups the
-samples by (measure, arm, phase, config), and reports count, p50, and p95 for
-each group. Duration groups and size groups are reported separately because
-their units differ; `count-*` phases carry record counts rather than bytes.
+samples by (measure, arm, phase, config) and then by independent run. It first
+computes one median per run and reports quantiles across those run medians.
+Duration groups and size groups are separate because their units differ;
+`count-*` phases carry record counts rather than bytes.
 
 Percentiles use the nearest-rank definition, matching the terminal recap the
 harness prints, so the two never disagree about the same file.
@@ -44,7 +45,7 @@ def config_label(config: dict) -> str:
 
 def load(paths: list[Path]) -> list[dict]:
     samples = []
-    for path in paths:
+    for source_index, path in enumerate(paths):
         with path.open(encoding="utf-8") as source:
             for number, line in enumerate(source, start=1):
                 line = line.strip()
@@ -58,12 +59,17 @@ def load(paths: list[Path]) -> list[dict]:
                     raise SystemExit(
                         f"{path}:{number}: unexpected schema {sample.get('schema')!r}"
                     )
+                sample["_source_index"] = source_index
                 samples.append(sample)
     return samples
 
 
-def group(samples: list[dict], field: str) -> dict[tuple, list[int]]:
-    grouped: dict[tuple, list[int]] = {}
+def run_identity(sample: dict) -> tuple[int, int]:
+    return int(sample.get("_source_index", 0)), int(sample["run"])
+
+
+def group(samples: list[dict], field: str) -> dict[tuple, dict[tuple[int, int], list[int]]]:
+    grouped: dict[tuple, dict[tuple[int, int], list[int]]] = {}
     for sample in samples:
         value = sample.get(field)
         if value is None:
@@ -74,16 +80,13 @@ def group(samples: list[dict], field: str) -> dict[tuple, list[int]]:
             sample["phase"],
             config_label(sample.get("config") or {}),
         )
-        grouped.setdefault(key, []).append(int(value))
+        grouped.setdefault(key, {}).setdefault(run_identity(sample), []).append(int(value))
     return grouped
 
 
-def drift(samples: list[dict]) -> dict[tuple, tuple[int, int]]:
-    """Median of the first and last tenth of each duration group, in iteration
-    order. A large gap means the measure is not in a steady state: the
-    coordinator's per-effect cost grows with the operation ledger it carries.
-    """
-    ordered: dict[tuple, list[tuple[int, int, int]]] = {}
+def drift(samples: list[dict]) -> dict[tuple, tuple[int, int, int]]:
+    """Across-run medians of each run's first- and last-tenth medians."""
+    ordered: dict[tuple, dict[tuple[int, int], list[tuple[int, int]]]] = {}
     for sample in samples:
         if sample.get("value_ns") is None:
             continue
@@ -93,25 +96,44 @@ def drift(samples: list[dict]) -> dict[tuple, tuple[int, int]]:
             sample["phase"],
             config_label(sample.get("config") or {}),
         )
-        ordered.setdefault(key, []).append(
-            (int(sample["run"]), int(sample["iter"]), int(sample["value_ns"]))
+        run = run_identity(sample)
+        ordered.setdefault(key, {}).setdefault(run, []).append(
+            (int(sample["iter"]), int(sample["value_ns"]))
         )
     result = {}
-    for key, entries in ordered.items():
-        if len(entries) < 20:
-            continue
-        entries.sort()
-        window = max(1, len(entries) // 10)
-        first = sorted(value for _, _, value in entries[:window])
-        last = sorted(value for _, _, value in entries[-window:])
-        result[key] = (percentile(first, 50.0), percentile(last, 50.0))
+    for key, by_run in ordered.items():
+        first_medians = []
+        last_medians = []
+        for entries in by_run.values():
+            if len(entries) < 20:
+                continue
+            entries.sort()
+            window = max(1, len(entries) // 10)
+            first = sorted(value for _, value in entries[:window])
+            last = sorted(value for _, value in entries[-window:])
+            first_medians.append(percentile(first, 50.0))
+            last_medians.append(percentile(last, 50.0))
+        if first_medians:
+            first_medians.sort()
+            last_medians.sort()
+            result[key] = (
+                percentile(first_medians, 50.0),
+                percentile(last_medians, 50.0),
+                len(first_medians),
+            )
     return result
 
 
-def rows(grouped: dict[tuple, list[int]], unit: str) -> list[dict]:
+def rows(grouped: dict[tuple, dict[tuple[int, int], list[int]]], unit: str) -> list[dict]:
     table = []
-    for key, values in sorted(grouped.items()):
-        values.sort()
+    for key, by_run in sorted(grouped.items()):
+        medians = []
+        sample_count = 0
+        for values in by_run.values():
+            values.sort()
+            sample_count += len(values)
+            medians.append(percentile(values, 50.0))
+        medians.sort()
         measure, arm, phase, config = key
         table.append(
             {
@@ -120,11 +142,14 @@ def rows(grouped: dict[tuple, list[int]], unit: str) -> list[dict]:
                 "phase": phase,
                 "config": config,
                 "unit": "count" if phase.startswith("count-") else unit,
-                "count": len(values),
-                "p50": percentile(values, 50.0),
-                "p95": percentile(values, 95.0),
-                "min": values[0],
-                "max": values[-1],
+                "runs": len(medians),
+                "samples": sample_count,
+                "p25": percentile(medians, 25.0),
+                "p50": percentile(medians, 50.0),
+                "p75": percentile(medians, 75.0),
+                "p95": percentile(medians, 95.0),
+                "min": medians[0],
+                "max": medians[-1],
             }
         )
     return table
@@ -133,9 +158,25 @@ def rows(grouped: dict[tuple, list[int]], unit: str) -> list[dict]:
 def markdown(table: list[dict], title: str) -> str:
     if not table:
         return f"### {title}\n\n_no samples_\n"
-    header = ["measure", "arm", "phase", "config", "unit", "count", "p50", "p95"]
-    lines = [f"### {title}", "", "| " + " | ".join(header) + " |",
-             "|" + "|".join("---" for _ in header) + "|"]
+    header = [
+        "measure",
+        "arm",
+        "phase",
+        "config",
+        "unit",
+        "runs",
+        "samples",
+        "p25",
+        "p50",
+        "p75",
+        "p95",
+    ]
+    lines = [
+        f"### {title}",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join("---" for _ in header) + "|",
+    ]
     for row in table:
         lines.append("| " + " | ".join(str(row[column]) for column in header) + " |")
     lines.append("")
@@ -182,12 +223,14 @@ def main() -> int:
         lines = ["### Drift (median of first tenth vs last tenth, ns)", ""]
         if measured:
             lines += [
-                "| measure | arm | phase | config | first | last | ratio |",
-                "|---|---|---|---|---|---|---|",
+                "| measure | arm | phase | config | first | last | ratio | runs |",
+                "|---|---|---|---|---|---|---|---|",
             ]
-            for key, (first, last) in sorted(measured.items()):
+            for key, (first, last, runs) in sorted(measured.items()):
                 ratio = f"{last / first:.2f}" if first else "n/a"
-                lines.append("| " + " | ".join([*key, str(first), str(last), ratio]) + " |")
+                lines.append(
+                    "| " + " | ".join([*key, str(first), str(last), ratio, str(runs)]) + " |"
+                )
         else:
             lines.append("_not enough samples per group_")
         lines.append("")

@@ -115,7 +115,7 @@ uploaded bytes.
 | `system-stage2` | All four Wasmtime/JcoNode source-destination pairs, 31 cases per pair, four inner Stage 1 validations, and independent outer Stage 2 validation | The same portable state and normalized observable behavior pass in all four declared execution-path cells (124 executions). It does not prove strict runtime independence or cross-ISA portability. |
 | `system-stage2-strict` | Locked Wacogo qualification and reproducible build, focused lifecycle gates, a Wacogo same-path Stage 1 cell, then the exact four Wasmtime/Wacogo cells with 31 cases per cell, four inner validations, and independent strict v3 outer validation | The fixed Component preserves the accepted timer/KV behavior across two independently implemented Component Model runtime lineages in all four directions (124/124 executions and 31/31 equality groups). It establishes only `strict-cross-runtime-continuity` on x86-64 Linux, not another ISA or resource profile. |
 | `system-stage3a` | All 12 accepted bounded regular-file cases through separate source/destination Wasmtime stores, the shared coordinator/profile path, a real Linux regular-file provider, handoff, and independent Stage 3A bundle validation | The `bounded-regular-file-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not imply arbitrary directory trees, devices, FIFOs, already-open fds, atomic exclusion of writers outside the advisory lock/lease protocol, another runtime, or another ISA/substrate. |
-| `system-stage3a-cross-runtime` | The fixed 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three runs per direction, 12 complete inner validations, 144/144 executions, calibrated Stage 1 detector closure, independently recomputed typed normalization, verifier-mutation audit, and relocated verification | Regresses only `cross-runtime-regular-file-continuity-v1` for the named x86-64 Linux runtimes and bounded file profile. It does not qualify unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host execution, arbitrary filesystem objects, or joint composition. |
+| `system-stage3a-cross-runtime` | The fixed 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three runs per direction, 12 complete inner validations, 144/144 executions, calibrated Stage 1 detector closure, independently recomputed typed normalization, an eight-entry preclassified outer-verifier corpus, and relocated verification | Regresses only `cross-runtime-regular-file-continuity-v1` for the named x86-64 Linux runtimes and bounded file profile. It does not qualify unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host execution, arbitrary filesystem objects, or joint composition. |
 | `system-stage3b` | All 14 accepted bounded logical-request cases through separate source/destination Wasmtime stores, a durable provider ledger, a real bounded loopback TCP protocol/peer, handoff, and independent Stage 3B bundle validation | The `bounded-logical-request-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not preserve arbitrary live TCP, socket sequence state, credential bytes, runtime future/stream state, or prove another runtime. |
 | `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
 | `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Roadmap closure additionally requires the complete-workflow and downloaded-artifact receipt recorded below. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
@@ -455,21 +455,58 @@ wacogo-to-wacogo
 All 12 cell-runs must complete their inner Stage 3A validation, for 144/144 case
 executions. A separate outer verifier reconstructs the six-dimensional matrix
 coordinates, checks exact requested -> prepared -> live runtime identity and
-no-fallback lineage, recomputes a typed normalization from each raw observable
-trace, and requires one semantic digest across all directions and stability
-runs. A four-mutation audit proves rejection of missing and duplicated runs,
-aggregate substitution, and a declared runtime fallback. Finally, the complete
-publication is moved to an unused path and accepted again byte-for-byte.
+no-fallback lineage, recomputes a typed normalization from each validated child
+bundle's retained semantic fields and raw-file references, and requires one
+semantic digest across all directions and stability runs. The preclassified
+eight-entry outer-verifier corpus sends every case through that production path:
+three semantic defects (route omission, semantic-assertion substitution, and a
+changed retained canonical observable) are rejected; two producer-summary
+tampers are rejected; and two benign-equivalent changes are accepted. One fully
+resealed contradictory raw observation is recorded separately as the trusted
+observation boundary rather than counted as a detector miss or success. Finally,
+the complete publication is moved to an unused path and accepted again
+byte-for-byte.
 
 This successor adds an independently recomputed cross-cell semantic comparison;
 it does not turn the inner Stage 3A verifier into a second full implementation
-of every file-profile assertion. It earns only
+of every file-profile assertion. The outer verifier binds each raw trace by size
+and digest but does not independently reinterpret runner-authored case-specific
+trace semantics; faithful observation and assertion production remain explicit
+trusted inputs. It earns only
 `cross-runtime-regular-file-continuity-v1` for the named source-locked Wacogo
 derivative and Wasmtime on x86-64 Linux. The Wasmtime-only predecessor remains a
 separate earned claim, and the logical-request profile remains
 `independent_runtime_coverage=false`. No result transfers to unmodified upstream
 Wacogo, another ISA/substrate, cross-host execution, arbitrary filesystem
 objects, or joint-handoff composition.
+
+### Stage 3A cross-host regular-file supporting cell
+
+`visa-stage3-cross-host` is a separate supporting experiment rather than a new
+claim-registry entry. Its controller starts a source process locally, waits for
+that process to exit successfully after freeze/export, probes a destination
+through an operator-supplied launcher, and sends only a digest-bound snapshot,
+portable regular-file state, and file image. The source SQLite database is not
+transferred. The destination validates the complete request before creating its
+fresh database and file root, restores the same Wasmtime Component, resumes at
+the retained logical offset, and returns a receipt to the controller. A typical
+two-host invocation is:
+
+```text
+visa-stage3-cross-host controller \
+  <artifact-root> <source-work-root> <destination-work-root> -- \
+  ssh <destination> <remote-path>/visa-stage3-cross-host
+visa-stage3-cross-host verify <artifact-root>
+```
+
+The controller requires distinct machine identities, x86-64 Linux at both
+ends, and byte-identical executables. Its activation token binds the completed
+source bundle and destination identity, but is sequencing evidence rather than
+cryptographic authority. The destination advances a freshly reconstructed
+local lease ledger only. The publication therefore records
+`distributed_fencing_claim=false` and explicitly excludes source-process
+resurrection, crash/reboot survival, cross-ISA execution, arbitrary filesystem
+objects, and production migration-service behavior.
 
 ### Stage 4 target/substrate and emulated cross-ISA cells
 

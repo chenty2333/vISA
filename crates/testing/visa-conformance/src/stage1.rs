@@ -12,6 +12,11 @@ pub const STAGE1_MATRIX_SCHEMA_VERSION: &str = "visa-stage1-matrix-provenance-v3
 pub const STAGE1_WORKER_PROTOCOL_VERSION: u64 = 4;
 pub const STAGE1_CAPABILITY_ID: &str = "cooperative-stateful-component-handoff";
 pub const STAGE1_DEFAULT_TIMER_DELAY_NS: u64 = 50_000_000;
+// Accepted pending-timer cases must reach FreezeSource before expiry even when
+// the worker runs behind QEMU user-mode translation on a contended CI host.
+// Keep this distinct from the short precompleted-case delay so the broader
+// matrix does not pay a multi-second sleep for every completed-timer fixture.
+pub const STAGE1_PENDING_TIMER_DELAY_NS: u64 = 2_000_000_000;
 // Rejection paths must observe the pre-freeze Armed state independently of
 // scheduler delays across their bounded worker request sequence.
 pub const STAGE1_REJECTION_TIMER_DELAY_NS: u64 = 180_000_000_000;
@@ -25,6 +30,9 @@ const MAX_STAGE1_RETAINED_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
 
 pub fn stage1_timer_delay_ns(case_id: &str) -> u64 {
     match case_id {
+        "timer-positive-duration-at-freeze" | "timer-paused-during-long-handoff" => {
+            STAGE1_PENDING_TIMER_DELAY_NS
+        }
         "safe-point-unreachable" | "unsupported-live-resource-or-borrow" => {
             STAGE1_REJECTION_TIMER_DELAY_NS
         }
