@@ -282,9 +282,14 @@ pub fn endpoint_hello() -> Result<EndpointHello, String> {
 }
 
 pub fn run_source_role(work_root: &Path) -> Result<SourceBundle, String> {
-    ensure_absent(work_root, "source work root")?;
-    let started_at_unix_ms = now_unix_ms()?;
     let host = host_identity()?;
+    run_source_role_with_host(work_root, host)
+}
+
+fn run_source_role_with_host(work_root: &Path, host: HostIdentity) -> Result<SourceBundle, String> {
+    ensure_absent(work_root, "source work root")?;
+    validate_host_identity(&host)?;
+    let started_at_unix_ms = now_unix_ms()?;
     let fixture = Stage3aFixture::create(
         work_root,
         CASE_ID,
@@ -1800,7 +1805,19 @@ mod tests {
     }
 
     fn source_fixture(root: &TempRoot) -> SourceBundle {
-        run_source_role(&root.child("source")).expect("source role succeeds")
+        let executable = std::env::current_exe().expect("test executable resolves");
+        let (executable_sha256, executable_size) =
+            sha256_file(&executable).expect("test executable hashes");
+        let host = HostIdentity {
+            endpoint_id_sha256: sha256_hex(b"bounded-test-source-endpoint"),
+            hostname: "bounded-test-source".to_owned(),
+            os_release: "bounded-test-os".to_owned(),
+            kernel_release: "bounded-test-kernel".to_owned(),
+            isa: std::env::consts::ARCH.to_owned(),
+            executable_sha256,
+            executable_size,
+        };
+        run_source_role_with_host(&root.child("source"), host).expect("source role succeeds")
     }
 
     fn distinct_destination(source: &SourceBundle, label: &[u8]) -> HostIdentity {
