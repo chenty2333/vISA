@@ -1,398 +1,176 @@
-# Real AArch64 Stage 4 re-run runbook
+# Native AArch64 Stage 4 supporting-evaluation runbook
 
-Status: working note, not a canonical truth source. Not part of the seven
-canonical documents. Records analysis and a proposed procedure; it grants no
-claim and changes no gate by itself.
+Status: completed and reproducible supporting evaluation. This note is not a
+canonical truth source and does not create or close a registry claim.
 
-Last reviewed: 2026-07-26.
+Last reviewed: 2026-07-29.
 
-## Scope
+## Result and scope
 
-What it would take to re-run the Stage 4 matrix on real aarch64 Linux hardware
-instead of QEMU-user emulation, and what would have to change in code, locks,
-and the claim registry before such a run could be published.
+Revision `e88b844e0c9f5f9fef507c456a3001b046f054db` completed the native
+Stage 4 matrix identified in evidence as
+`native-arm-cross-isa-continuity-v1`. In paper and evidence-map shorthand this
+is **S4-N**. It supplements, but does not replace or widen, the closed
+**S4-Q** `named-target-substrate-continuity-v1` and
+`emulated-cross-isa-continuity-v1` claims.
 
-This note does not claim that a real-hardware run has happened, and nothing
-here weakens the existing boundary on the emulated result. `README.md` states
-the current limit directly:
+S4-N fixes Wasmtime, the Stage 1 timer/KV Component, common input, 31-case
+registry, and semantic normalizer while varying the source and destination
+native ISA/host:
 
-> This is semantic target/substrate and emulated cross-ISA evidence, not
-> AOT-binary portability, real ARM hardware, Stage 3 resource portability
-> across targets, or a second Stage 4 runtime.
-
-and, on the `Qa` endpoint specifically:
-
-> QEMU-user translates user-space instructions but still uses the same host
-> kernel, so `Qa` is not a real ARM machine or an ARM-kernel result.
-
-Removing "real ARM hardware" from that exclusion list is the entire point of
-the work described here, and it cannot be done by re-running the existing gate
-on different hardware. The reasons are in "What blocks a naive re-run" below.
-
-## Existing Stage 4 evidence structure
-
-### Endpoints and cells
-
-Stage 4 qualifies three endpoints, defined as `Stage4EndpointId` in
-`crates/testing/visa-conformance/src/stage4/model.rs`:
-
-| Endpoint | Architecture | Target triple | Execution |
-| --- | --- | --- | --- |
-| `Hx` | `x86_64` | `x86_64-unknown-linux-gnu` | native on the x86-64 Linux host |
-| `Qx` | `x86_64` | `x86_64-unknown-linux-gnu` | under artifact-owned `qemu-x86_64`, sysroot `/` |
-| `Qa` | `aarch64` | `aarch64-unknown-linux-gnu` | under artifact-owned `qemu-aarch64`, sysroot `/usr/aarch64-linux-gnu` |
-
-Cells are source-to-destination pairs. `named-target-substrate-continuity-v1`
-covers `Hx->Hx`, `Hx->Qx`, `Qx->Hx`, and `Qx->Qx`;
-`emulated-cross-isa-continuity-v1` covers `Qx->Qx`, `Qx->Qa`, `Qa->Qx`, and
-`Qa->Qa`. `Qx->Qx` is shared, so the aggregate is 7 unique cells, 31 cases per
-cell, 217 executions, and 31 recomputed equality groups.
-
-### Artifact ownership model
-
-"Artifact-owned" is literal. `crates/testing/visa-system/src/stage4_command.rs`
-copies every executable it will run into the evidence root before running it,
-via `copy_owned_executable` for both the per-endpoint worker and the QEMU
-binary, and records a version receipt for QEMU through `retain_qemu_version`.
-The sysroot is canonicalized (`canonical_directory`), its loader resolution is
-captured, and a sysroot manifest and receipt are published alongside.
-
-The consequence for a hardware re-run: the evidence bundle does not reference
-host paths for the things that matter. It contains the binaries. That is what
-makes the published bundle survive the relocation check in
-`scripts/ci-gate.sh` — the gate moves the whole directory to a new absolute
-path without rewriting any JSON and revalidates it. As `README.md` puts it,
-"The recorded execution root remains historical launcher provenance," not a
-live path the verifier depends on.
-
-The publisher also writes a durable `stage4-incomplete` marker before running
-cells; staged verification requires it, successful publication removes it, and
-published verification rejects a bundle that still carries it.
-
-### How the gate drives it
-
-`gate_system_stage4` in `scripts/ci-gate.sh` builds release `visa-system` and
-`visa-conformance` for `x86_64-unknown-linux-gnu`, builds the `visa-system`
-worker for `aarch64-unknown-linux-gnu`, then runs the x86-64 worker as the
-orchestrator with six mandatory environment variables:
-
-```
-VISA_STAGE4_X86_64_WORKER   VISA_STAGE4_QEMU_X86_64   VISA_STAGE4_QX_SYSROOT
-VISA_STAGE4_AARCH64_WORKER  VISA_STAGE4_QEMU_AARCH64  VISA_STAGE4_QA_SYSROOT
-```
-
-QEMU paths come from `command -v qemu-x86_64` and `command -v qemu-aarch64` on
-the gate host. Verification then runs the separately built `visa-conformance`
-binary against the bundle, before and after relocation.
-
-## What blocks a naive re-run
-
-Running the current `system-stage4` tier on an aarch64 host does not produce
-real-hardware evidence. It fails, and it should.
-
-1. **The orchestrator is pinned to `Hx`.** `stage4_command.rs` calls
-   `require_named_target(Stage4EndpointId::Hx, &orchestrator)` against the
-   independently observed target, and `require_named_target` rejects anything
-   whose triple and architecture are not `x86_64-unknown-linux-gnu` /
-   `x86_64`. On an aarch64 host this fails with exit 64.
-
-2. **There is no native-AArch64 endpoint.** `Stage4EndpointId` has exactly
-   three variants, and `architecture()` / `target_triple()` are `const fn`
-   matches over them. Native AArch64 needs a fourth endpoint — call it `Ha` —
-   which is a model change, not a configuration change.
-
-3. **All six environment variables are mandatory**, including
-   `VISA_STAGE4_QEMU_AARCH64` and `VISA_STAGE4_QA_SYSROOT`. A native AArch64
-   endpoint has no emulator and no cross sysroot. The endpoint preparation
-   path already takes `qemu_input` as an `Option` and `Hx` passes `None`, so
-   the internal shape supports it; the environment contract does not.
-
-4. **The cell catalog and claim mapping are fixed.** `STAGE4_CELL_CATALOG` and
-   the `Stage4ClaimId` enum in `model.rs` enumerate cells and the two existing
-   claim ids. New endpoints mean new cells, and new cells have to be attributed
-   to a claim.
-
-5. **The host receipt is a single uname reading.** The aggregate retains raw
-   stdout/stderr from `/usr/bin/uname -s -r -m` for one host. A run split
-   across an x86-64 machine and an ARM machine has two hosts and no current
-   place to record the second, or to bind the two halves together.
-
-Point 5 is the deepest one. The existing design assumes a single host running
-every endpoint, which is exactly what emulation buys. Real hardware either
-requires two machines and a cross-machine evidence-joining story, or an
-aarch64-only run that drops the `Hx`/`Qx` endpoints and therefore cannot
-regress `named-target-substrate-continuity-v1`.
-
-## Hardware and OS requirements
-
-For an aarch64-native endpoint, whichever topology is chosen:
-
-- aarch64 Linux, little-endian, LP64, glibc — `require_named_target` demands
-  `os == "linux"`, `abi == "linux-gnu"`, `endianness == "little"`, and
-  `pointer_width_bits == 64`. A musl or 32-bit userland does not qualify.
-- Wasmtime must support the host. The Stage 4 worker is the Wasmtime worker;
-  its aarch64 backend is the thing actually under test.
-- `/usr/bin/uname` present at that exact path, since the host receipt executes
-  it by absolute path.
-- Enough disk under the evidence parent for two copies of the artifact root,
-  because the relocation check moves rather than links. `VISA_EVIDENCE_PARENT`
-  redirects this off the Cargo target directory.
-- The Rust toolchain pinned by `rust-toolchain.toml`
-  (`nightly-2026-06-07`), available for the host architecture.
-- If the ARM machine also builds x86-64 artifacts, a reverse cross-toolchain;
-  otherwise builds happen on the x86-64 side and binaries are transported.
-
-Note that `.cargo/config.toml` already sets
-`[target.aarch64-unknown-linux-gnu] linker = "aarch64-linux-gnu-gcc"`. On a
-native aarch64 host that setting is wrong — the native `cc` should be used —
-so a native build needs that entry overridden rather than inherited.
-
-## Claim and registry changes
-
-`claims/registry.json` has `schema`, `claims`, and `workflow_bindings`. A claim
-entry carries exactly `id`, `track`, `status`, `scope_ref`, `validation_ref`,
-`acceptance_ref`, `implementation_refs`, and `predecessor_ids`. The current
-entry is:
-
-```json
-{
-  "id": "emulated-cross-isa-continuity-v1",
-  "track": "roadmap",
-  "status": "earned",
-  "scope_ref": {
-    "path": "docs/ROADMAP.md",
-    "heading": "Stage 4: Target, ISA, and substrate qualification"
-  },
-  "validation_ref": {
-    "path": "docs/VALIDATION.md",
-    "heading": "Claim-evidence matrix"
-  },
-  "acceptance_ref": {
-    "kind": "canonical-validation",
-    "path": "docs/VALIDATION.md",
-    "heading": "Claim-evidence matrix"
-  },
-  "implementation_refs": [
-    "crates/testing/visa-conformance/src/stage4/model.rs",
-    "crates/testing/visa-conformance/src/stage4/verify.rs"
-  ],
-  "predecessor_ids": []
-}
-```
-
-and it is bound to CI by:
-
-```json
-{
-  "id": "stage4",
-  "job": "docker-stage4-gate",
-  "matrix_lane": null,
-  "tier": "system-stage4",
-  "artifact": "stage4-target-isa-system-evidence",
-  "claims": [
-    { "id": "emulated-cross-isa-continuity-v1", "role": "regresses" },
-    { "id": "named-target-substrate-continuity-v1", "role": "regresses" }
-  ]
-}
-```
-
-### A new claim id is required
-
-Real-hardware evidence must not be published under
-`emulated-cross-isa-continuity-v1`. The word "emulated" is load-bearing: the id
-names the boundary, the README exclusion list is written against it, and its
-`acceptance_ref` points at a canonical validation heading describing a
-seven-cell emulated matrix. Widening it in place would silently restate an
-accepted claim, which is precisely what the registry gates exist to prevent.
-
-The successor should be a new id — `native-arm-cross-isa-continuity-v1` is the
-naming that matches existing convention (`^[a-z0-9][a-z0-9.-]*$`, a `-v1`
-suffix, hyphenated words) — with
-`predecessor_ids: ["emulated-cross-isa-continuity-v1"]`.
-
-Constraints a new id must satisfy, from `scripts/claims_registry.py`,
-`scripts/check-claims-registry.py`, and `scripts/check-claim-closures.py`:
-
-- `status` is one of `candidate`, `earned`, `retired`. It starts as
-  `candidate`. `GRANDFATHERED_EARNED_CLAIMS` is a closed set of eight existing
-  ids; a new id is not in it and therefore cannot be declared `earned` without
-  going through the full closure path.
-- Reaching `earned` requires a committed closure record, a receipt under
-  `claims/receipts`, and, for archive-kind acceptance, an archive manifest
-  under `claims/archive-manifests` with `receipt_sha256`, `evidence_axes`,
-  `semantic_contracts`, `source_repositories`, and `workflow_artifacts`.
-- `scope_ref`, `validation_ref`, and `acceptance_ref` must resolve to headings
-  that actually exist in the named documents, so ROADMAP and VALIDATION need
-  the corresponding sections written first.
-- The README claim table between the `<!-- claims-registry:start -->` and
-  `<!-- claims-registry:end -->` markers is checked row-by-row against the
-  registry and must be regenerated.
-
-### Code-side id registration
-
-The claim id is not only registry data. It also appears as a Rust enum variant
-in `crates/testing/visa-conformance/src/stage4/model.rs`
-(`Stage4ClaimId::EmulatedCrossIsaContinuityV1`) and in the allowlist in
-`scripts/claims_registry.py`. A new claim id has to be added in all three
-places, and the new cells attributed to it in `STAGE4_CELL_CATALOG`.
-
-### CI contract
-
-`.github/workflows/ci.yml` and `scripts/ci-gate.sh` are pinned by
-`scripts/check-ci-contract.py`, which asserts specific job names, tiers, and
-`run-docker-ci-gate.sh --ci-cache --skip-build <tier>` command strings, and by
-`scripts/test-check-ci-contract.py`. A new hardware tier means a new binding
-entry plus matching contract-checker updates. Since GitHub-hosted runners for
-this project's Docker gate are x86-64, a real-hardware lane needs either a
-self-hosted aarch64 runner or an explicitly out-of-CI, manually attested
-evidence path — and the latter is a weaker form of evidence than every claim
-currently in the registry, which should be stated plainly wherever it lands.
-
-## Step-by-step checklist
-
-Preparation, in dependency order. Steps 1-2 are done; the rest are not.
-
-1. **Cross-compilation smoke check.** `scripts/check-aarch64-cross.sh` runs
-   `cargo check --target aarch64-unknown-linux-gnu` over the pure-logic subset
-   of the active spine. This is a compile-time signal only.
-2. **Record the blockers.** This document.
-3. **Decide the topology.** Two-machine (keeps all 7 existing cells, needs a
-   cross-machine evidence join) or aarch64-only (simpler, cannot regress
-   `named-target-substrate-continuity-v1`). This decision drives everything
-   below and should be made before any code is written.
-4. **Extend the model.** Add the `Ha` endpoint to `Stage4EndpointId`, make the
-   QEMU and sysroot environment inputs optional for native endpoints, and relax
-   the orchestrator pin so the orchestrating endpoint is derived rather than
-   hardcoded to `Hx`.
-5. **Extend the host receipt.** Decide how a multi-host run records and binds
-   more than one uname receipt, or document why the run is single-host.
-6. **Extend the cell catalog** with the new cells and attribute them to the new
-   claim id.
-7. **Provision hardware** against the requirements above and confirm Wasmtime,
-   the pinned toolchain, and `/usr/bin/uname` on it.
-8. **Trial run, unpublished.** Produce a bundle, verify it with the
-   independently built `visa-conformance`, and repeat after relocation. Do not
-   register a claim from a trial run.
-9. **Write the canonical sections** in `docs/ROADMAP.md` and
-   `docs/VALIDATION.md` that the new claim's refs will point at.
-10. **Register the claim as `candidate`**, regenerate the README table, and get
-    `check-claims-registry.py` green.
-11. **Wire CI or document the manual path**, updating `check-ci-contract.py`
-    and its mutation tests as required.
-12. **Close the claim** with a receipt and closure record only after the
-    evidence has passed at an exact commit, matching how the existing Stage 4
-    closure receipt was recorded.
-
-## Appendix: `cargo tree` panics in this workspace
-
-### Symptom
-
-Plain `cargo tree` aborts:
-
-```
-thread 'main' panicked at src/tools/cargo/src/cargo/core/resolver/features.rs:325:13:
-did not find features for (PackageId { name: "contract_validate", version: "0.1.0",
-source: "/home/ava/Desktop/vISA/crates/core/contract_validate" },
-ArtifactDep(Tuple("x86_64-unknown-none"))) within activated_features
-```
-
-Reproduced on the pinned toolchain, cargo 1.98.0-nightly (0b1123a48 2026-06-01).
-
-### Cause
-
-This is a cargo resolver bug in the unstable artifact-dependencies
-(`bindeps`) feature, which `.cargo/config.toml` enables workspace-wide with
-`[unstable] bindeps = true`.
-
-The triggering path is:
-
-- `crates/host/runner/Cargo.toml` has a build-dependency
-  `kernel = { path = "../kernel", artifact = "bin", target = "x86_64-unknown-none" }`
-- `crates/host/kernel/Cargo.toml` has `contract_validate.workspace = true`
-  under `[build-dependencies]`
-
-So `contract_validate` is reached as a build-dependency of a package that is
-itself resolved as an artifact dependency for `x86_64-unknown-none`. The
-resolver fails to register features for that `(package, ArtifactDep)` pair and
-panics instead of erroring.
-
-The `x86_64-unknown-none` bin artifact is not the only trigger. All four
-artifact-dependency manifests in the workspace reproduce a panic of the same
-shape, and in every case the artifact dependency sits under
-`[build-dependencies]`:
-
-| Manifest | Artifact dependency | Panicking `(package, ArtifactDep)` |
+| Endpoint | Native target | Retained host identity |
 | --- | --- | --- |
-| `crates/host/runner` | `kernel`, `bin`, `x86_64-unknown-none` | `contract_validate`, `x86_64-unknown-none` |
-| `crates/testing/visa-system` | `handoff-component`, `cdylib`, `wasm32-unknown-unknown` | `wit-bindgen-rust-macro`, `wasm32-unknown-unknown` |
-| `crates/testing/visa-stage3-system` | `stage3-file-component`, `stage3-request-component` | same shape |
-| `crates/testing/visa-joint-handoff-system` | `stage3-request-component` | same shape |
+| `Hx` | `x86_64-unknown-linux-gnu` | Physical x86-64 Linux host; kernel `7.1.4-204.fc44.x86_64`; `systemd-detect-virt` returned `none` |
+| `Ha` | `aarch64-unknown-linux-gnu` | Raspberry Pi Zero 2 W Rev 1.0; AArch64 Linux kernel `6.18.34+rpt-rpi-v8`; device-tree model retained; `systemd-detect-virt` returned `none` |
 
-### Impact
+These controlled-host observations and native launchers are not cryptographic
+hardware attestation or proof against an undisclosed lower virtualization
+layer.
 
-Measured on this workspace:
+The four cells `Hx->Hx`, `Hx->Ha`, `Ha->Hx`, and `Ha->Ha` each passed all 31
+cases: 124/124 completed executions, four independently verified inner Stage 1
+bundles, and 31/31 normalized observable groups equal across all cells. The
+outer verifier accepted the complete inventory at the original root and after
+the entire directory was moved without rewriting its JSON.
 
-| Command | Result |
+## Provider and transport topology
+
+The provider does not move with the worker. One Hx-native service owns the real
+`substrate_host::SqliteProvider` and its SQLite databases:
+
+```text
+Hx worker -- local Unix stream -----+
+                                    +--> Hx provider service --> SQLite
+Ha worker -- SSH reverse Unix stream+
+```
+
+For every primary case, source, destination, restart, and audit requests use
+one logical database identifier and therefore one provider transaction domain.
+The `evidence-verification` case's four supplemental fault domains are
+independently reconstructed and bound to their exact eight worker lineages.
+
+This topology establishes native x86-64/AArch64 and cross-host Wasmtime
+execution against a shared provider domain. It does not establish provider
+cross-ISA execution, provider migration, or a provider running on Ha.
+
+SSH is part of the measured launcher/transport boundary, not a trusted claim
+shortcut. The runner requires a separately preconfirmed ED25519 host-key
+fingerprint, sets `StrictHostKeyChecking=yes` and `IdentitiesOnly=yes`, copies
+the identity into a mode-0600 temporary directory, and never publishes the
+private key. The temporary identity, remote worker directory, provider sockets,
+database service, and tunnel are removed on exit.
+
+## Prerequisites
+
+- The recorded worker source is revision
+  `e88b844e0c9f5f9fef507c456a3001b046f054db`, whose complete declared source
+  set is bound by the manifest check below. Use the current runner when
+  re-executing: its later SSH identity-plumbing hardening is outside the 40
+  worker source roots and does not change that source manifest.
+- Hx must have the repository toolchain, Docker Compose, the GNU AArch64
+  cross-linker used by `.cargo/config.toml`, OpenSSH client tools, and enough
+  local space for the transient evidence tree.
+- Ha must be a little-endian LP64 `aarch64-unknown-linux-gnu` system reachable
+  by key-based SSH on port 22. `/usr/bin/uname`, `/usr/bin/systemd-detect-virt`,
+  `sha256sum`, `chmod`, and `mktemp` must be present.
+- The SSH private key must be a non-symlink regular file inaccessible to group
+  and other users.
+- Obtain the ED25519 host-key SHA-256 fingerprint through an already trusted
+  channel before the run. Do not derive the expected value from the same
+  unauthenticated connection that the run will use.
+
+## Re-run
+
+From the repository root:
+
+```sh
+scripts/run-stage4-native-hardware.sh \
+  --identity-file /secure/path/to/id_ed25519 \
+  --host-key-sha256 SHA256:<preconfirmed-ed25519-fingerprint> \
+  <user>@<aarch64-host>
+```
+
+Use `--artifact-parent <directory>` to redirect evidence. Use
+`--skip-image-build` only when the exact current Docker development image is
+already built. The script:
+
+1. builds release Hx worker/verifier and Ha worker from the current exact
+   source;
+2. verifies the remote host key, creates a fresh remote `/tmp` root, deploys
+   the Ha worker, and checks its SHA-256;
+3. records both hosts and target-native launchers;
+4. starts the Hx provider service and SSH reverse StreamLocal transport;
+5. runs all four cells and all 31 cases per cell;
+6. independently verifies the published bundle;
+7. moves the complete evidence directory to a new `-relocated` path and
+   verifies it again; and
+8. prints the relocated artifact root, evidence-bundle path, retained
+   `known_hosts` digest, and observed host-key fingerprint.
+
+The final two successful verifier invocations print:
+
+```text
+Stage 4 native evidence verified: <artifact-root>/stage4-native-evidence.json
+```
+
+To recheck a retained tree independently:
+
+```sh
+.ci-cache/stage4-native-hx-target/x86_64-unknown-linux-gnu/release/visa-conformance \
+  stage4-native \
+  <artifact-root>/stage4-native-evidence.json \
+  <artifact-root>
+```
+
+## Recorded receipt
+
+The completed run has bundle ID
+`stage4-native-6df5cde713c63611703e999f51553f5cc485585213d1957672de18a86ef31206`.
+
+| Artifact or identity | SHA-256 |
 | --- | --- |
-| `cargo tree` | panics |
-| `cargo tree --workspace` | panics |
-| `cargo tree --workspace --exclude runner` | panics |
-| `cargo tree --workspace --exclude runner --exclude kernel` | panics |
-| `cargo tree --workspace --target x86_64-unknown-linux-gnu` | panics |
-| `cargo tree --workspace --no-dedupe` | panics |
-| `cargo tree -e build --workspace` | panics |
-| `cargo tree -e normal,build --workspace` | panics |
-| `cargo tree -p runner` | panics |
-| `cargo tree -p visa-system` | panics |
-| `cargo tree -p visa-stage3-system` | panics |
-| `cargo tree -p visa-joint-handoff-system` | panics |
-| `cargo tree -e normal --workspace` | **works** (997 lines) |
-| `cargo tree -p <any other package>` | **works**, including `kernel`, `contract_validate`, `visa-conformance`, `visa-cli` |
-| `cargo tree -e normal -p runner` | **works** |
-| `cargo tree -e normal -p visa-system` | **works** |
-| `cargo metadata --locked --format-version 1` | **works** |
-| `cargo metadata --locked --no-deps --format-version 1` | **works** |
+| Evidence bundle | `b9e67d69c2c6d1095e8bb9ad9539ca60943b955159a3174c60f3795257dec0d1` |
+| Matrix | `6df5cde713c63611703e999f51553f5cc485585213d1957672de18a86ef31206` |
+| Provider receipt | `0e1b7688ca15dc7507d1429eeaa0bae1b414c242a5dbf2a25ee08ea3120ce0a9` |
+| Common input | `a66347ba03a6e3e687abcd2c1d0bd0da6d64692d4a22c78a6e30586e6374ff25` |
+| Stage 1 registry | `d306c21c404ea83a91eff9c4b73399d210c75b7e1b6c0c4e0788bc68134ba3d6` |
+| All four normalized observables | `45ebae531a31b2c2a31415b88279e621820652ea2a21503a5776744ae59557d9` |
+| Hx worker | `a06391a7caca18db6a48abe57ffaa3ca6eeade79a4fbe3f0243ec8751cecd47b` |
+| Ha worker | `6a04d5eb4e39ee1c33ce3263347e693bc63ef8156017d37a654cc9a6493b9467` |
+| Shared build source | `9426a9d893a9b4bc8551720059bf3faa6a5b6a71c0f9f64ddd0e346515035673` |
+| Shared toolchain | `33bd760b0d42eee90cf79af2bd3a30df1de6535fb53d34ebbb2542625adc9bf3` |
 
-`--exclude` does not help, because the panic happens during whole-workspace
-feature resolution, before package filtering. Disabling bindeps via
-`CARGO_UNSTABLE_BINDEPS=false` also does not help, since the manifests still
-declare artifact dependencies.
+An independent post-run check matched all 268 entries in the retained build
+source manifest, including each byte count and SHA-256, to the complete Git
+tree selected by the 40 declared source roots at revision
+`e88b844e0c9f5f9fef507c456a3001b046f054db`.
 
-Because `cargo metadata` resolves the full graph without panicking, tools built
-on it are not blocked by this. `cargo-deny` reads `cargo metadata` and should
-work; `cargo-audit` reads `Cargo.lock` directly and should also work. Neither
-is installed in this environment, so that is an inference from their input
-format, not a measured result. `scripts/ci-gate.sh` uses `cargo metadata`
-and is unaffected.
+The independently verified Stage 1 child-bundle hashes are:
 
-### Workaround
+| Cell | SHA-256 |
+| --- | --- |
+| `Hx->Hx` | `536428216ad4c36eb6b5983246b2c19055b6dd7dad87ca3f87cbe5e9684bef8f` |
+| `Hx->Ha` | `bd83c880af371c48920ecd0e308de507b7f210401357a1ef4ca8576cb079e857` |
+| `Ha->Hx` | `a44138ddd047686e95e39f1c5ed087fa8b7733f5ecd0ba3fdecc034f921d0094` |
+| `Ha->Ha` | `433551b4c36c809707741e03731b572e0469746816833ec49a94b197a89f9d0e` |
 
-Every artifact dependency in this workspace is declared under
-`[build-dependencies]`, so dropping build edges avoids the resolver path
-entirely:
+The full evidence tree is transient evaluation output, not a permanent archive
+requirement. Retain it only when exact-byte re-verification is needed; the
+script can regenerate a fresh, independently verifiable run. A fresh run uses
+new nonces and paths, so it is expected to produce new bundle hashes even when
+its semantic result is the same.
 
-```
-cargo tree -e normal --workspace
-```
+## Explicit non-claims
 
-This is a real reduction — build-dependencies and dev-dependencies are not
-shown. For build-dependency questions, query a single package that is not one
-of the four listed above; per-package queries retain all edge kinds and do not
-panic:
+S4-N is a verified supporting profile, not a closed or earned registry claim.
+It does not prove:
 
-```
-cargo tree -p kernel
-```
-
-For the four artifact-dependency packages themselves, only the `-e normal`
-form works.
-
-### Disposition
-
-No workspace change is proposed. Removing the panic would mean dropping the
-`x86_64-unknown-none` bin artifact dependency from `runner`, which is load-
-bearing for the kernel build, or dropping `contract_validate` from the kernel's
-build-dependencies, which is load-bearing for contract validation. Both are
-worse than losing full-graph `cargo tree`. The item to track is the upstream
-cargo bug; a future toolchain bump should re-test plain `cargo tree` and this
-appendix should be updated or deleted when it stops reproducing.
+- provider-substrate cross-ISA execution or provider migration;
+- AOT binary portability or transfer of native code, stacks, registers, or
+  process checkpoints;
+- a second runtime lineage;
+- Stage 3 regular-file or logical-request continuity across ISA;
+- hostile-host or hostile-transport security, cryptographic attestation, or
+  confidentiality;
+- no-std/reference-kernel, real-device, 32-bit, or big-endian behavior; or
+- performance or production readiness.

@@ -401,6 +401,10 @@ Status: complete for `named-target-substrate-continuity-v1` and
 `29386011420` passed its exact-SHA closure, and its uploaded Stage 4 artifact
 was downloaded and independently reverified at a different root. The exact
 receipt is recorded in [validation](VALIDATION.md#stage-4-closure-receipt).
+A separate native-hardware supplement, identified below as **S4-N**, passed at
+revision `e88b844e0c9f5f9fef507c456a3001b046f054db`. S4-N is a verified
+supporting matrix, not a replacement for the two closed claims above and not a
+new registry-earned claim.
 
 Goal: hold the Stage 1 Wasmtime timer/KV semantic input fixed while changing
 the named target, ISA, and user-mode execution carrier. This stage asks whether
@@ -409,7 +413,7 @@ remain equal when the x86-64 worker and separately cross-built AArch64 worker
 execute natively or through QEMU-user. It does not introduce a new runtime or
 resource family.
 
-### Fixed qualification profile
+### S4-Q fixed qualification profile
 
 The profile has one x86-64 Linux orchestrator and three explicit endpoints:
 
@@ -444,18 +448,20 @@ seven-cell normalized equality group for each of the 31 registered cases. The
 Stage 4 common input and verifier also retain the same typed 3 Pending / 22
 Precompleted / 6 ScenarioControlled timer-strategy partition used by Stage 2.
 
-### Evidence boundary
+### S4-Q evidence boundary
 
 Semantic cross-ISA continuity is not AOT binary portability. Hx/Qx and Qa run
 target-specific worker executables around the same Component and portable
 semantic envelope; Stage 4 does not copy an x86-64 native code image, compiled
 Wasmtime artifact, stack, register file, or process checkpoint into AArch64.
 
-QEMU-user execution is not real AArch64 hardware qualification. Qa establishes
-only the named emulated AArch64 Linux user-mode path on the same orchestrator;
-it does not execute a real ARM machine, system emulator, reference kernel, or
-device-enforcement path. Runtime, provider, host trust, and cross-host movement
-remain separate dimensions.
+Within S4-Q, QEMU-user execution is not real AArch64 hardware qualification.
+Qa establishes only the named emulated AArch64 Linux user-mode path on the same
+orchestrator; it does not execute a real ARM machine, system emulator,
+reference kernel, or device-enforcement path. Runtime, provider, host trust,
+and cross-host movement remain separate dimensions. The later S4-N supplement
+below evaluates a distinct native, cross-host endpoint and does not restate
+either S4-Q claim.
 
 The `performance-observations` case retains the common 50 ms Stage 1 timer.
 Five raw source reads can exceed that duration under QEMU, so the corrected
@@ -465,7 +471,7 @@ redeliver it. It neither lengthens an unrecorded workload input nor accepts
 `Pending` and `Completed` as equivalent. Target speed affects only retained raw
 performance samples, for which this stage makes no performance claim.
 
-### Exit conditions satisfied at closure
+### S4-Q exit conditions satisfied at closure
 
 - Hx, Qx, and Qa are identified by retained executable, ELF ISA, build,
   recorded Rust/Cargo toolchain identity, launcher, loader/sysroot,
@@ -496,19 +502,68 @@ performance samples, for which this stage makes no performance claim.
   rechecked for verification, exact-set closure, and relocation as recorded in
   the [closure receipt](VALIDATION.md#stage-4-closure-receipt).
 
-### Claims explicitly not earned
+### Claims explicitly not earned by S4-Q
 
-Stage 4 does not claim real AArch64 hardware, no-std/reference-kernel execution,
-real-device enforcement, cross-target Stage 3 file or request continuity, a
-second Stage 4 runtime, AOT binary portability, cross-host continuity, 32-bit or
-big-endian targets, hostile-host protection or confidentiality, or production
-and performance readiness. The legacy reference-kernel path remains explicitly
-`unsupported` because its runtime is not linked and its engine is a legacy
-stub; real AArch64 hardware remains explicitly `not-run`.
+The closed S4-Q claims do not claim real AArch64 hardware,
+no-std/reference-kernel execution, real-device enforcement, cross-target Stage
+3 file or request continuity, a second Stage 4 runtime, AOT binary portability,
+cross-host continuity, 32-bit or big-endian targets, hostile-host protection or
+confidentiality, or production and performance readiness. The legacy
+reference-kernel path remains explicitly `unsupported` because its runtime is
+not linked and its engine is a legacy stub; real AArch64 hardware was
+explicitly `not-run` in the S4-Q matrix.
 
 Claim earned: only `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1` for the fixed Wasmtime, Linux user-mode,
 timer/KV profile and the exact Hx/Qx/Qa cells above.
+
+### S4-N native AArch64 hardware supplement
+
+S4-N keeps the same Wasmtime timer/KV Component, 31-case Stage 1 registry, and
+portable semantic envelope while replacing the emulated endpoint with two
+native hosts:
+
+- **Hx** -- an artifact-owned `x86_64-unknown-linux-gnu` worker on the physical
+  x86-64 Linux host, with kernel `7.1.4-204.fc44.x86_64`; and
+- **Ha** -- an artifact-owned `aarch64-unknown-linux-gnu` worker on a physical
+  Raspberry Pi Zero 2 W Rev 1.0, with AArch64 Linux kernel
+  `6.18.34+rpt-rpi-v8`.
+
+Both host receipts retain raw `uname` and `systemd-detect-virt` output; the Ha
+receipt additionally binds `/proc/device-tree/model`. The two target-native ELF
+workers have different executable digests but share the exact build-source
+digest `9426a9d893a9b4bc8551720059bf3faa6a5b6a71c0f9f64ddd0e346515035673`
+and toolchain digest
+`33bd760b0d42eee90cf79af2bd3a30df1de6535fb53d34ebbb2542625adc9bf3`.
+These retained observations and direct native launchers identify the controlled
+physical-host evaluation; they are not cryptographic hardware attestation or
+proof against an undisclosed lower virtualization layer.
+
+The native matrix is `Hx->Hx`, `Hx->Ha`, `Ha->Hx`, and `Ha->Ha`. Every cell
+passed all 31 cases, for 124/124 completed executions and 31/31 equal
+normalized observable groups. The independent outer verifier accepted the
+complete bundle at its original location and again after the entire directory
+was moved without rewriting its JSON. The matrix SHA-256 is
+`6df5cde713c63611703e999f51553f5cc485585213d1957672de18a86ef31206`;
+the evidence-bundle SHA-256 is
+`b9e67d69c2c6d1095e8bb9ad9539ca60943b955159a3174c60f3795257dec0d1`.
+
+S4-N deliberately centralizes provider truth on Hx. A real
+`substrate_host::SqliteProvider` owns each logical case database; Hx workers
+connect through a local Unix stream and Ha workers through an SSH reverse
+StreamLocal socket. Source, destination, restart, and audit operations for a
+primary case therefore share one logical provider transaction domain across
+all four directions. This topology proves native cross-ISA and cross-host
+Wasmtime execution against a shared provider domain; it does **not** prove that
+the provider itself runs on or migrates to AArch64.
+
+The identifier `native-arm-cross-isa-continuity-v1` names this verified
+supporting profile in the evidence schema. It is not recorded here as a closed
+or earned registry claim. S4-N does not establish provider-substrate cross-ISA
+execution or provider migration, AOT binary portability, a second runtime,
+Stage 3 file or logical-request resources across ISAs, a hostile host or
+transport, no-std/reference-kernel or device behavior, confidentiality,
+performance, or production readiness.
 
 ## Accepted research track: bounded joint-handoff refinement
 

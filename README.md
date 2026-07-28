@@ -78,7 +78,8 @@ WIT/WASI component + continuity profile
 | Timer and durable KV | 31 cases in all four directions formed by Wasmtime and a source-locked Wacogo derivative | 124 executions and 31 normalized equality groups on x86-64 Linux under one shared coordinator |
 | Regular file | 12 cases in the same four runtime directions, with three required stability runs per cell | One bounded Linux regular-file profile on x86-64 Linux |
 | Logical request | 14 cases from Wasmtime to Wasmtime | Reconnectable logical session, not preservation of a live socket; no independent-runtime coverage |
-| Target and ISA | Fixed timer/KV workload across seven native and QEMU-user cells | QEMU-user and the host kernel, not real ARM hardware, AOT-binary portability, or physical cross-host execution |
+| Emulated target and ISA | Fixed timer/KV workload across seven Hx/Qx/Qa native and QEMU-user cells | QEMU-user and the host kernel; no real AArch64 hardware, AOT-binary portability, or physical cross-host execution |
+| Native host and ISA supplement | Fixed timer/KV workload across Hx -> Hx, Hx -> Ha, Ha -> Hx, and Ha -> Ha | 124/124 executions on a physical x86-64 host and Raspberry Pi Zero 2 W; the provider remains on Hx, so this does not establish provider migration or provider-substrate cross-ISA portability |
 | Joint handoff | Bounded same-boot composition with an admission-ordered successor | `v1` is earned; `v2` remains a candidate; neither is a production Nexus adapter |
 
 These are executable research cells, not a product support matrix. Exact case

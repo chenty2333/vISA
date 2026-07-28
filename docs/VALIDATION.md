@@ -10,13 +10,19 @@ wired into CI, with an aggregate local command that runs both. The separate
 Stage 3A cross-runtime successor is automated as its own CI lane: the unchanged
 regular-file profile runs in all four Wasmtime/source-locked-Wacogo directions,
 three times per direction, with detector closure, typed outer normalization,
-mutation audit, and relocated verification. Bounded Stage 4
-is complete only for `named-target-substrate-continuity-v1` and
+mutation audit, and relocated verification. The closed S4-Q part of bounded
+Stage 4 is complete only for `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1`: all seven native/QEMU-user target cells,
 217/217 timer/KV executions, seven complete inner Stage 1 validations, 31/31
 normalized equality groups, independent outer verification, exact-set checks,
 directory relocation, the complete exact-SHA workflow, and downloaded-artifact
-reverification passed. Stage 1 and Stage 2 use the timer/KV profile; the two
+reverification passed. A distinct S4-N supporting profile at revision
+`e88b844e0c9f5f9fef507c456a3001b046f054db` runs the same timer/KV workload
+across native Hx/Ha endpoints on a physical x86-64 Linux host and Raspberry Pi
+Zero 2 W AArch64 host: all four directions, 124/124 executions, 31/31
+normalized equality groups, and outer verification before and after relocation
+passed. S4-N is verified supporting evidence, not a closed or earned registry
+claim. Stage 1 and Stage 2 use the timer/KV profile; the two
 Stage 3 predecessor gates are separate Wasmtime-to-Wasmtime resource profiles
 and do not inherit the Strict Stage 2 cross-runtime result. The regular-file
 successor earns its own cross-runtime claim; the logical-request profile does
@@ -48,15 +54,15 @@ complete workflow and its original artifacts, exact source bundles, checksums,
 reverification instructions, permanent archive, and closure receipt are bound
 together.
 
-Last reviewed: 2026-07-28.
+Last reviewed: 2026-07-29.
 
 This document defines what each result proves and the acceptance boundaries for
 the first architecture-complete slice, the legacy Stage 2 execution-path
 matrix, the strict Stage 2 runtime matrix, and the two bounded Stage 3 resource
-predecessors plus the cross-runtime regular-file successor, the completed
-bounded Stage 4 target/substrate and emulated
-cross-ISA matrix, and the accepted bounded joint-handoff boundary. Update it
-when executable gates change.
+predecessors plus the cross-runtime regular-file successor, the completed S4-Q
+target/substrate and emulated cross-ISA matrix, the separately verified S4-N
+native AArch64 supporting matrix, and the accepted bounded joint-handoff
+boundary. Update it when executable gates change.
 
 ## Validation principle
 
@@ -120,6 +126,7 @@ uploaded bytes.
 | `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
 | `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Roadmap closure additionally requires the complete-workflow and downloaded-artifact receipt recorded below. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
 | `system-stage4-target`, `system-stage4-isa` | Each invokes the same complete fail-closed `system-stage4` aggregate | These are edit-loop aliases, not reduced matrices or independent additional claims. |
+| `run-stage4-native-hardware.sh` | Exact-source release Hx and Ha workers; retained physical-host, ELF, build, target-hello, SSH launcher, host-key, common-input, provider, matrix, and exact-inventory receipts; Hx -> Hx, Hx -> Ha, Ha -> Hx, and Ha -> Ha with 31 cases per cell; full inner validation; independently recomputed outer normalization; verification before and after relocation | Establishes the verified S4-N supporting profile at the recorded revision: native x86-64/AArch64 and cross-host Wasmtime execution against one Hx-owned `substrate_host::SqliteProvider` transaction domain. It is not an automated CI tier or an earned registry claim, and does not establish provider cross-ISA execution/migration, AOT portability, another runtime, Stage 3 resources, hostile transport, performance, or production readiness. |
 | `system-joint-handoff` | Exact Git-object source-lock validation; 16 normative concrete production-reducer traces; 16 reference ownership/effect cases plus one supplemental retained-tombstone scenario; durable SQLite reopen; an online `Coordinator<SqliteProvider>` HostSubstrate cell with 14 commit records, 9 abort records, and seven canonical peer-invocation classes; exact two-file publication; strict independent semantic verification before and after relocation | Establishes the same-boot neutral/reference and vISA HostSubstrate axes of accepted `bounded-joint-handoff-refinement-v1`. It does not itself execute or absorb the separate Nexus-local and exact-binary process lanes. |
 | `run-nexus-handoff-qualification.sh` | Clean exact-SHA Nexus checkout; source fingerprint; model, oracle, fault matrix, and production Registry refinement; independent v2 receipt verification; exact artifact copy and relocated recheck | Locally establishes only `same-boot-nexus-handoff-admission-only` for the locked Nexus revision. It does not execute the joint vISA cell, real OSTD/IRQ/SMP, reboot recovery, Registry replacement, or the production retained-tombstone path. |
 | `run-nexus-process-joint-cell.sh` | Clean exact vISA and Nexus checkouts; current neutral source lock; Nexus v2 lock and receipt; exact Nexus binary; two process scenarios; strict three-file manifest/report/executed-binary publication; independent static and semantic verification before and after relocation | Establishes the self-contained exact-binary process axis when bound to the accepted clean vISA SHA, without re-executing the retained binary or claiming reproducible source-to-binary derivation. |
@@ -162,9 +169,10 @@ The current CI workflow does not establish:
   source/destination stores, coordinators, and provider instances backed by
   local SQLite continuity in one OS runner process, and the admission cell's
   Nexus child remains alive during Commit-ACK replay;
-- real AArch64 hardware, a second Stage 4 runtime, AOT binary portability,
-  cross-host target continuity, 32-bit/big-endian targets, or Stage 3 resources
-  across the Stage 4 endpoints;
+- automated CI qualification or an earned registry claim for the S4-N native
+  AArch64 supporting profile; S4-N also does not establish a second Stage 4
+  runtime, AOT binary portability, provider cross-ISA execution or migration,
+  32-bit/big-endian targets, or Stage 3 resources across its endpoints;
 - one monolithic production execution that combines the full neutral fault
   matrix, HostSubstrate, Nexus-local, exact-binary process, and both
   logical-request axes; the admission cell is one integrated commit witness,
@@ -195,14 +203,16 @@ fixed x86-64 Linux timer/KV profile. The Stage 3A and Stage 3B predecessors
 separately establish only their named regular-file and logical-request profiles
 with `independent_runtime_coverage=false` and Wacogo explicitly unsupported.
 The Stage 3A successor separately establishes the named regular-file runtime
-matrix; Stage 3B does not inherit it. Stage 4
-separately establishes only its named target/substrate and emulated cross-ISA
-timer/KV claims; it holds Wasmtime fixed and does not transfer the Strict Stage
-2 runtime result or either Stage 3 resource result into those cells. No current
-result establishes a second logical-request or Stage 4 runtime, real target
-hardware or device
-enforcement, cross-host or confidential continuity, transparent migration,
-release quality, or production safety. The accepted
+matrix; Stage 3B does not inherit it. The closed S4-Q matrix separately
+establishes only its named target/substrate and emulated cross-ISA timer/KV
+claims. The S4-N manual supporting evaluation adds physical native AArch64 and
+cross-host timer/KV execution, but no registry closure. Both matrices hold
+Wasmtime fixed and do not transfer the Strict Stage 2 runtime result or either
+Stage 3 resource result into their cells. No current result establishes a
+second logical-request or Stage 4 runtime, real-device enforcement, provider
+cross-ISA execution or migration, cross-host rich-resource or confidential
+continuity, transparent migration, release quality, or production safety. The
+accepted
 [Stage 4 closure receipt](#stage-4-closure-receipt) confirms the required
 complete workflow and post-CI artifact verification without widening any of
 those exclusions. The same workflow also requires both joint-handoff jobs. The
@@ -508,7 +518,7 @@ local lease ledger only. The publication therefore records
 resurrection, crash/reboot survival, cross-ISA execution, arbitrary filesystem
 objects, and production migration-service behavior.
 
-### Stage 4 target/substrate and emulated cross-ISA cells
+### Stage 4 S4-Q target/substrate and emulated cross-ISA cells
 
 `system-stage4` fixes the Wasmtime implementation, the bounded timer/KV
 Component profile, and the 31-case Stage 1 registry while varying three named
@@ -600,14 +610,16 @@ all artifact resolution remains relative to the verifier-supplied current
 root. This is the local proof that an uploaded/downloaded byte-identical bundle
 can be reverified at a different path.
 
-The bounded claims explicitly exclude real AArch64 hardware, the unsupported
-legacy no-std/reference-kernel path, real-device enforcement, Stage 3 file or
-request resources across targets, a second Stage 4 runtime, AOT binary
-portability, cross-host movement, 32-bit or big-endian targets, hostile-host or
-confidential execution, and production/performance conclusions. Real AArch64
-hardware is recorded as `not-run`; the legacy kernel is `unsupported` because
-the runtime is not linked and its old engine path remains a stub. Neither state
-is presented as a passing cell.
+The bounded S4-Q claims explicitly exclude real AArch64 hardware, the
+unsupported legacy no-std/reference-kernel path, real-device enforcement,
+Stage 3 file or request resources across targets, a second Stage 4 runtime, AOT
+binary portability, cross-host movement, 32-bit or big-endian targets,
+hostile-host or confidential execution, and production/performance
+conclusions. Real AArch64 hardware is recorded as `not-run` inside S4-Q; the
+legacy kernel is `unsupported` because the runtime is not linked and its old
+engine path remains a stub. Neither state is presented as a passing S4-Q cell.
+The later S4-N subsection records separate native-hardware evidence and does
+not widen either S4-Q claim.
 
 The complete bounded matrix and all negative/relocation checks are locally
 green. The accepted qualification SHA also passed the complete CI workflow,
@@ -651,6 +663,71 @@ bundle ID is `stage4-437d2ad93d373e288eea1c39`; its
 This receipt closes only the two named Stage 4 claims and does not promote the
 host receipt, QEMU execution, or identified sysroots into portable semantic
 truth.
+
+### Stage 4 S4-N native AArch64 supporting matrix
+
+S4-N is a separate, manually launched supporting evaluation at exact revision
+`e88b844e0c9f5f9fef507c456a3001b046f054db`. It fixes Wasmtime, the timer/KV
+Component, common input, and 31-case registry while running target-native
+workers on two physical Linux hosts:
+
+```text
+Hx = x86_64-unknown-linux-gnu, physical x86-64 Linux host,
+     Linux 7.1.4-204.fc44.x86_64
+Ha = aarch64-unknown-linux-gnu, Raspberry Pi Zero 2 W Rev 1.0,
+     Linux 6.18.34+rpt-rpi-v8
+```
+
+The retained host receipts bind raw `uname` and `systemd-detect-virt` output
+for both hosts and the device-tree hardware model for Ha. Target receipts bind
+the ELF architecture, native launcher, nonce-bearing target hello, executable
+digest, common build-source digest, and common toolchain digest. The exact
+observations and direct launchers identify the controlled physical-host run;
+they are not cryptographic hardware attestation or proof against an undisclosed
+lower virtualization layer. The retained 268-entry build-source manifest was
+also checked independently against revision
+`e88b844e0c9f5f9fef507c456a3001b046f054db`: its path set is exactly the Git
+tree selected by the 40 declared source roots, and every file size and SHA-256
+matches the corresponding Git object. The exact native matrix is:
+
+```text
+Hx -> Hx   Hx -> Ha   Ha -> Hx   Ha -> Ha
+```
+
+All 31 cases passed in every direction, for 124/124 completed executions, four
+independently verified inner Stage 1 bundles, and 31/31 normalized observable
+groups equal across all cells. Every cell's normalized observable artifact has
+SHA-256
+`45ebae531a31b2c2a31415b88279e621820652ea2a21503a5776744ae59557d9`.
+The outer verifier accepted the exact inventory at the original execution root
+and again after the entire evidence directory was renamed without JSON
+rewrites.
+
+One real provider service on Hx owns the durable
+`substrate_host::SqliteProvider` state. Hx workers use a local Unix stream; Ha
+workers reach the same service through an SSH reverse StreamLocal socket.
+Source, destination, restart, and audit requests for each primary case are
+therefore recomputed against one logical transaction domain rather than
+per-host provider copies. This is evidence for native cross-ISA, cross-host
+Wasmtime execution with a shared provider transaction domain. It is not
+evidence that the provider binary or SQLite substrate crossed ISA or migrated.
+
+The top-level receipts are:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `stage4-native-evidence.json` | `b9e67d69c2c6d1095e8bb9ad9539ca60943b955159a3174c60f3795257dec0d1` |
+| `matrix.json` | `6df5cde713c63611703e999f51553f5cc485585213d1957672de18a86ef31206` |
+| `provider/provider-receipt.json` | `0e1b7688ca15dc7507d1429eeaa0bae1b414c242a5dbf2a25ee08ea3120ce0a9` |
+| `inputs/stage4-native-common-input.json` | `a66347ba03a6e3e687abcd2c1d0bd0da6d64692d4a22c78a6e30586e6374ff25` |
+
+The evidence schema uses `native-arm-cross-isa-continuity-v1` as the supporting
+profile identifier. It is not listed here as a closed or earned registry claim.
+It does not prove provider-substrate cross-ISA execution or provider migration,
+AOT binary portability, a second runtime, Stage 3 regular-file or
+logical-request continuity across ISA, hostile-host or hostile-transport
+security, no-std/reference-kernel or device behavior, confidentiality,
+performance, or production readiness.
 
 ### Joint-handoff closure receipt
 
@@ -1254,6 +1331,7 @@ SHA-256 `f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`.
 | `bounded-logical-request-continuity` | The fixed 14-case Stage 3B registry through the named Wasmtime source/destination adapter, real bounded loopback protocol and durable operation ledger, credential reacquisition, reauthorization/fencing, artifact digests, and independent bundle validation | Preservation of raw live TCP/socket state, credential transfer, generic future/stream continuation, a second runtime, or cross-ISA behavior |
 | `named-target-substrate-continuity-v1` | The fixed Wasmtime timer/KV workload across Hx -> Hx, Hx -> Qx, Qx -> Hx, and Qx -> Qx; raw x86-64 Linux host receipt; owned worker/QEMU artifacts plus loader/sysroot receipts; four complete inner validations; and equality within the seven-cell aggregate | Real hardware, a new kernel/device substrate, another runtime/resource family, or cross-host behavior |
 | `emulated-cross-isa-continuity-v1` | The fixed workload across Qx -> Qx, Qx -> Qa, Qa -> Qx, and Qa -> Qa; separate x86-64/AArch64 worker ELFs, artifact-owned QEMU executables and identified sysroots, four complete inner validations, and equality within the seven-cell aggregate | AOT binary portability, real AArch64 hardware, a second runtime, Stage 3 resources, 32-bit/big-endian targets, or cross-host behavior |
+| `native-arm-cross-isa-continuity-v1` (verified supporting profile; not a registered earned claim) | The fixed Wasmtime timer/KV workload across Hx -> Hx, Hx -> Ha, Ha -> Hx, and Ha -> Ha on physical x86-64 and Raspberry Pi Zero 2 W AArch64 hosts; target-native ELF, build, host, target-hello, launcher, SSH, provider, and exact-inventory receipts; one Hx-owned `substrate_host::SqliteProvider` transaction domain; four complete inner validations; 124/124 executions and 31/31 outer-normalized equality groups; original-root and relocated verification | Provider-substrate cross-ISA execution or provider migration, AOT binary portability, a second runtime, Stage 3 resources across ISA, hostile host/transport security, no-std/device behavior, performance, production readiness, or registry closure |
 | `bounded-joint-handoff-refinement-v1` (earned historical) | The remote-accepted neutral model/mapping and unchanged 16-case registries plus one supplemental reference case; the vISA HostSubstrate 14-record commit/9-record abort vertical; locked Nexus-local production-Registry refinement; exact-binary process evidence in a strict three-file artifact; the separately labeled supplemental logical-request dual-lost-ACK five-file artifact; and the v1 exact-SHA/post-download closure receipt | The evidence axes remain distinct, the logical cell is not normative, and `exclusive_trusted_coordinator_api=true` plus semantic lock approval remain in the TCB. This does not imply adversarial raw-API admission, Nexus ordering of the supplemental external effect, Registry replacement, a production retained-tombstone path, real OSTD/IRQ/SMP, host reboot/permanent-source-loss recovery, cross-host transport, cryptographic authenticity, anti-rollback/freshness, TEE/KMS behavior, confidentiality, or Stage 5. |
 | `bounded-joint-handoff-refinement-v2` (candidate) | Every predecessor v1 axis plus the exact seven-file admission artifact, its 19-step sequence, Registry-backed Commit acceptance before external send, one Wasmtime execution, durable ownership recovery, Nexus cohort closure, source fence, guarded activation and Reconcile, preliminary exact-SHA CI, original ZIP hashes, and extracted/relocated independent verification | Candidate evidence is not earned closure. It does not imply Nexus child death/restart, all 16 schedules in one live cell, abort or retained-tombstone execution, dual Stage 3 workers/processes, a production adapter, provider-enforced raw-bypass prevention, cross-host/reboot/permanent-source-loss recovery, real OSTD/IRQ/SMP/DMA, Registry replacement, general exactly-once behavior, cryptographic freshness, TEE/KMS, source-to-binary reproducibility, performance, or production readiness. |
 | Authority safety | Real policy enforcement, attenuation/revocation cases, stale-generation attempts, and post-commit source writes | General sandbox security |

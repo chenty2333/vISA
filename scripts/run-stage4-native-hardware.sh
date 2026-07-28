@@ -159,23 +159,29 @@ known_hosts="$temporary_root/known_hosts"
 identity_file="$temporary_root/id_ed25519"
 install -m 0600 -- "$identity_source" "$identity_file"
 remote_root=""
+ssh_common_options=(
+    -F /dev/null
+    -o BatchMode=yes
+    -o ConnectTimeout=15
+    -o ClearAllForwardings=yes
+    -o ForwardAgent=no
+    -o ForwardX11=no
+    -o GlobalKnownHostsFile=/dev/null
+    -o IdentitiesOnly=yes
+    -o "IdentityFile=$identity_file"
+    -o LogLevel=ERROR
+    -o StrictHostKeyChecking=yes
+    -o "UserKnownHostsFile=$known_hosts"
+    -o ServerAliveInterval=15
+    -o ServerAliveCountMax=3
+)
 cleanup() {
     original_status=$?
     trap - EXIT
     set +e
     if [[ -n "$remote_root" \
         && "$remote_root" =~ ^/tmp/visa-stage4-native\.[A-Za-z0-9]+$ ]]; then
-        ssh \
-            -T \
-            -F /dev/null \
-            -o BatchMode=yes \
-            -o ConnectTimeout=15 \
-            -o ClearAllForwardings=yes \
-            -o LogLevel=ERROR \
-            -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$known_hosts" \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=3 \
+        ssh -T "${ssh_common_options[@]}" \
             "$remote_host" \
             rm -rf -- "$remote_root"
     fi
@@ -200,22 +206,7 @@ if [[ "$observed_host_key_type" != '(ED25519)' \
     exit 1
 fi
 
-ssh_options=(
-    -T
-    -F /dev/null
-    -o BatchMode=yes
-    -o ConnectTimeout=15
-    -o ClearAllForwardings=yes
-    -o ForwardAgent=no
-    -o ForwardX11=no
-    -o IdentitiesOnly=yes
-    -o "IdentityFile=$identity_file"
-    -o LogLevel=ERROR
-    -o StrictHostKeyChecking=yes
-    -o "UserKnownHostsFile=$known_hosts"
-    -o ServerAliveInterval=15
-    -o ServerAliveCountMax=3
-)
+ssh_options=(-T "${ssh_common_options[@]}")
 remote_root=$(ssh "${ssh_options[@]}" "$remote_host" \
     mktemp -d /tmp/visa-stage4-native.XXXXXXXX)
 if [[ ! "$remote_root" =~ ^/tmp/visa-stage4-native\.[A-Za-z0-9]+$ ]]; then
@@ -224,16 +215,7 @@ if [[ ! "$remote_root" =~ ^/tmp/visa-stage4-native\.[A-Za-z0-9]+$ ]]; then
 fi
 remote_worker="$remote_root/visa-system"
 
-scp \
-    -F /dev/null \
-    -o BatchMode=yes \
-    -o ConnectTimeout=15 \
-    -o ClearAllForwardings=yes \
-    -o LogLevel=ERROR \
-    -o StrictHostKeyChecking=yes \
-    -o "UserKnownHostsFile=$known_hosts" \
-    -o ServerAliveInterval=15 \
-    -o ServerAliveCountMax=3 \
+scp "${ssh_common_options[@]}" \
     "$ha_worker" "$remote_host:$remote_worker"
 ssh "${ssh_options[@]}" "$remote_host" chmod 0555 "$remote_worker"
 

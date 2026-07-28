@@ -3,7 +3,7 @@
 Status: working note, not a canonical truth source. Not part of the seven
 canonical documents.
 
-Last reviewed: 2026-07-28.
+Last reviewed: 2026-07-29.
 
 This note prepares paper material by re-reading what the canonical documents
 already state. It introduces no claim, no evidence, and no scope. Where this
@@ -27,14 +27,16 @@ These short names are used only inside this file.
 | `S3A` | 12 bounded regular-file cases, scoped `openat2` rebinding, `STATX_BTIME` identity tuple, SQLite admission fence | `bounded-regular-file-continuity` | Wasmtime-to-Wasmtime, one OS runner process, `independent_runtime_coverage=false` |
 | `S3AX` | The unchanged 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three stability runs per direction, 144/144 executions, one recomputed semantic digest, verifier-mutation audit, and relocated verification | `cross-runtime-regular-file-continuity-v1` (earned) | x86-64 Linux; the qualified subject is the source-locked Wacogo derivative plus its explicit regular-file patch set, not unmodified upstream wacogo; no additional ISA/substrate or arbitrary filesystem objects |
 | `S3B` | 14 bounded logical-request cases over a real `VISALR03` loopback peer with a durable operation ledger | `bounded-logical-request-continuity` | Wasmtime-to-Wasmtime, one OS runner process, raw live TCP explicitly rejected, `independent_runtime_coverage=false` |
-| `S4` | Seven Hx/Qx/Qa cells, 217/217 executions, seven inner Stage 1 validations, 31/31 normalized groups, closure receipt at `457ae1d6...` | `named-target-substrate-continuity-v1`, `emulated-cross-isa-continuity-v1` | Wasmtime and timer/KV held fixed; Qa is QEMU-user on the same host kernel; real AArch64 hardware is recorded `not-run` |
+| `S4-Q` | Seven Hx/Qx/Qa cells, 217/217 executions, seven inner Stage 1 validations, 31/31 normalized groups, closure receipt at `457ae1d6...` | `named-target-substrate-continuity-v1`, `emulated-cross-isa-continuity-v1` | Wasmtime and timer/KV held fixed; Qa is QEMU-user on the same host kernel; real AArch64 hardware is `not-run` within this closed matrix |
+| `S4-N` | Four native Hx/Ha directions on a physical x86-64 Linux host and Raspberry Pi Zero 2 W AArch64 host, 124/124 executions, four inner validations, 31/31 normalized groups, original-root and relocated outer verification at `e88b844e...` | No registered earned claim; `native-arm-cross-isa-continuity-v1` is a verified supporting profile identifier | Wasmtime and timer/KV held fixed; the `substrate_host::SqliteProvider` remains on Hx, so this does not prove provider cross-ISA execution/migration, another runtime, Stage 3 resources, hostile transport, performance, or production |
 | `J1` | Neutral 16-case registry, TLA+ safety/progress, independent oracle, 10 corrupted-trace mutations, vISA HostSubstrate 14-record commit / 9-record abort vertical, locked Nexus-local refinement, exact-binary process artifact, supplemental logical-request dual-lost-ACK artifact | `bounded-joint-handoff-refinement-v1` (earned) | Same-boot only; `exclusive_trusted_coordinator_api=true` is a declared TCB assumption; the axes stay distinct and no axis substitutes for another |
 | `J2` | Every `J1` axis plus one admission-ordered 19-step logical-request commit witness in a strict seven-file artifact | `bounded-joint-handoff-refinement-v2` (candidate) | Not earned; promotion is blocked on the governance-SHA run, immutable release, Zenodo record, manifest, and closure receipt |
 
 Two facts constrain how any of these may be cited in a paper. First, the matrix
 is additive: `S2strict` independence does not enter the predecessor `S3A` or
 `S3B` bundles; `S3AX` separately qualifies only the same bounded regular-file
-profile; and `S4` does not inherit either cross-runtime result. Second, the
+profile; and neither `S4-Q` nor `S4-N` inherits either cross-runtime result.
+Second, the
 joint-handoff evidence is a bounded composition; no monolithic execution runs
 all axes end to end.
 
@@ -59,7 +61,7 @@ injected during pending I/O, timeout, cancellation, error, and cleanup paths.
 
 | RQ1 sub-question | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
-| Timers and durable KV preserve the observable trace | Covered | `S1`, `S2legacy`, `S2strict`, `S4` | x86-64 Linux for `S1`/`S2`; `S4` adds QEMU-user endpoints only. The paused-duration timer profile makes no wall-clock deadline-continuity claim. |
+| Timers and durable KV preserve the observable trace | Covered | `S1`, `S2legacy`, `S2strict`, `S4-Q`, `S4-N` | x86-64 Linux for `S1`/`S2`; `S4-Q` adds QEMU-user endpoints and `S4-N` separately adds physical, native x86-64/AArch64 hosts. The paused-duration timer profile makes no wall-clock deadline-continuity claim. |
 | Regular files | Covered for the named bounded profile | `S3A` plus `S3AX`: the same 12 cases in all four runtime directions, three runs per direction, 144/144 executions | x86-64 Linux and the source-locked Wacogo derivative. Excludes directory trees, devices, FIFOs, arbitrary already-open fds, and atomic compare-and-mutate against a writer that bypasses the advisory lock/lease protocol. |
 | Network resources | Partially covered | `S3B`, 14 cases | The unit of continuity is a *logical request over a reconnectable session*, not a connection. Raw live TCP is an explicit typed rejection, and socket sequence state, credential bytes, and runtime future state are absent from portable state. A general network-resource result is open. |
 | Multiple independent adapters | Partially covered | `S2strict` qualifies timer/KV and `S3AX` qualifies regular files across two independent-lineage Component Model runtimes | Logical requests remain Wasmtime-to-Wasmtime, and neither matrix establishes a second full coordinator/provider stack. |
@@ -69,7 +71,8 @@ injected during pending I/O, timeout, cancellation, error, and cleanup paths.
 
 Overall RQ1: **partially covered.** Timer/KV and the bounded regular-file profile
 are replicated across independent runtime lineages; timer/KV separately reaches
-the emulated target matrix. Logical requests remain Wasmtime-only. The general
+both the closed emulated target matrix and a native cross-host supporting
+matrix. Logical requests remain Wasmtime-only. The general
 network case and a faulted all-resource composition remain open; the core-growth
 falsifier has one measured family-doubling step plus one zero-core-change
 composition observation (below).
@@ -147,7 +150,7 @@ registered claim.
 
 | Property | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
-| `authority_after <= compatible(authority_before)` | Covered | `S1` cases for sufficient narrower authority, missing/insufficient destination authority rejection before any destination effect, and adapter-returns-broader-authority attenuation; replicated through `S2strict` and `S4` | Timer/KV profile. `S3A` and `S3B` each add a reauthorization-denial case in their own profile. |
+| `authority_after <= compatible(authority_before)` | Covered | `S1` cases for sufficient narrower authority, missing/insufficient destination authority rejection before any destination effect, and adapter-returns-broader-authority attenuation; replicated through `S2strict`, `S4-Q`, and `S4-N` | Timer/KV profile. `S3A` and `S3B` each add a reauthorization-denial case in their own profile. |
 | `revoked_before => unusable_after` | Covered | `S1` revoked-capability case with its exact prescribed destination lifecycle and single audit dump; stale-generation and revoked-capability rejection | The case fixes an exact response lifecycle, which makes it a strong assertion, but it is still one profile. |
 | `one fencing epoch => at most one active writer` | Partially covered | `S1` post-commit stale source attempt and source-racing-with-commit cases; `S3A` deterministic provider race test; `S3B` real-TCP greeting-barrier test; `J1` HostSubstrate lease and generation lineage | Three qualifications. The `S3A`/`S3B` race tests are *provider* tests, not published case assertions, and the structural verifiers do not recompute them. Concurrent writers are ordered or rejected only inside the same advisory lock/lease protocol. `J1` declares `exclusive_trusted_coordinator_api=true`, so a second raw coordinator/provider handle is outside the model. |
 | `failed pre-commit handoff => no destination authority` | Covered | `S1` destination-crash-before-commit, duplicate/lost prepare, corrupt/incompatible snapshot, and profile-mismatch cases, under the global rule that no destination may be active after a pre-commit failure | Same-boot process faults. |
@@ -172,7 +175,7 @@ hold under adversarial in-process bypass.
 
 | RQ3 sub-question | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
-| An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer; Stage 3A/3B predecessor structural bundle verifiers; the `S3AX` outer normalizer and mutation audit; Stage 4 reconstruction and seven inner validations; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
+| An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer; Stage 3A/3B predecessor structural bundle verifiers; the `S3AX` outer normalizer and mutation audit; `S4-Q` reconstruction with seven inner validations; `S4-N` reconstruction with four inner validations and one shared-provider lineage; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
 | The verifier independently reimplements the semantic decision | Covered for Stage 1/2/4 and the joint neutral axis; partial for Stage 3 | The predecessor Stage 3 verifiers remain structural. `S3AX` independently recomputes typed normalized semantics from retained child fields and raw file-artifact references, then checks cross-cell equality. | `S3AX` verifies raw trace integrity but does not independently reinterpret every runner-authored file-profile assertion. `S3B` peer/credential negative assertions remain runner-produced and the raw frames are not published. Profile/config JSON is byte-checked but not semantically parsed. |
 | Detection of injected semantic defects is measured | Covered for the calibrated Stage 1 corpus (2026-07-27), targeted `S3AX` outer path (2026-07-28), and the joint axis's separate 10-mutation suite | The Stage 1 verifier detected its preclassified 22/22 semantic defects, recognized 3/3 benign equivalents, and recorded one boundary. The separate eight-entry `S3AX` corpus mutates the intended layer and, for child cases, fully reseals original/relocated children, outer references, and matrix receipts before invoking the production verifier: 3/3 semantic defects and 2/2 summary tampers are rejected, 2/2 benign equivalents are accepted, and one trusted-observation boundary is recorded with all eight dispositions matching preclassification. | The `S3AX` boundary deliberately contradicts a runner assertion in a fully resealed raw trace. Its acceptance documents that faithful observation/assertion production is trusted; it is not included in the three-defect efficacy denominator. These small targeted denominators are not population estimates and do not transfer to Stage 2, Stage 3B, or Stage 4. |
 | Specific injections named in RQ3 | Covered for Stage 1 and targeted `S3AX` normalization/matrix failure modes | Stage 1 covers all eight named detector classes. `S3AX` separately covers route omission, semantic-assertion substitution, changed retained observables, per-cell cache substitution, aggregate substitution, excluded run metadata, assertion-set ordering, and contradictory trusted raw observation. Stage 4 inventory mutations and the joint suite remain separate contract tests. | Scenario coverage and detector efficacy remain distinct. The Stage 1 22/22 and `S3AX` 3/3 semantic-defect results have separate denominators and cannot be copied to other verifiers. |
@@ -218,14 +221,17 @@ execution cell runs all evidence axes end to end.
 These qualifiers apply to every RQ above and should appear once, prominently,
 in any paper rather than being repeated per result.
 
-- x86-64/amd64 Linux for all natively executed evidence.
+- x86-64/amd64 Linux for all native evidence except the explicitly separate
+  `S4-N` Ha endpoint, which is AArch64 Linux on Raspberry Pi hardware.
 - Four Wasmtime/source-locked-Wacogo directions for the bounded regular-file
   successor; Wasmtime-to-Wasmtime only for logical requests.
 - Same-boot for all joint-handoff evidence.
 - `exclusive_trusted_coordinator_api=true` as a declared TCB assumption on the
   HostSubstrate axis.
-- QEMU-user, same host kernel, for the emulated cross-ISA endpoint; real
-  AArch64 hardware is recorded `not-run`.
+- QEMU-user, same host kernel, for the closed `S4-Q` emulated cross-ISA
+  endpoint; real AArch64 hardware is `not-run` only inside that matrix.
+- Physical, native x86-64/AArch64 hosts for the `S4-N` supporting matrix; the
+  provider stays on Hx and `S4-N` is not a registered earned claim.
 - The source-lock-bound Wacogo derivative is the qualified subject; unmodified
   upstream wacogo is a recorded no-go.
 - `bounded-joint-handoff-refinement-v2` is `candidate`, not `earned`.
@@ -320,10 +326,12 @@ migration.
 machine state through OSR; vISA Stage 4 deliberately carries *no* machine state
 across ISAs, holding the Component fixed and using separately cross-built
 target-native workers, so the two are complementary carriers rather than
-competitors. Honesty constraint that must accompany this delta: vISA's
-cross-ISA endpoint is QEMU-user on the same host kernel, which is a *weaker*
-setup than a real cross-ISA checkpoint result. This asymmetry must be stated as
-a limitation in the same paragraph, not deferred. *Documented delta* on the
+competitors. The closed `S4-Q` result uses QEMU-user on the same host kernel,
+while the later `S4-N` supporting result runs all four native Hx/Ha directions
+on physical x86-64 and Raspberry Pi AArch64 hosts. The comparison must still
+state that vISA cross-builds target-native workers rather than moving native
+machine state, that the provider remains on Hx, and that `S4-N` is supporting
+evidence rather than an earned registry claim. *Documented delta* on the
 mechanism difference; the comparative strength claim is not available.
 
 **Self-Hosted WebAssembly Runtime for Runtime-Neutral Checkpoint/Restore
@@ -531,11 +539,19 @@ executions with a 1,789-file inventory, the joint reference two-file bundle at
 include worker and QEMU binaries and are compressed, so they are not per-handoff
 evidence sizes and should not be presented as such.
 
-**P1.2 Real ARM hardware.** `Qa` is QEMU-user on the same host kernel and real
-AArch64 hardware is recorded `not-run`. Any use of the phrase "cross-ISA" in the
-paper needs the emulation qualifier attached at every occurrence, including the
-abstract. Real hardware would remove a standing reviewer objection and is
-already tracked as separate preparation work.
+**P1.2 Real ARM hardware — supporting evaluation complete (2026-07-29).**
+`S4-N` runs the fixed 31-case timer/KV profile in all four Hx/Ha directions on
+a physical x86-64 Linux host and a Raspberry Pi Zero 2 W AArch64 host:
+124/124 executions, four independently verified inner bundles, 31/31 normalized
+equality groups, and successful outer verification before and after relocation.
+The provider remains one Hx-owned `substrate_host::SqliteProvider` reached from
+Ha through an SSH reverse StreamLocal socket. Accordingly, the paper may
+describe `S4-N` as native, physical cross-ISA and cross-host supporting
+evidence, but must not convert it into provider migration/cross-ISA evidence,
+AOT portability, a second-runtime result, Stage 3 resource coverage,
+hostile-transport security, performance, production readiness, or an earned
+registry claim. `Qa` remains QEMU-user and `not-run` for real hardware inside
+the separate closed `S4-Q` matrix.
 
 **P1.3 Stage 3 independent-runtime coverage — done for regular files
 (2026-07-27).** `S3AX` carries the unchanged 12-case regular-file profile through
