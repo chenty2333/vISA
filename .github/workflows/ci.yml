@@ -178,6 +178,12 @@ jobs:
             claims: "bounded-logical-request-continuity:regresses"
             tier: system-stage3b
             artifact: stage3b-logical-request-system-evidence
+          - lane: wanco-carrier
+            label: Wanco AOT regular-file carrier
+            binding: wanco-carrier
+            claims: "bounded-wanco-regular-file-carrier-composition-v1:required"
+            tier: system-wanco-carrier
+            artifact: wanco-regular-file-carrier-system-evidence
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -222,6 +228,7 @@ jobs:
           buildkitd-config: .github/buildkitd.toml
 
       - name: Load exact-SHA Docker development image
+        if: ${{ matrix.lane != 'wanco-carrier' }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -237,6 +244,7 @@ jobs:
           cache-from: type=gha,scope=visa-dev
 
       - name: Inspect exact-SHA Docker image
+        if: ${{ matrix.lane != 'wanco-carrier' }}
         run: |
           actual_revision="$(docker image inspect \
             --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \

@@ -21,10 +21,15 @@ Wasmtime-to-Wasmtime only, requires `independent_runtime_coverage=false`, and
 does not inherit the Strict Stage 2 Wasmtime/Wacogo result. A separate
 regular-file successor now holds the unchanged 12-case profile fixed across all
 four Wasmtime/source-locked-Wacogo directions, three stability runs per
-direction, and an independently recomputed typed outer normalization. Its
-144/144 executions and permanent exact-SHA archive earn only
+direction, with verdict-free raw observations and independent lifecycle,
+file-state, content-digest, and route-topology reconstruction. Its 144/144
+executions, 20-entry fully resealed mutation audit, and relocated exact-SHA
+validation earn only
 `cross-runtime-regular-file-continuity-v1` on x86-64 Linux; logical requests do
-not inherit it. Bounded Stage 4 is complete only for
+not inherit it. A separate source-locked Wanco AOT cell composes a real
+checkpoint/restore compute carrier with the same oracle for two regular-file
+relations; carrier-only is the required negative control and vISA-plus-carrier
+is the positive route. Bounded Stage 4 is complete only for
 `named-target-substrate-continuity-v1` and
 `emulated-cross-isa-continuity-v1`: the accepted qualification revision passed
 the complete exact-SHA workflow, and its uploaded evidence was downloaded and
@@ -888,13 +893,18 @@ confidential continuity, performance targets, and production readiness remain
 unimplemented. Roadmap Stage 3 is complete for the two bounded resource
 profiles described above after their stage-closing implementation revision
 passed pushed CI at its exact commit. The later regular-file successor is earned
-at exact accepted revision `3bd9eaad5aab3e792ca793e26bd064f403f626db` with
-all four runtime directions and a permanent archive receipt. These claims do not
+through clean exact-SHA canonical validation of all four runtime directions,
+independent raw-observation replay, the mutation audit, and relocated
+verification; permanent retention of the reproducible evidence tree is
+optional. The Wanco composition separately validates only its two named
+same-host x86-64 relations. These claims do not
 cover arbitrary directory trees or open descriptors, preservation of raw live
 TCP, generic future/stream continuation, a general async runtime, a second
 logical-request runtime, or an unmodified upstream Wacogo runtime.
 Bounded Stage 4 is complete for the exact Hx/Qx/Qa matrix and two named claims
 described above, including exact-SHA workflow and downloaded relocated-bundle
-verification. It does not extend the claims to real ARM hardware, AOT-binary
-portability, Stage 3 resources across targets, the no-std kernel, or a second
-Stage 4 runtime.
+verification. The separate supporting S4-N matrix executes all four Hx/Ha
+directions on physical x86-64 and Raspberry Pi Zero 2 W AArch64 hosts while the
+provider remains on Hx. Neither result extends the earned claims to provider
+migration, AOT-binary portability, Stage 3 resources across targets, the no-std
+kernel, or a second Stage 4 runtime.

@@ -40,7 +40,13 @@ REQUIREMENT_KEYS = {
     "requires_relocated_verification",
     "supporting_cells",
 }
-RUNTIMES = {"jco-node", "not-applicable", "source-locked-wacogo", "wasmtime"}
+RUNTIMES = {
+    "jco-node",
+    "not-applicable",
+    "source-locked-wacogo",
+    "wanco-aot",
+    "wasmtime",
+}
 ISAS = {"aarch64", "not-applicable", "x86-64"}
 SUBSTRATES = {"linux-host", "linux-qemu-user", "neutral-model", "not-applicable"}
 RESOURCE_PROFILES = {"joint-handoff", "logical-request", "regular-file", "timer-kv"}
@@ -52,6 +58,8 @@ HANDOFF_TOPOLOGIES = {
     "runner-with-dual-sidecars",
     "runner-with-source-sidecar",
     "same-boot-multi-process",
+    "visa-plus-wanco-carrier",
+    "wanco-carrier-only",
 }
 FAULT_MODELS = {
     "joint-admission-lost-ack",
@@ -60,6 +68,7 @@ FAULT_MODELS = {
     "stage3a-regular-file-twelve-case",
     "stage3b-logical-request-fourteen-case",
     "stage4-stage1-thirty-one-case",
+    "wanco-regular-file-two-case",
 }
 VERIFIERS = {
     "joint-admission-artifact-static",
@@ -69,7 +78,8 @@ VERIFIERS = {
     "stage2-outer-normalized",
     "stage2-strict-outer-normalized",
     "stage3-structural",
-    "stage3a-cross-runtime-normalized",
+    "regular-file-raw-observable-oracle",
+    "stage3a-cross-runtime-outer-and-raw-oracle",
     "stage4-reconstructed-normalized",
 }
 DISPOSITIONS = {"candidate", "declared-gap", "qualified"}

@@ -1,0 +1,37 @@
+diff --git a/Dockerfile b/Dockerfile
+index 5e92e3c..88f19e7 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -8,7 +8,7 @@ COPY . /wanco
+ RUN \
+     --mount=type=cache,target=/var/cache/apt \    
+     apt-get update && apt-get install -y \
+-    ca-certificates lsb-release wget software-properties-common gnupg \
++    ca-certificates curl lsb-release wget software-properties-common gnupg \
+     git \
+     tar \
+     build-essential \
+@@ -17,14 +17,14 @@ RUN \
+     protobuf-compiler \
+     libunwind-dev \
+     libelf-dev \
+-    libzstd-dev \
+-    libpolly-17-dev
++    libzstd-dev
+ 
+ # install llvm
+ RUN --mount=type=cache,target=/usr/lib/llvm-17 \
+     wget -O llvm.sh https://apt.llvm.org/llvm.sh && \
+     chmod +x llvm.sh && \
+     ./llvm.sh 17
++RUN apt-get update && apt-get install -y libpolly-17-dev
+ ENV LLVM_SYS_170_PREFIX=/usr/lib/llvm-17
+ 
+ # install Rust
+@@ -37,4 +37,4 @@ RUN cargo install hyperfine
+ # Build and install wanco
+ RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make && make install
+ 
+-#ENTRYPOINT ["wanco"]
+\ No newline at end of file
++#ENTRYPOINT ["wanco"]

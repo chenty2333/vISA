@@ -2606,6 +2606,7 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2",
  "substrate_api",
+ "visa-regular-file-oracle",
  "visa_local_rpc",
  "visa_profile",
 ]
@@ -2624,6 +2625,7 @@ dependencies = [
  "substrate_host",
  "visa-composite-cell",
  "visa-conformance",
+ "visa-regular-file-oracle",
  "visa_component_adapter",
  "visa_profile",
  "visa_runtime",
@@ -2671,6 +2673,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa-regular-file-observation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "visa-regular-file-oracle"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "visa-stage3-system"
 version = "0.1.0"
 dependencies = [
@@ -2684,6 +2703,7 @@ dependencies = [
  "substrate_api",
  "substrate_host",
  "visa-conformance",
+ "visa-regular-file-observation",
  "visa_component_adapter",
  "visa_profile",
  "visa_runtime",
@@ -2711,6 +2731,22 @@ dependencies = [
  "visa_wacogo",
  "visa_wasmtime",
  "wit-component 0.244.0",
+]
+
+[[package]]
+name = "visa-wanco-carrier"
+version = "0.1.0"
+dependencies = [
+ "contract_core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "substrate_api",
+ "substrate_host",
+ "visa-regular-file-observation",
+ "visa_component_adapter",
+ "visa_profile",
+ "visa_runtime",
 ]
 
 [[package]]

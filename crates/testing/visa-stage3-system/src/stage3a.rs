@@ -22,17 +22,26 @@ use visa_profile::{
     FileDurability, FileLockState, REGULAR_FILE_EXTENSION_ID, REGULAR_FILE_EXTENSION_VERSION,
     RegularFileOperation, RegularFileResult, RegularFileState, regular_file_state,
 };
+use visa_regular_file_observation::{
+    EndpointObservation, ErrorCode, ErrorDomain, GenericCallResult, ObservationActor,
+    ObservationPhase, OsAction, ProtocolAction, RawErrorObservation, RegularFileObservationBundle,
+    RouteMode, RouteObservation,
+};
 use visa_runtime::{Coordinator, RuntimeError, SnapshotExpectations, validate_snapshot};
 
 use crate::{
     component,
     evidence::{
-        Stage3CaseCapture, create_incomplete_marker, publish_stage3a, runtime_identity,
-        terminal_name,
+        Stage3CaseCapture, Stage3aPublication, create_incomplete_marker, publish_stage3a,
+        runtime_identity, terminal_name,
     },
     fixture::{
         FixtureIds, FixturePaths, INITIAL_LEASE_EPOCH, Stage3aFixture, Stage3aFixtureOptions,
         derive_identity,
+    },
+    observation::{
+        CaseObservationRecorder, adapter_error_result, identity_hex as observation_identity_hex,
+        operation_id_after_call, returned, runtime_error_result,
     },
     regular_file_runtime::{
         MatrixRegularFileAdapter, RegularFileRuntimeKind, RegularFileRuntimePair,
@@ -55,11 +64,13 @@ struct CaseContext {
     canonical_before: Digest,
     file_before: Vec<u8>,
     operations: Vec<String>,
+    route: RouteMode,
+    observation: CaseObservationRecorder,
 }
 
-struct CommittedContext {
-    destination: MatrixRegularFileAdapter,
-    portable: PortableRegularFileState,
+enum ContinuedContext {
+    Uninterrupted,
+    Handoff { destination: MatrixRegularFileAdapter, portable: PortableRegularFileState },
 }
 
 pub fn run_stage3a(artifact_root: &Path) -> Result<PathBuf, String> {
@@ -73,9 +84,20 @@ pub(crate) fn run_stage3a_for_pair(
     create_incomplete_marker(artifact_root)?;
     let work_root = artifact_root.join(".stage3-work");
     let started = now_unix_ms()?;
-    let mut captures = Vec::with_capacity(STAGE3A_CASE_DEFINITIONS.len());
+    let mut control_captures = Vec::with_capacity(STAGE3A_CASE_DEFINITIONS.len());
+    let control_root = work_root.join("control");
     for definition in STAGE3A_CASE_DEFINITIONS {
-        captures.push(run_case(&work_root, definition, runtime_pair)?);
+        control_captures.push(run_case(
+            &control_root,
+            definition,
+            runtime_pair,
+            RouteMode::UninterruptedControl,
+        )?);
+    }
+    let mut captures = Vec::with_capacity(STAGE3A_CASE_DEFINITIONS.len());
+    let candidate_root = work_root.join("candidate");
+    for definition in STAGE3A_CASE_DEFINITIONS {
+        captures.push(run_case(&candidate_root, definition, runtime_pair, RouteMode::Handoff)?);
     }
     remove_completed_work_tree(&work_root)?;
     let finished = now_unix_ms()?;
@@ -131,44 +153,119 @@ pub(crate) fn run_stage3a_for_pair(
             vec!["wacogo".to_owned()]
         },
     };
+    let control_observation = observation_bundle(
+        RouteMode::UninterruptedControl,
+        runtime_pair,
+        started,
+        control_captures.into_iter().map(|capture| capture.raw_observation).collect(),
+    );
+    let candidate_observation = observation_bundle(
+        RouteMode::Handoff,
+        runtime_pair,
+        started,
+        captures.iter().map(|capture| capture.raw_observation.clone()).collect(),
+    );
     publish_stage3a(
         artifact_root,
         started,
         finished,
-        runtime,
         &profile_manifest,
         &configuration,
-        &captures,
+        Stage3aPublication {
+            runtime,
+            control_observation: &control_observation,
+            candidate_observation: &candidate_observation,
+            captures: &captures,
+        },
     )
+}
+
+fn observation_bundle(
+    mode: RouteMode,
+    runtime_pair: RegularFileRuntimePair,
+    started_at_unix_ms: u64,
+    cases: Vec<visa_regular_file_observation::RegularFileCaseObservation>,
+) -> RegularFileObservationBundle {
+    let route_name = if mode == RouteMode::UninterruptedControl { "control" } else { "candidate" };
+    RegularFileObservationBundle::new(
+        format!(
+            "stage3a-{route_name}-{}-{}-{started_at_unix_ms}",
+            runtime_pair.source.implementation(),
+            runtime_pair.destination.implementation()
+        ),
+        RouteObservation {
+            mode,
+            source: observation_endpoint(runtime_pair.source, "source"),
+            destination: (mode != RouteMode::UninterruptedControl)
+                .then(|| observation_endpoint(runtime_pair.destination, "destination")),
+            execution_boundary: if mode == RouteMode::UninterruptedControl {
+                "single-runtime-instance-uninterrupted-control".to_owned()
+            } else {
+                runtime_pair.execution_boundary().to_owned()
+            },
+            carrier: None,
+        },
+        cases,
+    )
+}
+
+fn observation_endpoint(kind: RegularFileRuntimeKind, role: &str) -> EndpointObservation {
+    let identity = kind.runtime_identity();
+    EndpointObservation {
+        instance_id: format!("stage3a-{role}-{}", identity.implementation),
+        runtime: identity.implementation,
+        runtime_version: identity.implementation_version,
+        host_id: observation_host_id(),
+        operating_system: std::env::consts::OS.to_owned(),
+        isa: std::env::consts::ARCH.to_owned(),
+    }
+}
+
+fn observation_host_id() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "stage3a-local-host".to_owned())
 }
 
 fn run_case(
     artifact_root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
     match definition.id {
-        "read-write-offset" => case_read_write_offset(artifact_root, definition, runtime_pair),
-        "append-continuity" => case_append_continuity(artifact_root, definition, runtime_pair),
-        "truncate-version" => case_truncate_version(artifact_root, definition, runtime_pair),
-        "rename-object-identity" => case_rename_identity(artifact_root, definition, runtime_pair),
+        "read-write-offset" => {
+            case_read_write_offset(artifact_root, definition, runtime_pair, route)
+        }
+        "append-continuity" => {
+            case_append_continuity(artifact_root, definition, runtime_pair, route)
+        }
+        "truncate-version" => case_truncate_version(artifact_root, definition, runtime_pair, route),
+        "rename-object-identity" => {
+            case_rename_identity(artifact_root, definition, runtime_pair, route)
+        }
         "replacement-rejected" => {
-            case_replacement_rejected(artifact_root, definition, runtime_pair)
+            case_replacement_rejected(artifact_root, definition, runtime_pair, route)
         }
         "external-mutation-rejected" => {
-            case_external_mutation(artifact_root, definition, runtime_pair)
+            case_external_mutation(artifact_root, definition, runtime_pair, route)
         }
-        "lock-conflict" => case_lock_conflict(artifact_root, definition, runtime_pair),
+        "lock-conflict" => case_lock_conflict(artifact_root, definition, runtime_pair, route),
         "durability-reconciled" => {
-            case_durability_reconciled(artifact_root, definition, runtime_pair)
+            case_durability_reconciled(artifact_root, definition, runtime_pair, route)
         }
-        "stale-source-fenced" => case_stale_source_fenced(artifact_root, definition, runtime_pair),
-        "cleanup-idempotent" => case_cleanup_idempotent(artifact_root, definition, runtime_pair),
+        "stale-source-fenced" => {
+            case_stale_source_fenced(artifact_root, definition, runtime_pair, route)
+        }
+        "cleanup-idempotent" => {
+            case_cleanup_idempotent(artifact_root, definition, runtime_pair, route)
+        }
         "indeterminate-write-blocks-handoff" => {
-            case_indeterminate_blocks(artifact_root, definition, runtime_pair)
+            case_indeterminate_blocks(artifact_root, definition, runtime_pair, route)
         }
         "destination-reauthorization-denied" => {
-            case_destination_denied(artifact_root, definition, runtime_pair)
+            case_destination_denied(artifact_root, definition, runtime_pair, route)
         }
         other => Err(format!("unimplemented Stage 3A case {other}")),
     }
@@ -178,11 +275,13 @@ fn case_read_write_offset(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
         runtime_pair,
+        route,
         b"abcdef",
         Stage3aFixtureOptions {
             destination_file_policy: true,
@@ -190,7 +289,7 @@ fn case_read_write_offset(
         },
     )?;
     let transient_observe_failure = matches!(
-        case.source.execute(RegularFileOperation::Read { max_bytes: 2 }, None),
+        attempt_source(&mut case, RegularFileOperation::Read { max_bytes: 2 }, None)?,
         Err(RegularFileAdapterError::Workload(RegularFileWorkloadFailure::File(
             RegularFileFailure::Unavailable
         )))
@@ -203,9 +302,7 @@ fn case_read_write_offset(
         .last()
         .filter(|record| record.outcome.is_none())
         .map(|record| record.request.operation);
-    let retried = case
-        .source
-        .execute(RegularFileOperation::Read { max_bytes: 2 }, None)
+    let retried = attempt_source(&mut case, RegularFileOperation::Read { max_bytes: 2 }, None)?
         .map_err(adapter_error)?;
     let retried_operation = parse_identity(&retried.operation_id);
     let transient_observe_retried = transient_observe_failure
@@ -226,14 +323,14 @@ fn case_read_write_offset(
         RegularFileOperation::Write { bytes: b"XY".to_vec(), durability: FileDurability::Visible },
         Some("write-offset"),
     )?;
-    let mut committed = handoff(&mut case)?;
-    let read_after = execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    let mut committed = continue_route(&mut case)?;
+    let read_after = execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::Read { max_bytes: 2 },
         None,
     )?;
-    let state = canonical_file(committed.destination.coordinator().state())?;
+    let state = canonical_file(continued_coordinator(&case, &committed).state())?;
     let after = read_live_file(&case.paths, &state);
     capture(
         case,
@@ -263,30 +360,37 @@ fn case_append_continuity(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"abc", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"abc",
+        Stage3aFixtureOptions::standard(),
+    )?;
     execute(
         &mut case,
         RegularFileOperation::Append { bytes: b"!".to_vec(), durability: FileDurability::Data },
         Some("append-continuity"),
     )?;
     let source_operation = case.operations.last().cloned().ok_or("missing source append")?;
-    let mut committed = handoff(&mut case)?;
-    execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    let mut committed = continue_route(&mut case)?;
+    execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::Append { bytes: b"!".to_vec(), durability: FileDurability::Data },
         Some("append-continuity"),
     )?;
     let replay_operation = case.operations.last().cloned().ok_or("missing replayed append")?;
-    execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::Append { bytes: b"?".to_vec(), durability: FileDurability::Data },
         Some("append-destination"),
     )?;
-    let state = canonical_file(committed.destination.coordinator().state())?;
+    let state = canonical_file(continued_coordinator(&case, &committed).state())?;
     let after = read_live_file(&case.paths, &state);
     let expected_digest = contract_core::canonical_digest(after.as_slice())
         .map_err(|_| "cannot digest appended file")?;
@@ -314,16 +418,23 @@ fn case_truncate_version(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"abcdef", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"abcdef",
+        Stage3aFixtureOptions::standard(),
+    )?;
     execute(
         &mut case,
         RegularFileOperation::Truncate { size: 3, durability: FileDurability::DataAndMetadata },
         Some("truncate"),
     )?;
-    let committed = handoff(&mut case)?;
-    let state = canonical_file(committed.destination.coordinator().state())?;
+    let committed = continue_route(&mut case)?;
+    let state = canonical_file(continued_coordinator(&case, &committed).state())?;
     let after = read_live_file(&case.paths, &state);
     let expected_digest = contract_core::canonical_digest(after.as_slice())
         .map_err(|_| "cannot digest truncated file")?;
@@ -343,6 +454,7 @@ fn case_rename_identity(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
     use std::os::unix::fs::MetadataExt as _;
 
@@ -350,6 +462,7 @@ fn case_rename_identity(
         root,
         definition,
         runtime_pair,
+        route,
         b"rename-me",
         Stage3aFixtureOptions::standard(),
     )?;
@@ -357,11 +470,24 @@ fn case_rename_identity(
         fs::metadata(&case.paths.file_path).map_err(io_error("inspect source inode"))?.ino();
     let occupied = case.paths.file_root.join("occupied.bin");
     fs::write(&occupied, b"occupied-target").map_err(io_error("create occupied rename target"))?;
+    case.observation.os_call(
+        ObservationPhase::Setup,
+        ObservationActor::ExternalMutator,
+        OsAction::WriteWhole { path: b"occupied.bin".to_vec(), bytes: b"occupied-target".to_vec() },
+        returned(Vec::new()),
+    );
+    case.observation.file_probe(
+        ObservationPhase::Setup,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &occupied,
+    );
     let profile_before_conflict = canonical_file(case.source.coordinator().state())?;
-    let occupied_rejected = is_file_conflict(case.source.execute(
+    let occupied_rejected = is_file_conflict(attempt_source(
+        &mut case,
         RegularFileOperation::Rename { relative_path: b"occupied.bin".to_vec() },
         Some("rename-occupied"),
-    ));
+    )?);
     let profile_after_conflict = canonical_file(case.source.coordinator().state())?;
     let occupied_bytes =
         fs::read(&occupied).map_err(io_error("read occupied rename target after conflict"))?;
@@ -378,14 +504,38 @@ fn case_rename_identity(
     )?;
     let renamed = case.paths.file_root.join("renamed.bin");
     let inode_after = fs::metadata(&renamed).map_err(io_error("inspect renamed inode"))?.ino();
-    let mut committed = handoff(&mut case)?;
-    execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    case.observation.file_probe(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &renamed,
+    );
+    case.observation.file_probe(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &case.paths.file_path,
+    );
+    let mut committed = continue_route(&mut case)?;
+    execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::Read { max_bytes: 9 },
         None,
     )?;
-    let state = canonical_file(committed.destination.coordinator().state())?;
+    let state = canonical_file(continued_coordinator(&case, &committed).state())?;
+    case.observation.file_probe(
+        ObservationPhase::FinalObservation,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &occupied,
+    );
+    case.observation.file_probe(
+        ObservationPhase::FinalObservation,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &case.paths.file_path,
+    );
     capture(
         case,
         committed,
@@ -411,15 +561,52 @@ fn case_replacement_rejected(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"same", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"same",
+        Stage3aFixtureOptions::standard(),
+    )?;
     let extension_before = canonical_file(case.source.coordinator().state())?;
     let replacement = case.paths.file_root.join("replacement.bin");
     fs::write(&replacement, b"same").map_err(io_error("write replacement"))?;
+    case.observation.os_call(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalMutator,
+        OsAction::WriteWhole { path: b"replacement.bin".to_vec(), bytes: b"same".to_vec() },
+        returned(Vec::new()),
+    );
+    case.observation.file_probe(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &replacement,
+    );
     fs::rename(&replacement, &case.paths.file_path).map_err(io_error("replace file"))?;
-    let rejected =
-        is_file_conflict(case.source.execute(RegularFileOperation::Read { max_bytes: 4 }, None));
+    case.observation.os_call(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalMutator,
+        OsAction::ReplacePath {
+            source: b"replacement.bin".to_vec(),
+            destination: b"data.bin".to_vec(),
+        },
+        returned(Vec::new()),
+    );
+    case.observation.file_probe(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &case.paths.file_path,
+    );
+    let rejected = is_file_conflict(attempt_source(
+        &mut case,
+        RegularFileOperation::Read { max_bytes: 4 },
+        None,
+    )?);
     let extension_after = canonical_file(case.source.coordinator().state())?;
     rejected_capture(
         case,
@@ -435,13 +622,35 @@ fn case_external_mutation(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"original", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"original",
+        Stage3aFixtureOptions::standard(),
+    )?;
     let extension_before = canonical_file(case.source.coordinator().state())?;
     fs::write(&case.paths.file_path, b"external").map_err(io_error("mutate file externally"))?;
-    let rejected =
-        is_file_conflict(case.source.execute(RegularFileOperation::Read { max_bytes: 8 }, None));
+    case.observation.os_call(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalMutator,
+        OsAction::WriteWhole { path: b"data.bin".to_vec(), bytes: b"external".to_vec() },
+        returned(Vec::new()),
+    );
+    case.observation.file_probe(
+        ObservationPhase::SourceExecution,
+        ObservationActor::ExternalObserver,
+        &case.paths.file_root,
+        &case.paths.file_path,
+    );
+    let rejected = is_file_conflict(attempt_source(
+        &mut case,
+        RegularFileOperation::Read { max_bytes: 8 },
+        None,
+    )?);
     let extension_after = canonical_file(case.source.coordinator().state())?;
     rejected_capture(
         case,
@@ -457,36 +666,74 @@ fn case_lock_conflict(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"locked", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"locked",
+        Stage3aFixtureOptions::standard(),
+    )?;
     execute(&mut case, RegularFileOperation::AcquireLock, Some("lock-source"))?;
     let competitor = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(&case.paths.file_path)
         .map_err(io_error("open competing file"))?;
-    let exclusive =
-        rustix::fs::flock(&competitor, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-            .is_err();
+    let competing_lock =
+        rustix::fs::flock(&competitor, rustix::fs::FlockOperation::NonBlockingLockExclusive);
+    case.observation.os_call(
+        ObservationPhase::SourceExecution,
+        ObservationActor::CompetingProcess,
+        OsAction::TryExclusiveLock { path: b"data.bin".to_vec() },
+        match competing_lock {
+            Ok(()) => returned(Vec::new()),
+            Err(error) => os_error_result(ErrorCode::WouldBlock, error.raw_os_error(), true),
+        },
+    );
+    let exclusive = competing_lock.is_err();
+    let live_freeze = case.source.freeze();
+    case.observation.protocol_call(
+        ObservationPhase::CarrierCapture,
+        ObservationActor::SourceRuntime,
+        ProtocolAction::FreezeRuntime {
+            safe_point_id: observation_identity_hex(derive_identity(
+                definition.id,
+                "live-lock-probe",
+            )),
+        },
+        match &live_freeze {
+            Ok(portable) => returned(portable.as_bytes().to_vec()),
+            Err(error) => adapter_error_result(error),
+        },
+    );
     let live_lock_rejected = matches!(
-        case.source.freeze(),
+        live_freeze,
         Err(RegularFileAdapterError::Workload(RegularFileWorkloadFailure::SafePointUnavailable))
     );
     execute(&mut case, RegularFileOperation::ReleaseLock, Some("unlock-source"))?;
-    let mut committed = handoff(&mut case)?;
-    let frozen = committed.portable.decode().map_err(adapter_codec_error)?;
-    execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    let mut committed = continue_route(&mut case)?;
+    let frozen_lock_state = match &committed {
+        ContinuedContext::Uninterrupted => {
+            canonical_file(case.source.coordinator().state())?.lock_state
+        }
+        ContinuedContext::Handoff { portable, .. } => {
+            portable.decode().map_err(adapter_codec_error)?.lock_state
+        }
+    };
+    execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::AcquireLock,
         Some("lock-destination"),
     )?;
-    let reacquired = canonical_file(committed.destination.coordinator().state())?.lock_state
+    let reacquired = canonical_file(continued_coordinator(&case, &committed).state())?.lock_state
         == FileLockState::Held;
-    execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::ReleaseLock,
         Some("unlock-destination"),
     )?;
@@ -497,7 +744,7 @@ fn case_lock_conflict(
             ("exclusive_lock_enforced", exclusive),
             (
                 "lock_not_snapshotted_live",
-                live_lock_rejected && frozen.lock_state == FileLockState::Unlocked,
+                live_lock_rejected && frozen_lock_state == FileLockState::Unlocked,
             ),
             ("reacquired", reacquired),
         ],
@@ -509,11 +756,13 @@ fn case_durability_reconciled(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
         runtime_pair,
+        route,
         b"a",
         Stage3aFixtureOptions {
             destination_file_policy: true,
@@ -524,15 +773,15 @@ fn case_durability_reconciled(
         bytes: b"b".to_vec(),
         durability: FileDurability::DataAndMetadata,
     };
-    let indeterminate_operation = match case
-        .source
-        .execute(operation.clone(), Some("durable-append"))
-    {
-        Err(RegularFileAdapterError::Workload(RegularFileWorkloadFailure::File(
-            RegularFileFailure::Indeterminate(operation),
-        ))) => operation,
-        other => return Err(format!("expected post-mutation indeterminate result, got {other:?}")),
-    };
+    let indeterminate_operation =
+        match attempt_source(&mut case, operation.clone(), Some("durable-append"))? {
+            Err(RegularFileAdapterError::Workload(RegularFileWorkloadFailure::File(
+                RegularFileFailure::Indeterminate(operation),
+            ))) => operation,
+            other => {
+                return Err(format!("expected post-mutation indeterminate result, got {other:?}"));
+            }
+        };
     case.operations.push(indeterminate_operation.clone());
     let live_after_fault =
         fs::read(&case.paths.file_path).map_err(io_error("read file after post-mutation fault"))?;
@@ -543,8 +792,8 @@ fn case_durability_reconciled(
             .last_operation
             .ok_or("reconciled durability operation did not update canonical state")?,
     ) == indeterminate_operation;
-    let committed = handoff(&mut case)?;
-    let state = canonical_file(committed.destination.coordinator().state())?;
+    let committed = continue_route(&mut case)?;
+    let state = canonical_file(continued_coordinator(&case, &committed).state())?;
     let after = read_live_file(&case.paths, &state);
     capture(
         case,
@@ -570,28 +819,53 @@ fn case_stale_source_fenced(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"fence", Stage3aFixtureOptions::standard())?;
-    let mut committed = handoff(&mut case)?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"fence",
+        Stage3aFixtureOptions::standard(),
+    )?;
+    let mut committed = continue_route(&mut case)?;
+    let lease_check = case.source.coordinator().provider().check_lease(
+        case.ids.file,
+        case.ids.source_node,
+        INITIAL_LEASE_EPOCH,
+    );
+    case.observation.lease_check(
+        ObservationPhase::DestinationExecution,
+        case.ids.file,
+        case.ids.source_node,
+        INITIAL_LEASE_EPOCH,
+        &lease_check,
+    );
     let source_denied = matches!(
-        case.source.coordinator().provider().check_lease(
-            case.ids.file,
-            case.ids.source_node,
-            INITIAL_LEASE_EPOCH,
-        ),
+        lease_check,
         Err(error) if error.kind == ProviderErrorKind::StaleEpoch
     );
-    execute_destination(
-        &mut case.operations,
-        &mut committed.destination,
+    execute_continued(
+        &mut case,
+        &mut committed,
         RegularFileOperation::Append { bytes: b"!".to_vec(), durability: FileDurability::Visible },
         Some("destination-write"),
     )?;
-    let ownership = committed.destination.coordinator().state().ownership;
-    let destination_epoch_advanced = ownership.owner == Some(case.ids.destination_node)
-        && ownership.epoch == INITIAL_LEASE_EPOCH.next().ok_or("lease epoch exhausted")?;
-    let destination_state = canonical_file(committed.destination.coordinator().state())?;
+    let ownership = continued_coordinator(&case, &committed).state().ownership;
+    let expected_owner = if route == RouteMode::UninterruptedControl {
+        case.ids.source_node
+    } else {
+        case.ids.destination_node
+    };
+    let expected_epoch = if route == RouteMode::UninterruptedControl {
+        INITIAL_LEASE_EPOCH
+    } else {
+        INITIAL_LEASE_EPOCH.next().ok_or("lease epoch exhausted")?
+    };
+    let destination_epoch_advanced =
+        ownership.owner == Some(expected_owner) && ownership.epoch == expected_epoch;
+    let destination_state = canonical_file(continued_coordinator(&case, &committed).state())?;
     capture(
         case,
         committed,
@@ -613,9 +887,16 @@ fn case_cleanup_idempotent(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
-    let mut case =
-        start_case(root, definition, runtime_pair, b"clean", Stage3aFixtureOptions::standard())?;
+    let mut case = start_case(
+        root,
+        definition,
+        runtime_pair,
+        route,
+        b"clean",
+        Stage3aFixtureOptions::standard(),
+    )?;
     execute(
         &mut case,
         RegularFileOperation::Append { bytes: b"!".to_vec(), durability: FileDurability::Visible },
@@ -628,17 +909,57 @@ fn case_cleanup_idempotent(
         kind: EvidenceKind::Cleanup,
         digest: case.source.coordinator().state_digest().map_err(runtime_error)?,
     };
-    case.source
-        .coordinator_mut()
-        .cleanup_operation(derive_identity(definition.id, "cleanup-one"), operation, evidence)
-        .map_err(runtime_error)?;
+    let cleanup_one_command = derive_identity(definition.id, "cleanup-one");
+    let cleanup_one =
+        case.source.coordinator_mut().cleanup_operation(cleanup_one_command, operation, evidence);
+    case.observation.protocol_call(
+        ObservationPhase::Cleanup,
+        ObservationActor::Provider,
+        ProtocolAction::CleanupOperation {
+            command_id: observation_identity_hex(cleanup_one_command),
+            operation_id: observation_identity_hex(operation),
+            evidence_id: observation_identity_hex(evidence.identity),
+        },
+        match &cleanup_one {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    cleanup_one.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::Cleanup,
+        ObservationActor::Provider,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
     let cleaned_after_first = case.source.coordinator().state().operations.iter().any(|record| {
         record.request.operation == operation && record.cleanup == CleanupStatus::Cleaned
     });
-    case.source
-        .coordinator_mut()
-        .cleanup_operation(derive_identity(definition.id, "cleanup-two"), operation, evidence)
-        .map_err(runtime_error)?;
+    let cleanup_two_command = derive_identity(definition.id, "cleanup-two");
+    let cleanup_two =
+        case.source.coordinator_mut().cleanup_operation(cleanup_two_command, operation, evidence);
+    case.observation.protocol_call(
+        ObservationPhase::Cleanup,
+        ObservationActor::Provider,
+        ProtocolAction::CleanupOperation {
+            command_id: observation_identity_hex(cleanup_two_command),
+            operation_id: observation_identity_hex(operation),
+            evidence_id: observation_identity_hex(evidence.identity),
+        },
+        match &cleanup_two {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    cleanup_two.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::Cleanup,
+        ObservationActor::Provider,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
     let matching_after_second = case
         .source
         .coordinator()
@@ -652,7 +973,7 @@ fn case_cleanup_idempotent(
         && matching_after_second[0].cleanup == CleanupStatus::Cleaned;
     let retained = matching_after_second.first().is_some_and(|record| record.outcome.is_some());
     let matching_records_after_second = matching_after_second.len();
-    let committed = handoff(&mut case)?;
+    let committed = continue_route(&mut case)?;
     capture(
         case,
         committed,
@@ -670,11 +991,13 @@ fn case_indeterminate_blocks(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
         runtime_pair,
+        route,
         b"a",
         Stage3aFixtureOptions {
             destination_file_policy: true,
@@ -682,10 +1005,11 @@ fn case_indeterminate_blocks(
         },
     )?;
     let unknown = matches!(
-        case.source.execute(
+        attempt_source(
+            &mut case,
             RegularFileOperation::Append { bytes: b"b".to_vec(), durability: FileDurability::Data },
             Some("unknown-write")
-        ),
+        )?,
         Err(RegularFileAdapterError::Workload(RegularFileWorkloadFailure::File(
             RegularFileFailure::Indeterminate(_)
         )))
@@ -695,23 +1019,81 @@ fn case_indeterminate_blocks(
     if let Some(operation) = operation {
         case.operations.push(identity_hex(operation));
     }
-    case.source
-        .coordinator_mut()
-        .begin_quiesce(
-            derive_identity(definition.id, "blocked-begin"),
-            case.ids.source_handoff_authority,
-        )
-        .map_err(runtime_error)?;
-    let safe_point = case.source.coordinator_mut().prepare_safe_point().map_err(runtime_error)?;
-    let portable = case.source.freeze().map_err(adapter_error)?;
-    let blocked = matches!(
-        case.source.coordinator_mut().commit_safe_point(
-            derive_identity(definition.id, "blocked-freeze"),
+    let blocked = if route == RouteMode::UninterruptedControl {
+        case.observation.checkpoint(
+            ObservationPhase::Transfer,
+            ObservationActor::SourceRuntime,
+            case.source.coordinator(),
+            &case.paths,
+            case.ids.file,
+        )?;
+        false
+    } else {
+        let begin_command = derive_identity(definition.id, "blocked-begin");
+        let begin = case
+            .source
+            .coordinator_mut()
+            .begin_quiesce(begin_command, case.ids.source_handoff_authority);
+        case.observation.protocol_call(
+            ObservationPhase::Quiesce,
+            ObservationActor::SourceRuntime,
+            ProtocolAction::BeginQuiesce {
+                command_id: observation_identity_hex(begin_command),
+                authority_id: entity_ref_text(case.ids.source_handoff_authority),
+            },
+            match &begin {
+                Ok(_) => returned(Vec::new()),
+                Err(error) => runtime_error_result(error),
+            },
+        );
+        begin.map_err(runtime_error)?;
+        let safe_point_id =
+            observation_identity_hex(derive_identity(definition.id, "blocked-safe-point"));
+        let safe_point_result = case.source.coordinator_mut().prepare_safe_point();
+        case.observation.protocol_call(
+            ObservationPhase::Quiesce,
+            ObservationActor::SourceRuntime,
+            ProtocolAction::PrepareSafePoint { safe_point_id: safe_point_id.clone() },
+            match &safe_point_result {
+                Ok(_) => returned(Vec::new()),
+                Err(error) => runtime_error_result(error),
+            },
+        );
+        let safe_point = safe_point_result.map_err(runtime_error)?;
+        let freeze = case.source.freeze();
+        case.observation.protocol_call(
+            ObservationPhase::CarrierCapture,
+            ObservationActor::SourceRuntime,
+            ProtocolAction::FreezeRuntime { safe_point_id: safe_point_id.clone() },
+            match &freeze {
+                Ok(portable) => returned(portable.as_bytes().to_vec()),
+                Err(error) => adapter_error_result(error),
+            },
+        );
+        let portable = freeze.map_err(adapter_error)?;
+        let freeze_command = derive_identity(definition.id, "blocked-freeze");
+        let commit = case.source.coordinator_mut().commit_safe_point(
+            freeze_command,
             portable.as_bytes().to_vec(),
             safe_point,
-        ),
-        Err(RuntimeError::Rejected(contract_core::Rejection::IndeterminateEffect { .. }))
-    );
+        );
+        case.observation.protocol_call(
+            ObservationPhase::CarrierCapture,
+            ObservationActor::SourceRuntime,
+            ProtocolAction::CommitSafePoint {
+                command_id: observation_identity_hex(freeze_command),
+                safe_point_id,
+            },
+            match &commit {
+                Ok(_) => returned(Vec::new()),
+                Err(error) => runtime_error_result(error),
+            },
+        );
+        matches!(
+            commit,
+            Err(RuntimeError::Rejected(contract_core::Rejection::IndeterminateEffect { .. }))
+        )
+    };
     let lease = case
         .source
         .coordinator()
@@ -739,27 +1121,69 @@ fn case_destination_denied(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
 ) -> Result<Stage3CaseCapture, String> {
     let mut case = start_case(
         root,
         definition,
         runtime_pair,
+        route,
         b"policy",
         Stage3aFixtureOptions { destination_file_policy: false, source_fault: None },
     )?;
-    let (mut destination, _portable) = export_to_destination(&mut case)?;
-    let denied = matches!(
-        destination.prepare_destination_with_profiles(
-            derive_identity(definition.id, "destination-prepare"),
+    let (denied, no_binding, lease) = if route == RouteMode::UninterruptedControl {
+        case.observation.checkpoint(
+            ObservationPhase::Transfer,
+            ObservationActor::SourceRuntime,
+            case.source.coordinator(),
+            &case.paths,
+            case.ids.file,
+        )?;
+        (
+            false,
+            true,
+            case.source
+                .coordinator()
+                .provider()
+                .current_lease(case.ids.file)
+                .map_err(provider_error)?,
+        )
+    } else {
+        let (mut destination, _portable) = export_to_destination(&mut case)?;
+        let prepare_command = derive_identity(definition.id, "destination-prepare");
+        let prepare = destination.prepare_destination_with_profiles(
+            prepare_command,
             case.handoff_authority,
             case.timer_authority,
             case.key_value_authority,
             &[case.file_authority],
-        ),
-        Err(RuntimeError::Provider(error)) if error.kind == ProviderErrorKind::Denied
-    );
-    let no_binding = destination.state().prepared_destination.is_none();
-    let lease = destination.provider().current_lease(case.ids.file).map_err(provider_error)?;
+        );
+        case.observation.protocol_call(
+            ObservationPhase::DestinationPrepare,
+            ObservationActor::Provider,
+            ProtocolAction::PrepareDestination {
+                command_id: observation_identity_hex(prepare_command),
+            },
+            match &prepare {
+                Ok(_) => returned(Vec::new()),
+                Err(error) => runtime_error_result(error),
+            },
+        );
+        let denied = matches!(
+            prepare,
+            Err(RuntimeError::Provider(error)) if error.kind == ProviderErrorKind::Denied
+        );
+        case.observation.checkpoint(
+            ObservationPhase::DestinationPrepare,
+            ObservationActor::Provider,
+            &destination,
+            &case.paths,
+            case.ids.file,
+        )?;
+        let no_binding = destination.state().prepared_destination.is_none();
+        let lease = destination.provider().current_lease(case.ids.file).map_err(provider_error)?;
+        (denied, no_binding, lease)
+    };
     let source_node = case.ids.source_node;
     blocked_capture(
         case,
@@ -781,6 +1205,7 @@ fn start_case(
     root: &Path,
     definition: &'static Stage3CaseDefinition,
     runtime_pair: RegularFileRuntimePair,
+    route: RouteMode,
     initial: &[u8],
     options: Stage3aFixtureOptions,
 ) -> Result<CaseContext, String> {
@@ -816,6 +1241,14 @@ fn start_case(
     source.activate(format!("{}:session", definition.id)).map_err(adapter_error)?;
     let canonical_before = source.coordinator().state_digest().map_err(runtime_error)?;
     let file_before = fs::read(&paths.file_path).map_err(io_error("read initial file"))?;
+    let mut observation = CaseObservationRecorder::new(definition.id, route, ids)?;
+    observation.checkpoint(
+        ObservationPhase::Setup,
+        ObservationActor::SourceRuntime,
+        source.coordinator(),
+        &paths,
+        ids.file,
+    )?;
     Ok(CaseContext {
         definition,
         case_id,
@@ -832,6 +1265,8 @@ fn start_case(
         canonical_before,
         file_before,
         operations: Vec::new(),
+        route,
+        observation,
     })
 }
 
@@ -840,97 +1275,347 @@ fn execute(
     operation: RegularFileOperation,
     key: Option<&str>,
 ) -> Result<RegularFileResult, String> {
-    let result = case.source.execute(operation, key).map_err(adapter_error)?;
+    let result = attempt_source(case, operation, key)?.map_err(adapter_error)?;
     case.operations.push(result.operation_id);
     Ok(result.result)
 }
 
+fn attempt_source(
+    case: &mut CaseContext,
+    operation: RegularFileOperation,
+    key: Option<&str>,
+) -> Result<Result<RegularFileCallResult, RegularFileAdapterError>, String> {
+    let result = case.source.execute(operation.clone(), key);
+    let operation_id = operation_id_after_call(case.source.coordinator(), &result);
+    case.observation.operation_call(
+        ObservationPhase::SourceExecution,
+        ObservationActor::SourceRuntime,
+        key,
+        operation_id,
+        &operation,
+        &result,
+    );
+    case.observation.checkpoint(
+        ObservationPhase::SourceExecution,
+        ObservationActor::SourceRuntime,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
+    Ok(result)
+}
+
 fn execute_destination(
-    operations: &mut Vec<String>,
+    case: &mut CaseContext,
     destination: &mut MatrixRegularFileAdapter,
     operation: RegularFileOperation,
     key: Option<&str>,
 ) -> Result<RegularFileResult, String> {
-    let result = destination.execute(operation, key).map_err(adapter_error)?;
-    operations.push(result.operation_id);
+    let result = destination.execute(operation.clone(), key);
+    let operation_id = operation_id_after_call(destination.coordinator(), &result);
+    case.observation.operation_call(
+        ObservationPhase::DestinationExecution,
+        ObservationActor::DestinationRuntime,
+        key,
+        operation_id,
+        &operation,
+        &result,
+    );
+    case.observation.checkpoint(
+        ObservationPhase::DestinationExecution,
+        ObservationActor::DestinationRuntime,
+        destination.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
+    let result = result.map_err(adapter_error)?;
+    case.operations.push(result.operation_id);
     Ok(result.result)
 }
 
-fn handoff(case: &mut CaseContext) -> Result<CommittedContext, String> {
+fn execute_continued(
+    case: &mut CaseContext,
+    continued: &mut ContinuedContext,
+    operation: RegularFileOperation,
+    key: Option<&str>,
+) -> Result<RegularFileResult, String> {
+    match continued {
+        ContinuedContext::Uninterrupted => execute(case, operation, key),
+        ContinuedContext::Handoff { destination, .. } => {
+            execute_destination(case, destination, operation, key)
+        }
+    }
+}
+
+fn continued_coordinator<'a>(
+    case: &'a CaseContext,
+    continued: &'a ContinuedContext,
+) -> &'a Coordinator<SqliteProvider> {
+    match continued {
+        ContinuedContext::Uninterrupted => case.source.coordinator(),
+        ContinuedContext::Handoff { destination, .. } => destination.coordinator(),
+    }
+}
+
+fn entity_ref_text(entity: contract_core::EntityRef) -> String {
+    format!("{}:{:016x}", observation_identity_hex(entity.identity), entity.generation.0)
+}
+
+fn os_error_result(code: ErrorCode, errno: i32, retryable: bool) -> GenericCallResult {
+    GenericCallResult::Error {
+        error: RawErrorObservation {
+            domain: ErrorDomain::OperatingSystem,
+            code,
+            errno: Some(errno),
+            retryable,
+            detail: None,
+        },
+    }
+}
+
+fn continue_route(case: &mut CaseContext) -> Result<ContinuedContext, String> {
+    if case.route == RouteMode::UninterruptedControl {
+        case.observation.checkpoint(
+            ObservationPhase::Transfer,
+            ObservationActor::SourceRuntime,
+            case.source.coordinator(),
+            &case.paths,
+            case.ids.file,
+        )?;
+        return Ok(ContinuedContext::Uninterrupted);
+    }
+    handoff(case)
+}
+
+fn handoff(case: &mut CaseContext) -> Result<ContinuedContext, String> {
     let (mut destination, portable) = export_to_destination(case)?;
-    destination
-        .prepare_destination_with_profiles(
-            derive_identity(&case.case_id, "destination-prepare"),
-            case.handoff_authority,
-            case.timer_authority,
-            case.key_value_authority,
-            &[case.file_authority],
-        )
-        .map_err(runtime_error)?;
-    destination
-        .commit_handoff(
-            derive_identity(&case.case_id, "destination-commit-command"),
-            derive_identity(&case.case_id, "destination-commit-operation"),
-            IdempotencyKey::from_bytes(
-                derive_identity(&case.case_id, "destination-commit-idempotency").0,
-            ),
-        )
-        .map_err(runtime_error)?;
+    let prepare_command = derive_identity(&case.case_id, "destination-prepare");
+    let prepare = destination.prepare_destination_with_profiles(
+        prepare_command,
+        case.handoff_authority,
+        case.timer_authority,
+        case.key_value_authority,
+        &[case.file_authority],
+    );
+    case.observation.protocol_call(
+        ObservationPhase::DestinationPrepare,
+        ObservationActor::Provider,
+        ProtocolAction::PrepareDestination {
+            command_id: observation_identity_hex(prepare_command),
+        },
+        match &prepare {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    prepare.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::DestinationPrepare,
+        ObservationActor::Provider,
+        &destination,
+        &case.paths,
+        case.ids.file,
+    )?;
+    let commit_command = derive_identity(&case.case_id, "destination-commit-command");
+    let commit_operation = derive_identity(&case.case_id, "destination-commit-operation");
+    let commit = destination.commit_handoff(
+        commit_command,
+        commit_operation,
+        IdempotencyKey::from_bytes(
+            derive_identity(&case.case_id, "destination-commit-idempotency").0,
+        ),
+    );
+    case.observation.protocol_call(
+        ObservationPhase::DestinationPrepare,
+        ObservationActor::Provider,
+        ProtocolAction::CommitHandoff {
+            command_id: observation_identity_hex(commit_command),
+            operation_id: observation_identity_hex(commit_operation),
+        },
+        match &commit {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    commit.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::DestinationPrepare,
+        ObservationActor::Provider,
+        &destination,
+        &case.paths,
+        case.ids.file,
+    )?;
     let mut destination = MatrixRegularFileAdapter::instantiate(
         case.runtime_pair.destination,
         component::stage3a_bytes(),
         destination,
     )
     .map_err(adapter_error)?;
-    destination.restore(&portable).map_err(adapter_error)?;
-    destination
-        .coordinator_mut()
-        .resume_destination(derive_identity(&case.case_id, "destination-resume"))
-        .map_err(runtime_error)?;
-    Ok(CommittedContext { destination, portable })
+    let restore = destination.restore(&portable);
+    case.observation.protocol_call(
+        ObservationPhase::CarrierRestore,
+        ObservationActor::DestinationRuntime,
+        ProtocolAction::RestoreRuntime { snapshot_id: observation_identity_hex(case.ids.snapshot) },
+        match &restore {
+            Ok(()) => returned(Vec::new()),
+            Err(error) => adapter_error_result(error),
+        },
+    );
+    restore.map_err(adapter_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::CarrierRestore,
+        ObservationActor::DestinationRuntime,
+        destination.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
+    let resume_command = derive_identity(&case.case_id, "destination-resume");
+    let resume = destination.coordinator_mut().resume_destination(resume_command);
+    case.observation.protocol_call(
+        ObservationPhase::DestinationExecution,
+        ObservationActor::DestinationRuntime,
+        ProtocolAction::ResumeDestination { command_id: observation_identity_hex(resume_command) },
+        match &resume {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    resume.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::DestinationExecution,
+        ObservationActor::DestinationRuntime,
+        destination.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
+    Ok(ContinuedContext::Handoff { destination, portable })
 }
 
 fn export_to_destination(
     case: &mut CaseContext,
 ) -> Result<(Coordinator<SqliteProvider>, PortableRegularFileState), String> {
-    case.source
+    let begin_command = derive_identity(&case.case_id, "source-begin-quiesce");
+    let begin = case
+        .source
         .coordinator_mut()
-        .begin_quiesce(
-            derive_identity(&case.case_id, "source-begin-quiesce"),
-            case.ids.source_handoff_authority,
-        )
-        .map_err(runtime_error)?;
-    let safe_point = case.source.coordinator_mut().prepare_safe_point().map_err(runtime_error)?;
+        .begin_quiesce(begin_command, case.ids.source_handoff_authority);
+    case.observation.protocol_call(
+        ObservationPhase::Quiesce,
+        ObservationActor::SourceRuntime,
+        ProtocolAction::BeginQuiesce {
+            command_id: observation_identity_hex(begin_command),
+            authority_id: entity_ref_text(case.ids.source_handoff_authority),
+        },
+        match &begin {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    begin.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::Quiesce,
+        ObservationActor::SourceRuntime,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
+    let safe_point_id = observation_identity_hex(derive_identity(&case.case_id, "safe-point"));
+    let safe_point_result = case.source.coordinator_mut().prepare_safe_point();
+    case.observation.protocol_call(
+        ObservationPhase::Quiesce,
+        ObservationActor::SourceRuntime,
+        ProtocolAction::PrepareSafePoint { safe_point_id: safe_point_id.clone() },
+        match &safe_point_result {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    let safe_point = safe_point_result.map_err(runtime_error)?;
     let portable = match case.source.freeze() {
-        Ok(portable) => portable,
+        Ok(portable) => {
+            case.observation.protocol_call(
+                ObservationPhase::CarrierCapture,
+                ObservationActor::SourceRuntime,
+                ProtocolAction::FreezeRuntime { safe_point_id: safe_point_id.clone() },
+                returned(portable.as_bytes().to_vec()),
+            );
+            portable
+        }
         Err(error) => {
+            case.observation.protocol_call(
+                ObservationPhase::CarrierCapture,
+                ObservationActor::SourceRuntime,
+                ProtocolAction::FreezeRuntime { safe_point_id: safe_point_id.clone() },
+                adapter_error_result(&error),
+            );
             case.source.coordinator_mut().cancel_safe_point(safe_point).map_err(runtime_error)?;
             return Err(adapter_error(error));
         }
     };
-    if let Err(error) = case.source.coordinator_mut().commit_safe_point(
-        derive_identity(&case.case_id, "source-freeze"),
+    let freeze_command = derive_identity(&case.case_id, "source-freeze");
+    let commit = case.source.coordinator_mut().commit_safe_point(
+        freeze_command,
         portable.as_bytes().to_vec(),
         safe_point,
-    ) {
+    );
+    case.observation.protocol_call(
+        ObservationPhase::CarrierCapture,
+        ObservationActor::SourceRuntime,
+        ProtocolAction::CommitSafePoint {
+            command_id: observation_identity_hex(freeze_command),
+            safe_point_id,
+        },
+        match &commit {
+            Ok(_) => returned(Vec::new()),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    if let Err(error) = commit {
         case.source.thaw(&portable).map_err(adapter_error)?;
         return Err(runtime_error(error));
     }
+    case.observation.checkpoint(
+        ObservationPhase::CarrierCapture,
+        ObservationActor::SourceRuntime,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
     let evidence = EvidenceRef {
         identity: derive_identity(&case.case_id, "snapshot-evidence"),
         kind: EvidenceKind::SnapshotIntegrity,
         digest: case.source.coordinator().state_digest().map_err(runtime_error)?,
     };
-    let (_, snapshot) = case
-        .source
-        .coordinator_mut()
-        .export_snapshot(
-            derive_identity(&case.case_id, "source-export"),
-            case.ids.handoff,
-            case.ids.snapshot,
-            evidence,
-        )
-        .map_err(runtime_error)?;
+    let export_command = derive_identity(&case.case_id, "source-export");
+    let export = case.source.coordinator_mut().export_snapshot(
+        export_command,
+        case.ids.handoff,
+        case.ids.snapshot,
+        evidence,
+    );
+    case.observation.protocol_call(
+        ObservationPhase::Transfer,
+        ObservationActor::SourceRuntime,
+        ProtocolAction::ExportSnapshot {
+            command_id: observation_identity_hex(export_command),
+            snapshot_id: observation_identity_hex(case.ids.snapshot),
+        },
+        match &export {
+            Ok((_, snapshot)) => returned(
+                serde_json::to_vec(snapshot)
+                    .map_err(|error| format!("cannot encode raw snapshot observation: {error}"))?,
+            ),
+            Err(error) => runtime_error_result(error),
+        },
+    );
+    let (_, snapshot) = export.map_err(runtime_error)?;
+    case.observation.checkpoint(
+        ObservationPhase::Transfer,
+        ObservationActor::SourceRuntime,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
     let validated = validate_snapshot(
         &snapshot,
         &SnapshotExpectations {
@@ -952,32 +1637,61 @@ fn export_to_destination(
 
 fn capture(
     mut case: CaseContext,
-    mut committed: CommittedContext,
+    mut continued: ContinuedContext,
     assertions: Vec<(&str, bool)>,
     trace: serde_json::Value,
 ) -> Result<Stage3CaseCapture, String> {
-    let state = canonical_file(committed.destination.coordinator().state())?;
-    let destination_epoch = committed.destination.coordinator().state().ownership.epoch.0;
+    match &mut continued {
+        ContinuedContext::Uninterrupted => case.observation.checkpoint(
+            ObservationPhase::FinalObservation,
+            ObservationActor::SourceRuntime,
+            case.source.coordinator(),
+            &case.paths,
+            case.ids.file,
+        )?,
+        ContinuedContext::Handoff { destination, .. } => case.observation.checkpoint(
+            ObservationPhase::FinalObservation,
+            ObservationActor::DestinationRuntime,
+            destination.coordinator(),
+            &case.paths,
+            case.ids.file,
+        )?,
+    }
+    let state = canonical_file(continued_coordinator(&case, &continued).state())?;
+    let destination_epoch = match &continued {
+        ContinuedContext::Uninterrupted => None,
+        ContinuedContext::Handoff { destination, .. } => {
+            Some(destination.coordinator().state().ownership.epoch.0)
+        }
+    };
     let file_after = read_live_file(&case.paths, &state);
     let canonical_after =
-        committed.destination.coordinator().state_digest().map_err(runtime_error)?;
+        continued_coordinator(&case, &continued).state_digest().map_err(runtime_error)?;
     let source_runtime = case.source.runtime_identity();
-    let destination_runtime = committed.destination.runtime_identity();
+    let destination_runtime = match &continued {
+        ContinuedContext::Uninterrupted => source_runtime.clone(),
+        ContinuedContext::Handoff { destination, .. } => destination.runtime_identity(),
+    };
+    let source_phase = format!("{:?}", case.source.coordinator().state().phase);
+    let destination_phase = format!("{:?}", continued_coordinator(&case, &continued).state().phase);
     case.source.shutdown().map_err(adapter_error)?;
-    committed.destination.shutdown().map_err(adapter_error)?;
+    if let ContinuedContext::Handoff { destination, .. } = &mut continued {
+        destination.shutdown().map_err(adapter_error)?;
+    }
+    let raw_observation = case.observation.finish();
     Ok(Stage3CaseCapture {
         definition: case.definition,
         canonical_before: case.canonical_before,
         canonical_after,
         source_epoch: INITIAL_LEASE_EPOCH.0,
-        destination_epoch: Some(destination_epoch),
+        destination_epoch,
         profile_operations: case.operations,
         assertions: named_assertions(assertions),
         trace: json!({
             "case_id": case.definition.id,
             "terminal": terminal_name(case.definition.terminal),
-            "source_phase": format!("{:?}", case.source.coordinator().state().phase),
-            "destination_phase": format!("{:?}", committed.destination.coordinator().state().phase),
+            "source_phase": source_phase,
+            "destination_phase": destination_phase,
             "source_runtime": source_runtime.implementation,
             "destination_runtime": destination_runtime.implementation,
             "runtime_shutdown": "clean",
@@ -985,6 +1699,7 @@ fn capture(
         }),
         file_before: case.file_before,
         file_after,
+        raw_observation,
     })
 }
 
@@ -1017,11 +1732,21 @@ fn terminal_capture(
     let file_after = read_live_file(&case.paths, &state);
     let source_epoch = case.source.coordinator().state().ownership.epoch.0;
     let source_runtime = case.source.runtime_identity();
+    case.observation.checkpoint(
+        ObservationPhase::FinalObservation,
+        ObservationActor::SourceRuntime,
+        case.source.coordinator(),
+        &case.paths,
+        case.ids.file,
+    )?;
+    let canonical_after = case.source.coordinator().state_digest().map_err(runtime_error)?;
+    let source_phase = format!("{:?}", case.source.coordinator().state().phase);
     case.source.shutdown().map_err(adapter_error)?;
+    let raw_observation = case.observation.finish();
     Ok(Stage3CaseCapture {
         definition: case.definition,
         canonical_before: case.canonical_before,
-        canonical_after: case.source.coordinator().state_digest().map_err(runtime_error)?,
+        canonical_after,
         source_epoch,
         destination_epoch: None,
         profile_operations: case.operations,
@@ -1029,7 +1754,7 @@ fn terminal_capture(
         trace: json!({
             "case_id": case.definition.id,
             "terminal": terminal_name(terminal),
-            "source_phase": format!("{:?}", case.source.coordinator().state().phase),
+            "source_phase": source_phase,
             "source_runtime": source_runtime.implementation,
             "destination_runtime": case.runtime_pair.destination.implementation(),
             "runtime_shutdown": "clean",
@@ -1037,6 +1762,7 @@ fn terminal_capture(
         }),
         file_before: case.file_before,
         file_after,
+        raw_observation,
     })
 }
 
@@ -1103,4 +1829,85 @@ fn provider_error(error: substrate_api::ProviderError) -> String {
 
 fn io_error(action: &'static str) -> impl FnOnce(std::io::Error) -> String {
     move |error| format!("cannot {action}: {error}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use visa_regular_file_observation::{
+        REGULAR_FILE_CANDIDATE_OBSERVATION_FILE, REGULAR_FILE_CONTROL_OBSERVATION_FILE,
+        RecordingCoverage, RegularFileCase, RegularFileObservationBundle, RouteMode,
+        validate_recording_bundle,
+    };
+
+    use super::*;
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(1);
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let nonce = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir()
+                .join(format!("visa-stage3a-{label}-{}-{nonce}", std::process::id()));
+            fs::create_dir(&root).expect("create Stage3A test root");
+            Self(root)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn stage3a_emits_independent_complete_control_and_handoff_routes() {
+        let root = TestRoot::new("raw-observation-v2");
+        run_stage3a_for_pair(root.path(), RegularFileRuntimePair::WASMTIME_BASELINE)
+            .expect("run Stage3A baseline with independent semantic oracle");
+
+        let control = read_bundle(root.path(), REGULAR_FILE_CONTROL_OBSERVATION_FILE);
+        let candidate = read_bundle(root.path(), REGULAR_FILE_CANDIDATE_OBSERVATION_FILE);
+        validate_recording_bundle(&control, RecordingCoverage::CompleteRegistry)
+            .expect("control observation is structurally complete");
+        validate_recording_bundle(&candidate, RecordingCoverage::CompleteRegistry)
+            .expect("candidate observation is structurally complete");
+        assert_eq!(control.route.mode, RouteMode::UninterruptedControl);
+        assert_eq!(candidate.route.mode, RouteMode::Handoff);
+        assert_eq!(control.cases.len(), RegularFileCase::ALL.len());
+        assert_eq!(candidate.cases.len(), RegularFileCase::ALL.len());
+
+        let control_schedules = control
+            .cases
+            .iter()
+            .map(|case| (case.case_id, (&case.schedule_id, &case.schedule_sha256)))
+            .collect::<BTreeMap<_, _>>();
+        let candidate_schedules = candidate
+            .cases
+            .iter()
+            .map(|case| (case.case_id, (&case.schedule_id, &case.schedule_sha256)))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(control_schedules, candidate_schedules);
+        assert!(control.cases.iter().all(|case| !case.events.is_empty()));
+        assert!(candidate.cases.iter().all(|case| !case.events.is_empty()));
+        assert_ne!(control.bundle_id, candidate.bundle_id);
+        assert!(!root.path().join(".stage3-work").exists());
+    }
+
+    fn read_bundle(root: &Path, relative: &str) -> RegularFileObservationBundle {
+        let bytes = fs::read(root.join(relative)).expect("read raw observation bundle");
+        serde_json::from_slice(&bytes).expect("decode raw observation bundle")
+    }
 }

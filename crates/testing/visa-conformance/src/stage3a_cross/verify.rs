@@ -163,7 +163,13 @@ pub fn validate_stage3a_cross_runtime_evidence(
                 );
             }
             validate_child_runtime(cell, &relocated_bundle, &mut findings);
-            match normalized_stage3a_semantics_sha256(&relocated_bundle) {
+            let relocated_child_root = Path::new(&cell.relocated_bundle.uri)
+                .parent()
+                .map(|relative| artifact_root.join(relative));
+            match relocated_child_root
+                .ok_or_else(|| "relocated child bundle has no artifact root".to_owned())
+                .and_then(|root| normalized_stage3a_semantics_sha256(&relocated_bundle, &root))
+            {
                 Ok(digest) => {
                     if digest != cell.normalized_semantics_sha256 {
                         finding(
@@ -398,7 +404,9 @@ fn valid_identity(runtime: MatrixRuntime, identity: &Stage3RuntimeIdentity) -> b
                 identity.implementation == "visa_wacogo"
                     && identity.engine == "partite-ai/wacogo+wazero"
             }
-            MatrixRuntime::JcoNode | MatrixRuntime::NotApplicable => false,
+            MatrixRuntime::JcoNode | MatrixRuntime::NotApplicable | MatrixRuntime::WancoAot => {
+                false
+            }
         }
 }
 
@@ -542,7 +550,7 @@ fn validate_matrix_run(
     }
     validate_matrix_receipts(bundle, &run, findings);
     if let Some(matrix) = matrix {
-        let report = validate_evidence_matrix_run(matrix, &run);
+        let report = validate_evidence_matrix_run(matrix, &run, root);
         if !report.ok {
             finding(
                 findings,
@@ -581,7 +589,8 @@ fn validate_matrix_receipts(
             || receipt.evidence_bundle.sha256 != cell.relocated_bundle.sha256
             || receipt.validation_report.uri != cell.validation_report.uri
             || receipt.environment.uri != cell.environment.uri
-            || !receipt.passed
+            || receipt.expected_semantic_outcome != crate::EvidenceMatrixSemanticOutcome::Accepted
+            || receipt.observed_semantic_outcome != crate::EvidenceMatrixSemanticOutcome::Accepted
             || !receipt.relocated_verification
         {
             finding(

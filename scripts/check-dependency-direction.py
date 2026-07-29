@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate production dependency direction for the active continuity spine."""
+"""Validate dependency direction for the protected continuity and evidence spine."""
 
 from __future__ import annotations
 
@@ -72,6 +72,19 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     ),
     "stage3-file-component": frozenset(),
     "stage3-request-component": frozenset(),
+    "visa-regular-file-observation": frozenset(),
+    "visa-regular-file-oracle": frozenset(),
+    "visa-wanco-carrier": frozenset(
+        {
+            "contract_core",
+            "substrate_api",
+            "substrate_host",
+            "visa-regular-file-observation",
+            "visa_component_adapter",
+            "visa_profile",
+            "visa_runtime",
+        }
+    ),
     "visa-conformance": frozenset(
         {
             "contract_core",
@@ -80,6 +93,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "substrate_api",
             "visa_local_rpc",
             "visa_profile",
+            "visa-regular-file-oracle",
         }
     ),
     "visa-stage3-system": frozenset(
@@ -90,6 +104,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
             "substrate_api",
             "substrate_host",
             "visa-conformance",
+            "visa-regular-file-observation",
             "visa_component_adapter",
             "visa_profile",
             "visa_runtime",

@@ -2,8 +2,12 @@ use serde::{Deserialize, Serialize};
 
 pub const STAGE3A_EVIDENCE_FILE: &str = "stage3a-evidence.json";
 pub const STAGE3B_EVIDENCE_FILE: &str = "stage3b-evidence.json";
-pub const STAGE3A_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage3a-evidence-v1";
+pub const STAGE3A_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage3a-evidence-v2";
 pub const STAGE3B_EVIDENCE_SCHEMA_VERSION: &str = "visa-stage3b-evidence-v1";
+pub const STAGE3A_CONTROL_OBSERVATION_FILE: &str =
+    "observations/regular-file-observation-control-v2.json";
+pub const STAGE3A_CANDIDATE_OBSERVATION_FILE: &str =
+    "observations/regular-file-observation-candidate-v2.json";
 pub const STAGE3A_CLAIM_ID: &str = "bounded-regular-file-continuity";
 pub const STAGE3B_CLAIM_ID: &str = "bounded-logical-request-continuity";
 pub const STAGE3_INCOMPLETE_MARKER_FILE: &str = "stage3-incomplete";
@@ -322,6 +326,8 @@ pub struct Stage3EvidenceBundle {
     pub wit_world: Stage3ArtifactReference,
     pub profile_manifest: Stage3ArtifactReference,
     pub configuration: Stage3ArtifactReference,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raw_observations: Vec<Stage3ArtifactReference>,
     pub runtime: Stage3RuntimeScope,
     pub cases: Vec<Stage3CaseEvidence>,
 }
@@ -338,6 +344,8 @@ pub struct Stage3ValidationFinding {
 pub struct Stage3ValidationReport {
     pub ok: bool,
     pub findings: Vec<Stage3ValidationFinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular_file_oracle: Option<visa_regular_file_oracle::EquivalenceReport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

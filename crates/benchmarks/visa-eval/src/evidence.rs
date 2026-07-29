@@ -3,14 +3,14 @@
 //!
 //! The three timed arms consume the same accepted cross-runtime publication:
 //!
-//! * `publisher-summary-only` trusts the producer's per-cell normalized
-//!   digests and checks only that they agree. It is a cost control, not an
-//!   equivalent verifier.
-//! * `producer-normalization` regenerates the typed normalized projection from
-//!   already decoded child bundle records, but does not validate referenced
-//!   artifacts.
-//! * `outer-recompute` invokes the production outer gate, including exact-set,
-//!   identity, artifact digest, child-bundle, and cross-cell checks.
+//! * `publisher-digest-control` checks only equality of publisher-declared
+//!   digests. It is a cost control, not a verifier or semantic result.
+//! * `independent-raw-oracle` parses the verdict-free control/candidate
+//!   observation-v2 bytes, derives all 12 cases, and compares route-neutral
+//!   observable projections. The raw JSON is preloaded before timing.
+//! * `production-outer-gate` invokes the production Stage 3A gate, including
+//!   retained-file reopening, exact-set, digest, identity, child-bundle,
+//!   independent-oracle, and cross-cell checks.
 //!
 //! This decomposition makes the extra guarantee in each arm explicit instead
 //! of comparing against a system that silently performs less semantic work.
@@ -23,10 +23,14 @@ use std::{
 };
 
 use visa_conformance::{
+    STAGE3A_CANDIDATE_OBSERVATION_FILE, STAGE3A_CONTROL_OBSERVATION_FILE,
     STAGE3A_CROSS_RUNTIME_EVIDENCE_FILE, Stage3ArtifactReference, Stage3EvidenceBundle,
     Stage3Profile, Stage3aCrossRuntimeEvidenceBundle,
     gate_stage3_evidence_bundle_json_with_artifacts,
-    gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts, normalize_stage3a_semantics,
+    gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts,
+};
+use visa_regular_file_oracle::{
+    EQUIVALENCE_REPORT_SCHEMA_VERSION, EquivalenceReport, evaluate_equivalence,
 };
 
 use crate::{
@@ -35,6 +39,12 @@ use crate::{
 };
 
 pub const MEASURE: &str = "evidence-overhead";
+const DIGEST_CONTROL_ARM: &str = "publisher-digest-control";
+const DIGEST_CONTROL_PHASE: &str = "declared-digest-consistency";
+const ORACLE_CORE_ARM: &str = "independent-raw-oracle";
+const ORACLE_CORE_PHASE: &str = "observation-projection";
+const OUTER_GATE_ARM: &str = "production-outer-gate";
+const OUTER_GATE_PHASE: &str = "full-stage3a-cross-runtime-gate";
 const VALID_CHILD_COUNTS: [usize; 4] = [1, 4, 8, 12];
 
 pub fn preflight(options: &EvalOptions) -> Result<serde_json::Value, String> {
@@ -72,6 +82,28 @@ pub fn preflight(options: &EvalOptions) -> Result<serde_json::Value, String> {
         "normalized_semantics_sha256": bundle.normalized_semantics_sha256,
         "cell_runs": children.len(),
         "cases_per_cell": cases_per_cell,
+        "cases_per_cell_source": "accepted independent raw-observation oracle reports",
+        "measurement_contract": {
+            "control": {
+                "arm": DIGEST_CONTROL_ARM,
+                "phase": DIGEST_CONTROL_PHASE,
+                "semantic_verifier": false,
+                "input": "publisher-declared digest strings",
+            },
+            "core": {
+                "arm": ORACLE_CORE_ARM,
+                "phase": ORACLE_CORE_PHASE,
+                "semantic_verifier": true,
+                "input": "preloaded verdict-free regular-file observation-v2 control/candidate JSON",
+                "oracle_report_schema": EQUIVALENCE_REPORT_SCHEMA_VERSION,
+            },
+            "full": {
+                "arm": OUTER_GATE_ARM,
+                "phase": OUTER_GATE_PHASE,
+                "semantic_verifier": true,
+                "input": "retained Stage3A cross-runtime publication tree",
+            },
+        },
         "filesystem": filesystem,
     }))
 }
@@ -106,8 +138,8 @@ pub fn run(options: &EvalOptions, sink: &mut SampleSink) -> Result<(), String> {
         let (bundle_bytes, bundle, children) = load_publication(&root)?;
         let cases_per_cell = cases_per_cell(&children)?;
         for _ in 0..options.warmup {
-            black_box(summary_only(&bundle)?);
-            black_box(recompute_normalization(&children)?);
+            black_box(declared_digest_control(&bundle)?);
+            black_box(evaluate_oracle_projections(&children)?);
             black_box(full_outer_gate(&root, &bundle_bytes)?);
             for count in VALID_CHILD_COUNTS {
                 black_box(gate_child_prefix(&children, count)?);
@@ -168,16 +200,16 @@ fn load_publication(
 
 #[derive(Clone, Copy)]
 enum CoreArm {
-    Summary,
-    Normalization,
-    Outer,
+    DigestControl,
+    RawOracle,
+    OuterGate,
 }
 
 fn core_arm_order(run: u32, iter: u64) -> [CoreArm; 3] {
     match (u64::from(run) + iter) % 3 {
-        0 => [CoreArm::Summary, CoreArm::Normalization, CoreArm::Outer],
-        1 => [CoreArm::Outer, CoreArm::Summary, CoreArm::Normalization],
-        _ => [CoreArm::Normalization, CoreArm::Outer, CoreArm::Summary],
+        0 => [CoreArm::DigestControl, CoreArm::RawOracle, CoreArm::OuterGate],
+        1 => [CoreArm::OuterGate, CoreArm::DigestControl, CoreArm::RawOracle],
+        _ => [CoreArm::RawOracle, CoreArm::OuterGate, CoreArm::DigestControl],
     }
 }
 
@@ -194,33 +226,33 @@ fn run_core_arm(
     sink: &mut SampleSink,
 ) -> Result<(), String> {
     let (name, phase, guarantee, started) = match arm {
-        CoreArm::Summary => {
+        CoreArm::DigestControl => {
             let started = Instant::now();
-            black_box(summary_only(bundle)?);
+            black_box(declared_digest_control(bundle)?);
             (
-                "publisher-summary-only",
-                "digest-consistency",
-                "trusts producer summaries; no artifact or semantic recomputation",
+                DIGEST_CONTROL_ARM,
+                DIGEST_CONTROL_PHASE,
+                "cost control checks only publisher-declared digest equality; not a verifier or semantic result",
                 started,
             )
         }
-        CoreArm::Normalization => {
+        CoreArm::RawOracle => {
             let started = Instant::now();
-            black_box(recompute_normalization(children)?);
+            black_box(evaluate_oracle_projections(children)?);
             (
-                "producer-normalization",
-                "typed-projection",
-                "recomputes typed projections from child bundle records; does not read case artifacts",
+                ORACLE_CORE_ARM,
+                ORACLE_CORE_PHASE,
+                "independently parses observation-v2 bytes, derives 12-case semantics, and compares route-neutral projections",
                 started,
             )
         }
-        CoreArm::Outer => {
+        CoreArm::OuterGate => {
             let started = Instant::now();
             black_box(full_outer_gate(root, bundle_bytes)?);
             (
-                "outer-recompute",
-                "full-production-gate",
-                "production exact-set, digest, child-bundle, identity, and cross-cell verification",
+                OUTER_GATE_ARM,
+                OUTER_GATE_PHASE,
+                "production Stage3A exact-set, retained-digest, child, identity, independent-oracle, and cross-cell gate",
                 started,
             )
         }
@@ -259,10 +291,12 @@ fn timed_sample(
         .config("guarantee", guarantee)
         .config(
             "cache_state",
-            if matches!(arm, "outer-recompute" | "valid-child-gates") {
+            if matches!(arm, OUTER_GATE_ARM | "valid-child-gates") {
                 "warm OS page cache; verifier reopens every retained file"
+            } else if arm == ORACLE_CORE_ARM {
+                "in-memory raw control/candidate observation-v2 JSON; no retained-file reopen in timed region"
             } else {
-                "in-memory decoded bundle records"
+                "in-memory publisher-declared digest strings"
             },
         )
         .at(run, iter)
@@ -273,14 +307,14 @@ fn elapsed_ns(started: Instant, label: &str) -> Result<u64, String> {
         .map_err(|_| format!("{label} duration exceeded u64 nanoseconds"))
 }
 
-fn summary_only(bundle: &Stage3aCrossRuntimeEvidenceBundle) -> Result<&str, String> {
+fn declared_digest_control(bundle: &Stage3aCrossRuntimeEvidenceBundle) -> Result<&str, String> {
     let expected_cells = usize::try_from(bundle.required_runs_per_cell)
         .map_err(|_| "required run count does not fit usize")?
         .checked_mul(4)
         .ok_or("required cell count overflow")?;
     if bundle.cells.len() != expected_cells {
         return Err(format!(
-            "publisher summary contains {} cell runs, expected {expected_cells}",
+            "publisher-declared digest control contains {} cell runs, expected {expected_cells}",
             bundle.cells.len()
         ));
     }
@@ -289,7 +323,7 @@ fn summary_only(bundle: &Stage3aCrossRuntimeEvidenceBundle) -> Result<&str, Stri
         .iter()
         .any(|cell| cell.normalized_semantics_sha256 != bundle.normalized_semantics_sha256)
     {
-        return Err("publisher summaries disagree across cell runs".to_owned());
+        return Err("publisher-declared digests disagree across cell runs".to_owned());
     }
     Ok(&bundle.normalized_semantics_sha256)
 }
@@ -298,7 +332,8 @@ struct ChildBundle {
     path: PathBuf,
     root: PathBuf,
     bytes: Vec<u8>,
-    bundle: Stage3EvidenceBundle,
+    control_observation: Vec<u8>,
+    candidate_observation: Vec<u8>,
 }
 
 fn load_children(
@@ -318,18 +353,47 @@ fn load_children(
                 .parent()
                 .ok_or_else(|| format!("child bundle has no artifact root: {}", path.display()))?
                 .to_path_buf();
-            Ok(ChildBundle { path, root: child_root, bytes, bundle: child })
+            let control_observation =
+                read_child_observation(&child_root, &child, STAGE3A_CONTROL_OBSERVATION_FILE)?;
+            let candidate_observation =
+                read_child_observation(&child_root, &child, STAGE3A_CANDIDATE_OBSERVATION_FILE)?;
+            Ok(ChildBundle {
+                path,
+                root: child_root,
+                bytes,
+                control_observation,
+                candidate_observation,
+            })
         })
         .collect()
 }
 
+fn read_child_observation(
+    child_root: &Path,
+    child: &Stage3EvidenceBundle,
+    uri: &str,
+) -> Result<Vec<u8>, String> {
+    let mut references = child.raw_observations.iter().filter(|reference| reference.uri == uri);
+    let reference = references
+        .next()
+        .ok_or_else(|| format!("child bundle is missing raw observation {uri}"))?;
+    if references.next().is_some() {
+        return Err(format!("child bundle repeats raw observation {uri}"));
+    }
+    let path = resolve_reference(child_root, reference)?;
+    fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+}
+
 fn cases_per_cell(children: &[ChildBundle]) -> Result<usize, String> {
-    let expected = children
-        .first()
-        .map(|child| child.bundle.cases.len())
-        .ok_or("no child bundles available".to_owned())?;
-    if expected == 0 || children.iter().any(|child| child.bundle.cases.len() != expected) {
-        return Err("child bundles do not have one common nonzero case count".to_owned());
+    let mut observed = Vec::with_capacity(children.len());
+    for child in children {
+        observed.push(accepted_oracle_report(child)?.cases.len());
+    }
+    let expected = observed.first().copied().ok_or("no child bundles available".to_owned())?;
+    if expected == 0 || observed.iter().any(|count| *count != expected) {
+        return Err(
+            "independent oracle reports do not have one common nonzero case count".to_owned()
+        );
     }
     Ok(expected)
 }
@@ -366,17 +430,15 @@ fn resolve_reference(root: &Path, reference: &Stage3ArtifactReference) -> Result
     Ok(root.join(relative))
 }
 
-fn recompute_normalization(children: &[ChildBundle]) -> Result<String, String> {
+fn evaluate_oracle_projections(children: &[ChildBundle]) -> Result<String, String> {
     let mut common: Option<String> = None;
     for child in children {
-        let normalized = normalize_stage3a_semantics(&child.bundle)?;
-        let encoded = serde_json::to_vec(&normalized)
-            .map_err(|error| format!("cannot encode normalized projection: {error}"))?;
+        let encoded = accepted_oracle_projection(child)?;
         let digest = sha256_hex(&encoded);
         match &common {
             Some(expected) if expected != &digest => {
                 return Err(format!(
-                    "{} diverged during producer normalization",
+                    "{} diverged during independent raw-observation projection",
                     child.path.display()
                 ));
             }
@@ -384,7 +446,29 @@ fn recompute_normalization(children: &[ChildBundle]) -> Result<String, String> {
             _ => {}
         }
     }
-    common.ok_or("no child bundles available for producer normalization".to_owned())
+    common.ok_or("no child bundles available for independent raw-observation oracle".to_owned())
+}
+
+fn accepted_oracle_projection(child: &ChildBundle) -> Result<Vec<u8>, String> {
+    let report = accepted_oracle_report(child)?;
+    encode_route_neutral_projection(&report)
+}
+
+fn accepted_oracle_report(child: &ChildBundle) -> Result<EquivalenceReport, String> {
+    let report = evaluate_equivalence(&child.control_observation, &child.candidate_observation);
+    if !report.accepted {
+        return Err(format!(
+            "independent raw-observation oracle rejected {}: {:?}",
+            child.path.display(),
+            report.findings
+        ));
+    }
+    Ok(report)
+}
+
+fn encode_route_neutral_projection(report: &EquivalenceReport) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&report.cases)
+        .map_err(|error| format!("cannot encode independent oracle projections: {error}"))
 }
 
 fn full_outer_gate(root: &Path, bundle_bytes: &[u8]) -> Result<(), String> {
@@ -438,19 +522,20 @@ fn record_sizes(
         )?;
     }
 
-    let normalized_bytes = children.iter().try_fold(0_u64, |total, child| {
-        let normalized = normalize_stage3a_semantics(&child.bundle)?;
-        let len = serde_json::to_vec(&normalized)
-            .map_err(|error| format!("cannot encode normalized projection: {error}"))?
-            .len() as u64;
-        total.checked_add(len).ok_or("normalized projection size overflow".to_owned())
+    let oracle_projection_bytes = children.iter().try_fold(0_u64, |total, child| {
+        let len = accepted_oracle_projection(child)?.len() as u64;
+        total.checked_add(len).ok_or("oracle projection size overflow".to_owned())
     })?;
     sink.record(
-        Sample::new(MEASURE, "retained-evidence", "normalized-projections-total")
+        Sample::new(MEASURE, "retained-evidence", "oracle-projections-total")
             .config("cell_runs", outer.cells.len() as u64)
             .config("cases_per_cell", cases_per_cell as u64)
             .config("valid_claim_bundle", false)
-            .bytes(normalized_bytes),
+            .config(
+                "scope_note",
+                "serialized route-neutral CaseEquivalence projections; excludes full oracle reports",
+            )
+            .bytes(oracle_projection_bytes),
     )?;
     Ok(())
 }
@@ -545,5 +630,29 @@ mod tests {
         let error = validate_paper_grade_provenance(true, BUILD_GIT_COMMIT, true)
             .expect_err("paper evidence must come from a clean worktree");
         assert!(error.contains("clean worktree"));
+    }
+
+    #[test]
+    fn timed_labels_state_the_real_verification_boundary() {
+        let control =
+            timed_sample(DIGEST_CONTROL_ARM, DIGEST_CONTROL_PHASE, 0, 0, 12, 12, "control");
+        assert_eq!(
+            control.config.get("cache_state"),
+            Some(&serde_json::json!("in-memory publisher-declared digest strings"))
+        );
+
+        let oracle = timed_sample(ORACLE_CORE_ARM, ORACLE_CORE_PHASE, 0, 0, 12, 12, "oracle");
+        assert_eq!(
+            oracle.config.get("cache_state"),
+            Some(&serde_json::json!(
+                "in-memory raw control/candidate observation-v2 JSON; no retained-file reopen in timed region"
+            ))
+        );
+
+        let outer = timed_sample(OUTER_GATE_ARM, OUTER_GATE_PHASE, 0, 0, 12, 12, "outer");
+        assert_eq!(
+            outer.config.get("cache_state"),
+            Some(&serde_json::json!("warm OS page cache; verifier reopens every retained file"))
+        );
     }
 }

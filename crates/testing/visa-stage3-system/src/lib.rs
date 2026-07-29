@@ -3,6 +3,7 @@ pub mod cross_host;
 pub mod evidence;
 pub mod fixture;
 pub mod fixture_request;
+mod observation;
 pub mod regular_file_runtime;
 pub mod stage3a;
 pub mod stage3a_cross;

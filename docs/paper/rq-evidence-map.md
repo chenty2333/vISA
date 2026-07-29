@@ -25,7 +25,8 @@ These short names are used only inside this file.
 | `S2legacy` | Four Wasmtime/JcoNode direction cells, 124 executions, four inner validations, one normalized outer comparison | `cross-execution-path-portability` | Shared `wasmtime-environ` translator lineage is disclosed, so this is not independent-implementation evidence |
 | `S2strict` | Four Wasmtime/Wacogo direction cells, 124/124 executions, 31/31 normalized equality groups, exact lineage and no-fallback proof, fresh Host and Docker runs | `strict-cross-runtime-continuity` | x86-64/amd64 Linux, timer/KV only; the qualified subject is the source-lock-bound Wacogo derivative, not unmodified upstream wacogo |
 | `S3A` | 12 bounded regular-file cases, scoped `openat2` rebinding, `STATX_BTIME` identity tuple, SQLite admission fence | `bounded-regular-file-continuity` | Wasmtime-to-Wasmtime, one OS runner process, `independent_runtime_coverage=false` |
-| `S3AX` | The unchanged 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three stability runs per direction, 144/144 executions, one recomputed semantic digest, verifier-mutation audit, and relocated verification | `cross-runtime-regular-file-continuity-v1` (earned) | x86-64 Linux; the qualified subject is the source-locked Wacogo derivative plus its explicit regular-file patch set, not unmodified upstream wacogo; no additional ISA/substrate or arbitrary filesystem objects |
+| `S3AX` | The unchanged 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three stability runs per direction, 144/144 executions, verdict-free raw observations, independent semantic replay, verifier-mutation audit, and relocated verification | `cross-runtime-regular-file-continuity-v1` (earned) | x86-64 Linux; the qualified subject is the source-locked Wacogo derivative plus its explicit regular-file patch set, not unmodified upstream wacogo; no additional ISA/substrate or arbitrary filesystem objects |
+| `S3W` | A source-locked Wanco process-checkpoint carrier for `read-write-offset` and `append-continuity`, with one uninterrupted control per repeat, a carrier-only negative route, a vISA-plus-carrier positive route, three repeats, the same verdict-free observation/oracle path, and relocated verification | `bounded-wanco-regular-file-carrier-composition-v1` | Same-host native x86-64 Linux. Wanco carries compute state; vISA separately transfers and rebinds the regular-file profile. This is not cross-host Wanco, cross-ISA Wanco, or an arbitrary-application migration result. |
 | `S3B` | 14 bounded logical-request cases over a real `VISALR03` loopback peer with a durable operation ledger | `bounded-logical-request-continuity` | Wasmtime-to-Wasmtime, one OS runner process, raw live TCP explicitly rejected, `independent_runtime_coverage=false` |
 | `S4-Q` | Seven Hx/Qx/Qa cells, 217/217 executions, seven inner Stage 1 validations, 31/31 normalized groups, closure receipt at `457ae1d6...` | `named-target-substrate-continuity-v1`, `emulated-cross-isa-continuity-v1` | Wasmtime and timer/KV held fixed; Qa is QEMU-user on the same host kernel; real AArch64 hardware is `not-run` within this closed matrix |
 | `S4-N` | Four native Hx/Ha directions on a physical x86-64 Linux host and Raspberry Pi Zero 2 W AArch64 host, 124/124 executions, four inner validations, 31/31 normalized groups, original-root and relocated outer verification at `e88b844e...` | No registered earned claim; `native-arm-cross-isa-continuity-v1` is a verified supporting profile identifier | Wasmtime and timer/KV held fixed; the `substrate_host::SqliteProvider` remains on Hx, so this does not prove provider cross-ISA execution/migration, another runtime, Stage 3 resources, hostile transport, performance, or production |
@@ -35,18 +36,17 @@ These short names are used only inside this file.
 Two facts constrain how any of these may be cited in a paper. First, the matrix
 is additive: `S2strict` independence does not enter the predecessor `S3A` or
 `S3B` bundles; `S3AX` separately qualifies only the same bounded regular-file
-profile; and neither `S4-Q` nor `S4-N` inherits either cross-runtime result.
+profile; `S3W` adds a compute carrier without inheriting a second runtime or
+ISA; and neither `S4-Q` nor `S4-N` inherits either cross-runtime result.
 Second, the
 joint-handoff evidence is a bounded composition; no monolithic execution runs
 all axes end to end.
 
-The earned `S3AX` evidence is anchored at accepted revision
-`3bd9eaad5aab3e792ca793e26bd064f403f626db`, attempt-1 Actions run
-`30269498012`, immutable archive SHA-256
-`f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`, and
-version DOI `10.5281/zenodo.21627497`. These identifiers bind the matrix result
-to durable bytes; later documentation and publication-tooling revisions do not
-retarget the accepted evidence.
+`S3AX` and `S3W` acceptance is defined by a clean exact-SHA canonical run,
+independent verification at the original and relocated roots, and the committed
+matrix contract. Their evidence trees are reproducible transient output; a
+permanent external archive is optional rather than a condition for using the
+result.
 
 ## 1. RQ-to-evidence map
 
@@ -62,10 +62,10 @@ injected during pending I/O, timeout, cancellation, error, and cleanup paths.
 | RQ1 sub-question | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
 | Timers and durable KV preserve the observable trace | Covered | `S1`, `S2legacy`, `S2strict`, `S4-Q`, `S4-N` | x86-64 Linux for `S1`/`S2`; `S4-Q` adds QEMU-user endpoints and `S4-N` separately adds physical, native x86-64/AArch64 hosts. The paused-duration timer profile makes no wall-clock deadline-continuity claim. |
-| Regular files | Covered for the named bounded profile | `S3A` plus `S3AX`: the same 12 cases in all four runtime directions, three runs per direction, 144/144 executions | x86-64 Linux and the source-locked Wacogo derivative. Excludes directory trees, devices, FIFOs, arbitrary already-open fds, and atomic compare-and-mutate against a writer that bypasses the advisory lock/lease protocol. |
+| Regular files | Covered for the named bounded profile | `S3A` plus `S3AX`: the same 12 cases in all four runtime directions, three runs per direction, 144/144 executions. `S3W` separately composes the two motivating file cases with a real Wanco checkpoint/restore carrier. | x86-64 Linux and the source-locked Wacogo derivative; `S3W` is same-host Wanco AOT. Excludes directory trees, devices, FIFOs, arbitrary already-open fds, and atomic compare-and-mutate against a writer that bypasses the advisory lock/lease protocol. |
 | Network resources | Partially covered | `S3B`, 14 cases | The unit of continuity is a *logical request over a reconnectable session*, not a connection. Raw live TCP is an explicit typed rejection, and socket sequence state, credential bytes, and runtime future state are absent from portable state. A general network-resource result is open. |
 | Multiple independent adapters | Partially covered | `S2strict` qualifies timer/KV and `S3AX` qualifies regular files across two independent-lineage Component Model runtimes | Logical requests remain Wasmtime-to-Wasmtime, and neither matrix establishes a second full coordinator/provider stack. |
-| Handoff injected during pending I/O, timeout, cancellation, error, cleanup | Covered within each named profile | `S1` failure/recovery matrix, `S3A`/`S3AX`, and `S3B` case registries | Coverage is per-profile. There is no claimed cell in which one component holds timer, KV, file, and request resources simultaneously across a faulted handoff. |
+| Handoff injected during pending I/O, timeout, cancellation, error, cleanup | Covered within each named profile | `S1` failure/recovery matrix, `S3A`/`S3AX`, and `S3B` case registries; `S3W` covers only its two named success-path file relations | Coverage is per-profile. There is no claimed cell in which one component holds timer, KV, file, and request resources simultaneously across a faulted handoff. |
 | Native bindings are not serialized | Covered as negative evidence | Stage 1 portable snapshot excludes fd, socket, native pointer, PC/SP, credential, and runtime-private objects; `S3A`/`S3AX` exclude device, inode, birth time, fd, and the absolute provider root; `S3B` excludes socket/TCP sequence state and credential material | This is enforced structurally per profile. It is not a measurement. |
 | Falsifier: the core keeps expanding until it duplicates runtime, Linux, or device state | Partially covered (measured, one growth step) | Static repository measurement, 2026-07-26; see "Measured core growth" below | Doubling the resource-family count (2 to 4) cost the canonical core +67 lines, one new type, and one new opaque `EffectKind` variant, against 5,748 provider-side lines for the same two families. The typed extension layer (`visa_profile`) grew by ~1,900 lines and must be disclosed alongside. Only one measurement step exists because both Stage 3 families landed in a single commit, so this is a two-point observation, not a curve. |
 
@@ -175,16 +175,16 @@ hold under adversarial in-process bypass.
 
 | RQ3 sub-question | Verdict | Evidence | Boundary |
 | --- | --- | --- | --- |
-| An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer; Stage 3A/3B predecessor structural bundle verifiers; the `S3AX` outer normalizer and mutation audit; `S4-Q` reconstruction with seven inner validations; `S4-N` reconstruction with four inner validations and one shared-provider lineage; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
-| The verifier independently reimplements the semantic decision | Covered for Stage 1/2/4 and the joint neutral axis; partial for Stage 3 | The predecessor Stage 3 verifiers remain structural. `S3AX` independently recomputes typed normalized semantics from retained child fields and raw file-artifact references, then checks cross-cell equality. | `S3AX` verifies raw trace integrity but does not independently reinterpret every runner-authored file-profile assertion. `S3B` peer/credential negative assertions remain runner-produced and the raw frames are not published. Profile/config JSON is byte-checked but not semantically parsed. |
-| Detection of injected semantic defects is measured | Covered for the calibrated Stage 1 corpus (2026-07-27), targeted `S3AX` outer path (2026-07-28), and the joint axis's separate 10-mutation suite | The Stage 1 verifier detected its preclassified 22/22 semantic defects, recognized 3/3 benign equivalents, and recorded one boundary. The separate eight-entry `S3AX` corpus mutates the intended layer and, for child cases, fully reseals original/relocated children, outer references, and matrix receipts before invoking the production verifier: 3/3 semantic defects and 2/2 summary tampers are rejected, 2/2 benign equivalents are accepted, and one trusted-observation boundary is recorded with all eight dispositions matching preclassification. | The `S3AX` boundary deliberately contradicts a runner assertion in a fully resealed raw trace. Its acceptance documents that faithful observation/assertion production is trusted; it is not included in the three-defect efficacy denominator. These small targeted denominators are not population estimates and do not transfer to Stage 2, Stage 3B, or Stage 4. |
-| Specific injections named in RQ3 | Covered for Stage 1 and targeted `S3AX` normalization/matrix failure modes | Stage 1 covers all eight named detector classes. `S3AX` separately covers route omission, semantic-assertion substitution, changed retained observables, per-cell cache substitution, aggregate substitution, excluded run metadata, assertion-set ordering, and contradictory trusted raw observation. Stage 4 inventory mutations and the joint suite remain separate contract tests. | Scenario coverage and detector efficacy remain distinct. The Stage 1 22/22 and `S3AX` 3/3 semantic-defect results have separate denominators and cannot be copied to other verifiers. |
-| Falsifier: an observable semantic error passes verification | Answered inside the Stage 1 and retained-field `S3AX` evidence envelopes | No preclassified semantic-defect entry passed: Stage 1 rejected 22/22 and the targeted `S3AX` corpus rejected 3/3, including a validly encoded changed retained canonical observable. | The `S3AX` contradictory-trace case demonstrates the boundary outside that envelope: a dishonest but fully resealed runner trace is not independently reinterpreted. The result therefore supports summary-independent comparison under faithful capture, not execution attestation. |
+| An independent verifier exists at every stage | Covered | Stage 1 inner artifact-aware verifier; Stage 2 outer typed normalizer; Stage 3A/3B predecessor structural bundle verifiers; the verdict-free `S3AX` regular-file oracle and mutation audit; the same oracle in `S3W`; `S4-Q` reconstruction with seven inner validations; `S4-N` reconstruction with four inner validations and one shared-provider lineage; `J1` neutral verifier with its own oracle | Verifier independence differs sharply by stage. See the next row. |
+| The verifier independently reimplements the semantic decision | Covered for Stage 1/2/4, `S3AX` regular files, and the joint neutral axis; partial for the remaining Stage 3 profiles | For all 12 regular-file cases, `S3AX` feeds verdict-free raw operation/lifecycle events, raw read and final-file bytes, process status, and endpoint facts to an oracle that owns the case registry, replays file state, recomputes content digests without the producer codec, derives terminals, and compares route-neutral projections. `S3W` uses that same path for its two named carrier-composition cases. | The observation producer remains inside a faithful-capture boundary; this is independent semantic recomputation, not execution attestation or Byzantine observation. `S3B` peer/credential negative assertions remain runner-produced and the raw frames are not published. Profile/config JSON is byte-checked but not semantically parsed. |
+| Detection of injected semantic defects is measured | Covered for the calibrated Stage 1 corpus, the targeted `S3AX` oracle path, and the joint axis's separate 10-mutation suite | The Stage 1 verifier detected its preclassified 22/22 semantic defects, recognized 3/3 benign equivalents, and recorded one boundary. The separate 20-entry `S3AX` corpus fully reseals the affected observation, child bundle, relocated copy, outer references, and matrix receipt before invoking the production verifier: 15/15 semantic defects and 2/2 integrity tampers are rejected, 2/2 benign equivalents are accepted, and one host-observation trust boundary is recorded. | These targeted denominators are not population estimates and do not transfer to Stage 2, Stage 3B, Stage 4, or arbitrary observations outside the declared capture boundary. |
+| Specific injections named in RQ3 | Covered for Stage 1 and targeted `S3AX` semantic, topology, and matrix failure modes | Stage 1 covers all eight named detector classes. `S3AX` separately mutates read and file-content digests, append multiplicity, event completeness, protocol safe-point/snapshot identity, post-handoff actor and resume context, route, runtime lineage, execution boundary, control topology, final-file probes, cell caches, aggregate receipts, excluded metadata, and assertion ordering. Stage 4 inventory mutations and the joint suite remain separate contract tests. | Scenario coverage and detector efficacy remain distinct. The Stage 1 22/22 and `S3AX` 15/15 semantic-defect results have separate denominators and cannot be copied to other verifiers. |
+| Falsifier: an observable semantic error passes verification | Answered inside the Stage 1 and verdict-free regular-file evidence envelopes | No preclassified semantic-defect entry passed: Stage 1 rejected 22/22 and the targeted `S3AX` corpus rejected 15/15, including fully resealed drift in raw bytes/digests, operation multiplicity/completeness, lifecycle identity, endpoint topology, and final probes. | A fully resealed mutation of the unattested observation host remains the recorded boundary. The result supports producer-summary-independent semantic comparison under faithful capture, not host attestation. |
 | Falsifier: detection requires recording nearly all native execution state | Partially covered | The exclusion lists under RQ1 show that detection currently works without fds, sockets, PC/SP, credentials, socket sequence state, or device/inode metadata; one `SnapshotSize` sample exists per Stage 1 run | There is no evidence-size-versus-detection-coverage curve, which is the quantitative form of this falsifier. |
 
 Overall RQ3: **covered as a calibrated Stage 1 detector result and partially
 covered across the system.** The Stage 1 22/22 + 3/3 + one-boundary experiment
-and the separate `S3AX` 3/3 semantic-defect + 2/2 tamper + 2/2 equivalent + one
+and the separate `S3AX` 15/15 semantic-defect + 2/2 tamper + 2/2 equivalent + one
 trusted-boundary corpus turn both paths into measured results without merging
 their denominators. Remaining work is to build separate efficacy corpora for
 the other later-stage verifiers and an evidence-size-versus-detection-coverage
@@ -554,13 +554,23 @@ registry claim. `Qa` remains QEMU-user and `not-run` for real hardware inside
 the separate closed `S4-Q` matrix.
 
 **P1.3 Stage 3 independent-runtime coverage — done for regular files
-(2026-07-27).** `S3AX` carries the unchanged 12-case regular-file profile through
+(2026-07-29).** `S3AX` carries the unchanged 12-case regular-file profile through
 all four Wasmtime/source-locked-Wacogo directions, with three stability runs per
-direction, 144/144 executions, independently recomputed typed normalization,
-no-fallback proof, an eight-entry preclassified outer-verifier corpus, and
-relocated verification. This closes the
+direction, 144/144 executions, verdict-free raw observations, independent file
+replay and digest reconstruction, no-fallback proof, a 20-entry preclassified
+outer-verifier corpus, and relocated verification. This closes the
 runtime/resource overlap for one bounded rich-resource family. Logical requests
 remain `independent_runtime_coverage=false`; no result transfers to them.
+
+**P1.4 Compute-carrier composition — done for two regular-file relations
+(2026-07-29).** `S3W` runs one source-locked Wanco AOT process until a real
+`SIGUSR1` checkpoint, restores that checkpoint into a fresh process, and routes
+both `read-write-offset` and `append-continuity` through the same verdict-free
+observation/oracle path used by `S3AX`. Across three repeats, the carrier-only
+route is the expected negative control because no destination binding is
+provided; vISA-plus-carrier transfers the portable profile and resumes against a
+fresh destination binding. This is a same-host x86-64 carrier composition, not a
+general Wanco migration or application benchmark.
 
 ### P2 — completed improvements and remaining extensions
 

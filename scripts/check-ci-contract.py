@@ -795,6 +795,71 @@ def check_claim_matrix(job: dict[str, Any]) -> None:
     require("set -o pipefail" in command, "claim matrix gate must protect tee")
 
 
+def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
+    non_wanco_condition = "${{ matrix.lane != 'wanco-carrier' }}"
+    image_builds = steps_using(job, "docker/build-push-action@")
+    require(
+        len(image_builds) == 1 and image_builds[0].get("if") == non_wanco_condition,
+        "Wanco carrier lane must skip the unused vISA development image build",
+    )
+    image_inspection = step_with_name(job, "Inspect exact-SHA Docker image")
+    require(
+        image_inspection.get("if") == non_wanco_condition,
+        "Wanco carrier lane must skip inspection of the omitted development image",
+    )
+
+    wrapper = (ROOT / "scripts/run-docker-ci-gate.sh").read_text(encoding="utf-8")
+    require(
+        'if [[ "$tier" == system-wanco-carrier ]]; then' in wrapper
+        and 'scripts/ci-gate.sh system-wanco-carrier' in wrapper
+        and 'VISA_EVIDENCE_PARENT="$wanco_evidence_parent"' in wrapper,
+        "Wanco carrier tier must execute on the Docker host with host-visible evidence",
+    )
+    host_branch = wrapper.split(
+        'if [[ "$tier" == system-wanco-carrier ]]; then', 1
+    )[1].split("\nfi\n", 1)[0]
+    require(
+        "docker compose" not in host_branch,
+        "Wanco carrier host branch must not recurse through the dev container",
+    )
+
+    gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+    require(
+        "gate_system_wanco_carrier()" in gate
+        and "scripts/run-wanco-carrier-matrix.sh" in gate
+        and "system-wanco-carrier) gate_system_wanco_carrier ;;" in gate,
+        "Wanco carrier host tier is not wired to the real matrix runner",
+    )
+    runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+        encoding="utf-8"
+    )
+    check_wanco_canonical_evidence_closure(gate, runner)
+
+
+def check_wanco_canonical_evidence_closure(gate: str, runner: str) -> None:
+    require(
+        'matrix_run_path="$system_artifact_root/evidence-matrix-run.json"' in gate
+        and "canonical six-dimensional matrix-run closure" in gate
+        and '"$matrix_validator" claims/evidence-matrix.json "$matrix_run_path"'
+        in gate,
+        "Wanco CI tier must validate the canonical evidence-matrix run",
+    )
+    require(
+        '"schema_version": "visa.evidence-matrix-run.v1"' in runner
+        and '"coordinates": coordinates' in runner
+        and '"relocated_verification": True' in runner
+        and '"$matrix_validator" claims/evidence-matrix.json '
+        '"$artifact_root/evidence-matrix-run.json"' in runner,
+        "Wanco runner must publish and validate relocated six-dimensional receipts",
+    )
+    require(
+        'elif route == "carrier-only":' in runner
+        and 'case["equivalent"] is False' in runner
+        and 'finding["code"] == "observable-projection-mismatch"' in runner,
+        "Wanco carrier-only cell must remain a structural negative with semantic mismatches",
+    )
+
+
 def check_claim_workflow_bindings(jobs: dict[str, Any]) -> None:
     raw_bindings = CLAIM_REGISTRY["workflow_bindings"]
     require(isinstance(raw_bindings, list), "claim registry workflow bindings are absent")
@@ -1333,6 +1398,7 @@ def check_workflow() -> None:
     check_claim_closure_verification(jobs[CLAIM_CLOSURE_JOB])
     check_claim_workflow_bindings(jobs)
     check_claim_matrix(jobs["docker-claim-gates"])
+    check_wanco_carrier_host_lane(jobs["docker-claim-gates"])
     check_quality_stage4_and_joint_reference(jobs)
     check_nexus_qualification(jobs[JOINT_NEXUS_JOB])
     check_upload("docker-claim-gates", jobs["docker-claim-gates"], "claim_gate")

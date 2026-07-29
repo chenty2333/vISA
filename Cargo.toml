@@ -39,11 +39,14 @@ members = [
     "crates/runtime/visa_component_adapter",
     "crates/runtime/visa_jco_node",
     "crates/runtime/visa_wacogo",
+    "crates/runtime/visa_wanco_carrier",
     "crates/runtime/visa_wasmtime",
     "crates/backend/substrate_api",
     "crates/backend/substrate_host",
     "crates/backend/substrate_virtio",
     "crates/testing/visa-conformance",
+    "crates/testing/visa-regular-file-observation",
+    "crates/testing/visa-regular-file-oracle",
     "crates/testing/handoff-component",
     "crates/testing/stage3-file-component",
     "crates/testing/stage3-request-component",
@@ -112,6 +115,7 @@ visa_ownership_service = { path = "crates/runtime/visa_ownership_service" }
 visa_component_adapter = { path = "crates/runtime/visa_component_adapter" }
 visa_jco_node = { path = "crates/runtime/visa_jco_node" }
 visa_wacogo = { path = "crates/runtime/visa_wacogo" }
+visa_wanco_carrier = { path = "crates/runtime/visa_wanco_carrier" }
 visa_wasmtime = { path = "crates/runtime/visa_wasmtime" }
 visa_abi = { path = "crates/abi/abi" }
 wasmtime = { version = "=43.0.2", default-features = false }

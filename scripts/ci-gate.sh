@@ -10,6 +10,7 @@ usage() {
 usage: scripts/ci-gate.sh \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
      system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|
+     system-wanco-carrier|
      system-stage4-target|
      system-stage4-isa|system-stage4|system-joint-handoff]
 
@@ -30,6 +31,10 @@ system-stage3a-cross-runtime reproducibly rebuilds the source-locked Wacogo
 sidecar, runs the Stage 1 semantic detector, executes three repetitions of all
 four regular-file runtime directions, audits the outer verifier, and validates
 the relocated publication. system-stage3 runs all three Stage 3 gates.
+system-wanco-carrier builds the exact source-locked Wanco AOT carrier and runs
+three repetitions of the carrier-only negative control and the vISA-plus-carrier
+regular-file path through the verdict-free observation and standalone oracle.
+This tier must run on a native x86-64 Docker host, not inside the dev container.
 system-stage4 builds release x86-64 and AArch64 Wasmtime workers, runs the
 complete seven-cell native/QEMU-user target and cross-ISA matrix, and verifies
 the resulting evidence independently before and after a real directory
@@ -153,9 +158,12 @@ active_spine_packages=(
     visa_component_adapter
     visa_jco_node
     visa_wacogo
+    visa-wanco-carrier
     visa_wasmtime
     stage3-file-component
     stage3-request-component
+    visa-regular-file-observation
+    visa-regular-file-oracle
     visa-conformance
     visa-stage3-system
     visa-joint-handoff-system
@@ -178,6 +186,8 @@ gate_fmt() {
 gate_dependency_direction() {
     run_gate "dependencies: strict active-spine direction" \
         python3 scripts/check-dependency-direction.py
+    run_gate "dependencies: direction-policy mutation tests" \
+        python3 scripts/test-check-dependency-direction.py
 }
 
 gate_stage1_deletions() {
@@ -251,6 +261,11 @@ gate_jco_node_toolchain() {
 gate_joint_handoff_source_lock() {
     run_gate "source lock: reference-only joint handoff inputs" \
         python3 scripts/check-joint-handoff-source-lock.py
+}
+
+gate_wanco_carrier_source_lock() {
+    run_gate "source lock: Wanco AOT carrier input and build-only patches" \
+        python3 scripts/check-wanco-carrier-source.py
 }
 
 gate_nexus_handoff_verifier_self_tests() {
@@ -332,6 +347,7 @@ gate_fast() {
     gate_local_rpc_artifacts
     gate_jco_node_toolchain
     gate_joint_handoff_source_lock
+    gate_wanco_carrier_source_lock
     gate_nexus_handoff_verifier_self_tests
     gate_active_clippy
     gate_active_tests
@@ -425,11 +441,16 @@ gate_system_stage2_strict() {
 }
 
 gate_system_stage3a() {
+    local audit_root
+    local oracle_audit
+    local oracle_bin
     local system_parent
     system_parent="$(system_evidence_parent)"
     system_artifact_kind="Stage 3A regular-file continuity"
     system_artifact_root="$(umask 077; mktemp -d "$system_parent/stage3a-XXXXXX")"
     system_bundle_path="$system_artifact_root/stage3a-evidence.json"
+    audit_root="$(umask 077; mktemp -d "$system_parent/stage3a-oracle-audit-XXXXXX")"
+    oracle_audit="$audit_root/regular-file-oracle-audit.json"
 
     run_gate "system-stage3a: bounded regular-file continuity" \
         cargo run --locked -p visa-stage3-system --bin visa-stage3-system -- \
@@ -437,9 +458,18 @@ gate_system_stage3a() {
     run_gate "system-stage3a: independent evidence validation" \
         cargo run --locked -p visa-conformance --bin visa-conformance -- \
             stage3a "$system_bundle_path" "$system_artifact_root"
+    run_gate "system-stage3a: build independent regular-file oracle" \
+        cargo build --locked -p visa-regular-file-oracle --bin visa-regular-file-oracle
+    oracle_bin="$(cargo_target_directory)/debug/visa-regular-file-oracle"
+    run_gate "system-stage3a: raw observation mutation audit" \
+        python3 scripts/regular-file-oracle-audit.py \
+            --oracle "$oracle_bin" \
+            --artifact-root "$system_artifact_root" \
+            --out "$oracle_audit"
 
     printf 'Stage 3A artifact root: %s\n' "$system_artifact_root"
     printf 'Stage 3A evidence bundle: %s\n' "$system_bundle_path"
+    printf 'Stage 3A regular-file oracle audit: %s\n' "$oracle_audit"
 }
 
 gate_wacogo_sidecar() {
@@ -603,6 +633,85 @@ gate_system_stage4() {
     printf 'Stage 4 evidence bundle: %s\n' "$system_bundle_path"
 }
 
+gate_system_wanco_carrier() {
+    local matrix_run_path
+    local matrix_validator
+    local system_parent
+    system_parent="$(system_evidence_parent)"
+    system_artifact_kind="Wanco AOT regular-file carrier composition"
+    system_artifact_root="$system_parent/wanco-carrier"
+    system_bundle_path="$system_artifact_root/matrix-receipt.json"
+
+    run_gate "system-wanco-carrier: exact source lock" \
+        python3 scripts/check-wanco-carrier-source.py
+    run_gate "system-wanco-carrier: carrier-only and vISA-plus-carrier matrix" \
+        env VISA_EVIDENCE_PARENT="$system_parent" scripts/run-wanco-carrier-matrix.sh
+    system_artifact_root="$system_parent/wanco-carrier-relocated"
+    system_bundle_path="$system_artifact_root/matrix-receipt.json"
+    matrix_run_path="$system_artifact_root/evidence-matrix-run.json"
+    run_gate "system-wanco-carrier: exact three-run required-route receipt" \
+        python3 - "$system_bundle_path" "$system_artifact_root/relocation-receipt.json" \
+            "$matrix_run_path" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+relocation_path = Path(sys.argv[2])
+matrix_run_path = Path(sys.argv[3])
+receipt = json.loads(path.read_text(encoding="utf-8"))
+assert receipt["schema"] == "visa-wanco-carrier-matrix-receipt-v1"
+if github_sha := os.environ.get("GITHUB_SHA"):
+    assert receipt["git_sha"] == github_sha
+assert receipt["git_dirty"] is False
+assert len(receipt["evidence_matrix_sha256"]) == 64
+assert receipt["runs_per_route_case"] == 3
+assert receipt["case_registry"] == ["read-write-offset", "append-continuity"]
+assert receipt["required_expectations"] == {
+    "carrier-only": "rejected",
+    "visa-plus-carrier": "accepted",
+}
+required = [
+    item
+    for item in receipt["results"]
+    if item["route"] in {"carrier-only", "visa-plus-carrier"}
+]
+assert len(required) == 6
+assert all(
+    item["accepted"] is (item["route"] == "visa-plus-carrier")
+    for item in required
+)
+assert receipt["all_required_runs_agree"] is True
+assert len(receipt["standalone_oracle_sha256"]) == 64
+relocation = json.loads(relocation_path.read_text(encoding="utf-8"))
+assert relocation["schema"] == "visa-wanco-carrier-relocation-receipt-v1"
+assert relocation["original_root_absent_after_move"] is True
+assert relocation["required_pairs_reverified"] == 6
+assert relocation["artifact_references_verified"] == 24
+assert relocation["all_required_runs_agree_after_relocation"] is True
+assert relocation["standalone_oracle_sha256"] == receipt["standalone_oracle_sha256"]
+matrix_run = matrix_run_path.read_bytes()
+expected_reference = {
+    "uri": "evidence-matrix-run.json",
+    "sha256": hashlib.sha256(matrix_run).hexdigest(),
+    "size": len(matrix_run),
+}
+assert receipt["canonical_evidence_matrix_run"] == expected_reference
+assert relocation["canonical_evidence_matrix_run"] == expected_reference
+PY
+
+    matrix_validator="$(cargo_target_directory)/debug/visa-evidence-matrix"
+    run_gate "system-wanco-carrier: canonical six-dimensional matrix-run closure" \
+        "$matrix_validator" claims/evidence-matrix.json "$matrix_run_path" \
+            "$system_artifact_root"
+
+    printf 'Wanco carrier artifact root: %s\n' "$system_artifact_root"
+    printf 'Wanco carrier matrix receipt: %s\n' "$system_bundle_path"
+    printf 'Wanco canonical evidence matrix run: %s\n' "$matrix_run_path"
+}
+
 gate_system_stage4_target() {
     printf '%s\n' \
         'system-stage4-target currently runs the complete fail-closed Stage 4 aggregate matrix.'
@@ -758,6 +867,7 @@ case "$tier" in
     system-stage3a-cross-runtime) gate_system_stage3a_cross_runtime ;;
     system-stage3b) gate_system_stage3b ;;
     system-stage3) gate_system_stage3 ;;
+    system-wanco-carrier) gate_system_wanco_carrier ;;
     system-stage4-target) gate_system_stage4_target ;;
     system-stage4-isa) gate_system_stage4_isa ;;
     system-stage4) gate_system_stage4 ;;

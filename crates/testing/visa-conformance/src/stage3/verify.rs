@@ -1,6 +1,10 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
 use sha2::{Digest as _, Sha256};
+use visa_regular_file_oracle::{
+    DerivedTerminal, EquivalenceReport, Stage3aEndpointExpectation, Stage3aTopologyExpectation,
+    evaluate_stage3a_equivalence,
+};
 
 use super::model::*;
 use crate::artifact_io::{SecureArtifactErrorKind, SecureArtifactRoot};
@@ -100,7 +104,7 @@ fn validate_stage3_evidence_bundle_impl(
         Ok(root) => root,
         Err(source) => {
             finding(&mut findings, "invalid-stage3-artifact-root", source.to_string());
-            return report(findings);
+            return report(findings, None);
         }
     };
 
@@ -145,8 +149,10 @@ fn validate_stage3_evidence_bundle_impl(
             );
         }
     }
+    let regular_file_oracle =
+        validate_regular_file_oracle(expected_profile, bundle, &root, &mut findings);
     validate_exact_artifact_set(artifact_root, expected_profile, bundle, mode, &mut findings);
-    report(findings)
+    report(findings, regular_file_oracle)
 }
 
 fn validate_publication_marker(
@@ -389,6 +395,7 @@ fn validate_shape(
         );
     }
     validate_runtime(expected_profile, &bundle.runtime, findings);
+    validate_raw_observation_inventory(expected_profile, bundle, findings);
 
     let definitions = expected_profile.cases();
     if bundle.cases.len() != definitions.len() {
@@ -407,18 +414,165 @@ fn validate_shape(
                 format!("case {index} must be {}", definition.id),
             );
         }
-        if case.terminal != definition.terminal {
+        if expected_profile == Stage3Profile::LogicalRequest {
+            if case.terminal != definition.terminal {
+                finding(
+                    findings,
+                    "stage3-terminal-mismatch",
+                    format!("{} has the wrong terminal disposition", case.case_id),
+                );
+            }
+            if !case.passed {
+                finding(findings, "stage3-case-failed", format!("{} did not pass", case.case_id));
+            }
+            validate_assertions(definition, case, findings);
+        }
+        validate_case_facts(case, findings);
+    }
+}
+
+fn validate_regular_file_oracle(
+    profile: Stage3Profile,
+    bundle: &Stage3EvidenceBundle,
+    root: &SecureArtifactRoot,
+    findings: &mut Vec<Stage3ValidationFinding>,
+) -> Option<EquivalenceReport> {
+    if profile != Stage3Profile::RegularFile {
+        return None;
+    }
+    let control = match root.read_regular(STAGE3A_CONTROL_OBSERVATION_FILE) {
+        Ok(bytes) => bytes,
+        Err(source) => {
+            finding(findings, "unreadable-regular-file-control-observation", source.to_string());
+            return None;
+        }
+    };
+    let candidate = match root.read_regular(STAGE3A_CANDIDATE_OBSERVATION_FILE) {
+        Ok(bytes) => bytes,
+        Err(source) => {
+            finding(findings, "unreadable-regular-file-candidate-observation", source.to_string());
+            return None;
+        }
+    };
+    let expectation = Stage3aTopologyExpectation {
+        source: stage3a_endpoint_expectation(
+            "source",
+            &bundle.runtime.source,
+            &bundle.runtime.host_os,
+            &bundle.runtime.source_isa,
+        ),
+        destination: stage3a_endpoint_expectation(
+            "destination",
+            &bundle.runtime.destination,
+            &bundle.runtime.host_os,
+            &bundle.runtime.destination_isa,
+        ),
+        candidate_execution_boundary: bundle.runtime.execution_boundary.clone(),
+    };
+    let oracle = evaluate_stage3a_equivalence(&control, &candidate, &expectation);
+    if !oracle.accepted {
+        finding(
+            findings,
+            "regular-file-semantic-oracle-rejected",
+            format!(
+                "independent oracle rejected the paired observation: control findings={}, \
+                 candidate findings={}, equivalence findings={}",
+                oracle.control_validation.findings.len(),
+                oracle.candidate_validation.findings.len(),
+                oracle.findings.len()
+            ),
+        );
+    }
+    validate_regular_file_diagnostics(bundle, &oracle, findings);
+    Some(oracle)
+}
+
+fn stage3a_endpoint_expectation(
+    role: &str,
+    identity: &Stage3RuntimeIdentity,
+    operating_system: &str,
+    isa: &str,
+) -> Stage3aEndpointExpectation {
+    Stage3aEndpointExpectation {
+        instance_id: format!("stage3a-{role}-{}", identity.implementation),
+        runtime: identity.implementation.clone(),
+        runtime_version: identity.implementation_version.clone(),
+        operating_system: operating_system.to_owned(),
+        isa: isa.to_owned(),
+    }
+}
+
+fn validate_regular_file_diagnostics(
+    bundle: &Stage3EvidenceBundle,
+    oracle: &EquivalenceReport,
+    findings: &mut Vec<Stage3ValidationFinding>,
+) {
+    for case in &bundle.cases {
+        let Some(oracle_case) = oracle
+            .candidate_validation
+            .cases
+            .iter()
+            .find(|candidate| candidate.case_id == case.case_id)
+        else {
             finding(
                 findings,
-                "stage3-terminal-mismatch",
-                format!("{} has the wrong terminal disposition", case.case_id),
+                "missing-regular-file-oracle-case",
+                format!("oracle report is missing {}", case.case_id),
+            );
+            continue;
+        };
+        let terminal = oracle_case.terminal.and_then(stage3_terminal_from_oracle);
+        if terminal != Some(case.terminal) {
+            finding(
+                findings,
+                "stage3-terminal-oracle-mismatch",
+                format!(
+                    "{} producer terminal {:?} differs from oracle terminal {:?}",
+                    case.case_id, case.terminal, oracle_case.terminal
+                ),
             );
         }
-        if !case.passed {
-            finding(findings, "stage3-case-failed", format!("{} did not pass", case.case_id));
+        let producer_assertions = case
+            .assertions
+            .iter()
+            .map(|assertion| (assertion.name.as_str(), assertion.passed))
+            .collect::<BTreeSet<_>>();
+        let oracle_assertions = oracle_case
+            .assertions
+            .iter()
+            .map(|assertion| (assertion.name.as_str(), assertion.passed))
+            .collect::<BTreeSet<_>>();
+        if producer_assertions != oracle_assertions {
+            finding(
+                findings,
+                "stage3-assertions-oracle-mismatch",
+                format!("{} producer diagnostics differ from oracle derivation", case.case_id),
+            );
         }
-        validate_assertions(definition, case, findings);
-        validate_case_facts(case, findings);
+        let equivalent = oracle
+            .cases
+            .iter()
+            .find(|candidate| candidate.case_id == case.case_id)
+            .is_some_and(|candidate| candidate.equivalent);
+        let oracle_passed = oracle_case.accepted
+            && equivalent
+            && oracle_case.assertions.iter().all(|item| item.passed);
+        if case.passed != oracle_passed {
+            finding(
+                findings,
+                "stage3-passed-oracle-mismatch",
+                format!("{} producer passed flag differs from oracle result", case.case_id),
+            );
+        }
+    }
+}
+
+fn stage3_terminal_from_oracle(terminal: DerivedTerminal) -> Option<Stage3CaseTerminal> {
+    match terminal {
+        DerivedTerminal::HandoffCommitted => Some(Stage3CaseTerminal::HandoffCommitted),
+        DerivedTerminal::HandoffBlocked => Some(Stage3CaseTerminal::HandoffBlocked),
+        DerivedTerminal::ProfileRejected => Some(Stage3CaseTerminal::ProfileRejected),
+        DerivedTerminal::UninterruptedCompleted | DerivedTerminal::ExecutionBlocked => None,
     }
 }
 
@@ -606,6 +760,29 @@ fn top_level_artifacts(
 ) -> impl Iterator<Item = &Stage3ArtifactReference> {
     [&bundle.component, &bundle.wit_world, &bundle.profile_manifest, &bundle.configuration]
         .into_iter()
+        .chain(bundle.raw_observations.iter())
+}
+
+fn validate_raw_observation_inventory(
+    profile: Stage3Profile,
+    bundle: &Stage3EvidenceBundle,
+    findings: &mut Vec<Stage3ValidationFinding>,
+) {
+    let expected = match profile {
+        Stage3Profile::RegularFile => {
+            [STAGE3A_CONTROL_OBSERVATION_FILE, STAGE3A_CANDIDATE_OBSERVATION_FILE].as_slice()
+        }
+        Stage3Profile::LogicalRequest => [].as_slice(),
+    };
+    let observed =
+        bundle.raw_observations.iter().map(|reference| reference.uri.as_str()).collect::<Vec<_>>();
+    if observed != expected {
+        finding(
+            findings,
+            "stage3-raw-observation-inventory-mismatch",
+            format!("expected raw observations {expected:?}, found {observed:?}"),
+        );
+    }
 }
 
 fn is_lower_hex(value: &str, length: usize) -> bool {
@@ -625,8 +802,11 @@ fn finding(
     findings.push(Stage3ValidationFinding { code: code.into(), detail: detail.into() });
 }
 
-fn report(findings: Vec<Stage3ValidationFinding>) -> Stage3ValidationReport {
-    Stage3ValidationReport { ok: findings.is_empty(), findings }
+fn report(
+    findings: Vec<Stage3ValidationFinding>,
+    regular_file_oracle: Option<EquivalenceReport>,
+) -> Stage3ValidationReport {
+    Stage3ValidationReport { ok: findings.is_empty(), findings, regular_file_oracle }
 }
 
 #[cfg(test)]
@@ -671,17 +851,35 @@ mod tests {
     #[test]
     fn exact_set_rejects_unmanifested_files_and_directories() {
         let root = test_root("exact-set");
-        let bundle = published_test_bundle(&root, Stage3Profile::RegularFile);
-        assert!(validate_stage3_evidence_bundle(Stage3Profile::RegularFile, &bundle, &root).ok);
+        let bundle = published_test_bundle(&root, Stage3Profile::LogicalRequest);
+        assert!(validate_stage3_evidence_bundle(Stage3Profile::LogicalRequest, &bundle, &root).ok);
 
         fs::write(root.join("surprise.bin"), b"not manifest").unwrap();
-        let report = validate_stage3_evidence_bundle(Stage3Profile::RegularFile, &bundle, &root);
+        let report = validate_stage3_evidence_bundle(Stage3Profile::LogicalRequest, &bundle, &root);
         assert_has_code(&report, "unexpected-stage3-artifact-entry");
         fs::remove_file(root.join("surprise.bin")).unwrap();
 
         fs::create_dir(root.join("unexpected-work-tree")).unwrap();
-        let report = validate_stage3_evidence_bundle(Stage3Profile::RegularFile, &bundle, &root);
+        let report = validate_stage3_evidence_bundle(Stage3Profile::LogicalRequest, &bundle, &root);
         assert_has_code(&report, "unexpected-stage3-artifact-entry");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn regular_file_profile_rejects_invalid_raw_observations() {
+        let root = test_root("invalid-regular-file-observation");
+        let bundle = published_test_bundle(&root, Stage3Profile::RegularFile);
+        let report = validate_stage3_evidence_bundle(Stage3Profile::RegularFile, &bundle, &root);
+
+        assert_has_code(&report, "regular-file-semantic-oracle-rejected");
+        assert!(
+            !report
+                .regular_file_oracle
+                .as_ref()
+                .expect("regular-file report must retain the oracle result")
+                .accepted
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -713,10 +911,10 @@ mod tests {
     #[test]
     fn gate_requires_input_bytes_to_match_the_root_bundle() {
         let root = test_root("bundle-bytes");
-        let bundle = published_test_bundle(&root, Stage3Profile::RegularFile);
+        let bundle = published_test_bundle(&root, Stage3Profile::LogicalRequest);
         let differently_formatted = serde_json::to_vec(&bundle).unwrap();
         let result = gate_stage3_evidence_bundle_json_with_artifacts(
-            Stage3Profile::RegularFile,
+            Stage3Profile::LogicalRequest,
             &differently_formatted,
             &root,
         );
@@ -735,6 +933,13 @@ mod tests {
         let wit_world = write_test_artifact(root, "inputs/world.wit", b"world");
         let profile_manifest = write_test_artifact(root, "inputs/profile.json", b"profile");
         let configuration = write_test_artifact(root, "inputs/configuration.json", b"config");
+        let raw_observations = match profile {
+            Stage3Profile::RegularFile => vec![
+                write_test_artifact(root, STAGE3A_CONTROL_OBSERVATION_FILE, b"control"),
+                write_test_artifact(root, STAGE3A_CANDIDATE_OBSERVATION_FILE, b"candidate"),
+            ],
+            Stage3Profile::LogicalRequest => Vec::new(),
+        };
         let cases = profile
             .cases()
             .iter()
@@ -782,6 +987,7 @@ mod tests {
             wit_world,
             profile_manifest,
             configuration,
+            raw_observations,
             runtime: Stage3RuntimeScope {
                 source: identity.clone(),
                 destination: identity,

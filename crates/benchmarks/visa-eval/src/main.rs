@@ -25,7 +25,7 @@ subcommands:
   snapshot-size      portable snapshot size, field by field
   restart-baseline   journal replay against a lossy read-the-last-value restart
   digest-cost        full-state replay cost versus an independent Merkle prototype
-  evidence-overhead  producer normalization and outer verification of retained Stage 3A evidence
+  evidence-overhead  raw-observation oracle and production outer-gate cost
   behavior-defects   independent feature-gated behavior-injection driver
   all                every production measurement above, in that order
   paper              production measurements plus evidence-overhead
@@ -110,7 +110,7 @@ fn run() -> Result<(), String> {
             "ordering": {
                 "effect_configurations": "counterbalanced six-permutation catalog across runs",
                 "steady_state": "key-value arm fixed first; timer and SQLite baselines alternate by run",
-                "evidence": "core and child-gate arm order counterbalanced by run and iteration",
+                "evidence": "declared-digest control, independent raw oracle, and production outer-gate arms counterbalanced by run and iteration",
             },
         }),
     )?;

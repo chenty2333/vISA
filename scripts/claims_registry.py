@@ -62,6 +62,10 @@ GRANDFATHERED_EARNED_CLAIMS = {
     "named-target-substrate-continuity-v1",
     "strict-cross-runtime-continuity",
 }
+CANONICAL_LIFECYCLE_CLAIMS = {
+    "bounded-wanco-regular-file-carrier-composition-v1",
+    "cross-runtime-regular-file-continuity-v1",
+}
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -200,16 +204,17 @@ def validate_acceptance_ref(
     label = f"{claim_id}.acceptance_ref"
     require(isinstance(acceptance, dict), f"{label} must be an object")
 
-    if claim_id in GRANDFATHERED_EARNED_CLAIMS:
+    if claim_id in GRANDFATHERED_EARNED_CLAIMS | CANONICAL_LIFECYCLE_CLAIMS:
         exact_keys(acceptance, HISTORICAL_ACCEPTANCE_KEYS, label)
-        require(
-            status in {"earned", "retired"},
-            f"grandfathered claim {claim_id} cannot return to candidate",
-        )
-        require(
-            not predecessors,
-            f"{claim_id} historical acceptance cannot have predecessors",
-        )
+        if claim_id in GRANDFATHERED_EARNED_CLAIMS:
+            require(
+                status in {"earned", "retired"},
+                f"grandfathered claim {claim_id} cannot return to candidate",
+            )
+            require(
+                not predecessors,
+                f"{claim_id} historical acceptance cannot have predecessors",
+            )
         kind = acceptance["kind"]
         relative = safe_relative_path(acceptance["path"], f"{label}.path")
         heading = acceptance["heading"]
@@ -517,8 +522,8 @@ def validate_registry(registry: dict[str, Any], root: Path = ROOT) -> None:
             require("required" in roles, f"candidate {claim_id} has no required CI evidence")
         elif claim["status"] == "earned":
             require(
-                any(role in {"regresses", "supports"} for role in roles),
-                f"earned {claim_id} has no CI regression or support binding",
+                any(role in {"regresses", "required", "supports"} for role in roles),
+                f"earned {claim_id} has no required, regression, or support CI binding",
             )
         else:
             require(not roles, f"retired {claim_id} remains bound to CI")

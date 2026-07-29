@@ -16,6 +16,11 @@ use visa_conformance::{
     Stage3EvidenceBundle, Stage3Profile, Stage3RuntimeIdentity, Stage3RuntimeScope,
     stage3_registry_sha256, validate_stage3_evidence_bundle_for_publication,
 };
+use visa_regular_file_observation::{
+    REGULAR_FILE_CANDIDATE_OBSERVATION_FILE, REGULAR_FILE_CONTROL_OBSERVATION_FILE,
+    RecordingCoverage, RegularFileCaseObservation, RegularFileObservationBundle,
+    validate_recording_bundle,
+};
 
 use crate::component;
 
@@ -32,6 +37,14 @@ pub struct Stage3CaseCapture {
     pub trace: serde_json::Value,
     pub file_before: Vec<u8>,
     pub file_after: Vec<u8>,
+    pub raw_observation: RegularFileCaseObservation,
+}
+
+pub struct Stage3aPublication<'a> {
+    pub runtime: Stage3RuntimeScope,
+    pub control_observation: &'a RegularFileObservationBundle,
+    pub candidate_observation: &'a RegularFileObservationBundle,
+    pub captures: &'a [Stage3CaseCapture],
 }
 
 pub struct Stage3bCaseCapture {
@@ -100,11 +113,12 @@ pub fn publish_stage3a(
     root: &Path,
     started_at_unix_ms: u64,
     finished_at_unix_ms: u64,
-    runtime: Stage3RuntimeScope,
     profile_manifest: &impl Serialize,
     configuration: &impl Serialize,
-    captures: &[Stage3CaseCapture],
+    publication: Stage3aPublication<'_>,
 ) -> Result<PathBuf, String> {
+    let Stage3aPublication { runtime, control_observation, candidate_observation, captures } =
+        publication;
     let profile = Stage3Profile::RegularFile;
     if captures.len() != profile.cases().len()
         || !captures
@@ -129,6 +143,14 @@ pub fn publish_stage3a(
         write_json_artifact(root, "inputs/regular-file-profile.json", profile_manifest)?;
     let configuration =
         write_json_artifact(root, "inputs/stage3a-configuration.json", configuration)?;
+    validate_recording_bundle(control_observation, RecordingCoverage::CompleteRegistry)
+        .map_err(|findings| format!("invalid Stage3A control observation: {findings:?}"))?;
+    validate_recording_bundle(candidate_observation, RecordingCoverage::CompleteRegistry)
+        .map_err(|findings| format!("invalid Stage3A candidate observation: {findings:?}"))?;
+    let raw_observations = vec![
+        write_json_artifact(root, REGULAR_FILE_CONTROL_OBSERVATION_FILE, control_observation)?,
+        write_json_artifact(root, REGULAR_FILE_CANDIDATE_OBSERVATION_FILE, candidate_observation)?,
+    ];
 
     let mut cases = Vec::with_capacity(captures.len());
     for capture in captures {
@@ -176,6 +198,7 @@ pub fn publish_stage3a(
         wit_world,
         profile_manifest,
         configuration,
+        raw_observations,
         runtime,
         cases,
     };
@@ -266,6 +289,7 @@ pub fn publish_stage3b(
         wit_world,
         profile_manifest,
         configuration,
+        raw_observations: Vec::new(),
         runtime: Stage3RuntimeScope {
             source: runtime_identity(&runtime),
             destination: runtime_identity(&runtime),

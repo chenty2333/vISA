@@ -246,8 +246,10 @@ runners and independent structural bundle verifiers, the unchanged Strict Stage
 2 control remained green on the stage-closing implementation revision, and that
 revision passed pushed CI at its exact commit. The separate Stage 3A
 regular-file successor is also earned across all four
-Wasmtime/source-locked-Wacogo directions under the lifecycle closure recorded
-below; Stage 3B remains Wasmtime-to-Wasmtime.
+Wasmtime/source-locked-Wacogo directions through verdict-free observations and
+independent semantic replay. A separate same-host Wanco AOT cell composes a real
+compute checkpoint carrier with vISA rebinding for two named file relations;
+Stage 3B remains Wasmtime-to-Wasmtime.
 
 The completed Strict Stage 2 timer/KV matrix is the immutable control baseline
 for this widening step. Stage 3 does not modify or re-sign its Component,
@@ -260,8 +262,11 @@ correct result is not always direct reconstruction.
 
 Implementation status: the separate regular-file WIT world, guest, typed
 profile, portable state codec, Wasmtime adapter, Linux host provider, 12-case
-system runner, evidence schema, registry lock, and independent structural
-verifier are in place. The executable gate passes all 12 accepted cases for the
+system runner, evidence schema, registry lock, structural bundle verifier, and
+verdict-free raw-observation oracle are in place. The oracle
+owns the 12-case registry and independently reconstructs lifecycle, file state,
+canonical content digests, terminal state, and route-neutral observables. The
+executable gate passes all 12 accepted cases for the
 `bounded-regular-file-continuity` claim.
 
 The portable state contains logical object identity, relative path, logical
@@ -303,24 +308,39 @@ to pass in all four Wasmtime/source-lock-bound-Wacogo directions on x86-64
 Linux: Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo, Wacogo-to-Wasmtime, and
 Wacogo-to-Wacogo. Every cell must consume one immutable common input, retain
 exact Component, WIT, profile, provider, runtime-lineage, sidecar, and
-configuration artifacts, and participate in one typed outer normalized
-comparison. The source-lock and no-fallback rules remain mandatory.
+configuration artifacts, route and endpoint topology, and participate in one
+typed outer semantic comparison. The source-lock and no-fallback rules remain
+mandatory. A 20-entry fully resealed audit separately classifies 15 semantic
+defects, two integrity tampers, two benign equivalents, and one faithful-capture
+host boundary.
 
 The successor does not cover unmodified upstream Wacogo, logical requests,
 arbitrary filesystem objects, another ISA or substrate, cross-host execution,
-or joint-handoff composition. It remains candidate until the four-direction
-gate, detector contract, repeated stability gate, exact-SHA CI, and permanent
-paper-artifact receipt all close on one accepted revision.
+host attestation, or joint-handoff composition. It is earned when the
+four-direction gate, detector contract, repeated stability gate, clean exact-SHA
+canonical validation, and relocated verification close on one revision.
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:scope:end -->
 
-Lifecycle closure (2026-07-27): the successor is earned at accepted revision
-`3bd9eaad5aab3e792ca793e26bd064f403f626db`. Exact-SHA workflow run
-[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012)
-completed all 13 qualification jobs on attempt 1. The immutable
-[GitHub release](https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence)
-and [Zenodo DOI](https://doi.org/10.5281/zenodo.21627497) retain identical
-archive bytes; the permanent receipt is
-[`claims/receipts/cross-runtime-regular-file-continuity-v1.json`](../claims/receipts/cross-runtime-regular-file-continuity-v1.json).
+The evidence tree is reproducible transient output. Permanent external
+retention is optional and is not part of claim acceptance.
+
+#### Wanco AOT compute-carrier composition
+
+`bounded-wanco-regular-file-carrier-composition-v1` fixes a source-locked Wanco
+AOT runtime, same-host x86-64 Linux, and exactly `read-write-offset` plus
+`append-continuity`. Each of three repeats compares one uninterrupted control
+with two fresh-process checkpoint/restore routes through the same verdict-free
+observation/oracle path:
+
+- `carrier-only` must be rejected because compute-state restoration alone does
+  not establish a destination file binding; and
+- `vISA-plus-carrier` must be accepted after portable file state is transferred
+  and rebound at a fresh destination.
+
+The result separates compute-state carriage from resource continuity. It does
+not claim arbitrary Wanco applications, other file relations or resource
+families, cross-host or cross-ISA Wanco, binary portability, or a production
+migration service.
 
 ### Stage 3B -- bounded logical-request continuity
 

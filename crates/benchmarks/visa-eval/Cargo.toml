@@ -24,6 +24,7 @@ substrate_api = { path = "../../backend/substrate_api" }
 substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
 visa-composite-cell = { path = "../../testing/visa-composite-cell" }
 visa-conformance = { path = "../../testing/visa-conformance" }
+visa-regular-file-oracle = { path = "../../testing/visa-regular-file-oracle" }
 visa_component_adapter = { path = "../../runtime/visa_component_adapter", features = ["test-control"] }
 visa_profile = { path = "../../core/visa_profile" }
 visa_runtime = { path = "../../runtime/visa_runtime", features = ["test-control"] }

@@ -131,6 +131,67 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
         ):
             CONTRACT.check_claim_workflow_bindings(jobs)
 
+    def test_wanco_lane_cannot_build_the_unused_dev_image(self) -> None:
+        jobs = copy.deepcopy(self.jobs)
+        builds = CONTRACT.steps_using(
+            jobs["docker-claim-gates"], "docker/build-push-action@"
+        )
+        del builds[0]["if"]
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"must skip the unused vISA development image build",
+        ):
+            CONTRACT.check_wanco_carrier_host_lane(jobs["docker-claim-gates"])
+
+    def test_wanco_lane_cannot_inspect_an_omitted_dev_image(self) -> None:
+        jobs = copy.deepcopy(self.jobs)
+        inspection = CONTRACT.step_with_name(
+            jobs["docker-claim-gates"], "Inspect exact-SHA Docker image"
+        )
+        inspection["if"] = "${{ always() }}"
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"must skip inspection of the omitted development image",
+        ):
+            CONTRACT.check_wanco_carrier_host_lane(jobs["docker-claim-gates"])
+
+    def test_wanco_canonical_evidence_closure_is_wired(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+            encoding="utf-8"
+        )
+        CONTRACT.check_wanco_canonical_evidence_closure(gate, runner)
+
+    def test_wanco_ci_cannot_drop_canonical_run_validation(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+            encoding="utf-8"
+        )
+        mutated = gate.replace(
+            "canonical six-dimensional matrix-run closure",
+            "custom receipt only",
+        )
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"validate the canonical evidence-matrix run",
+        ):
+            CONTRACT.check_wanco_canonical_evidence_closure(mutated, runner)
+
+    def test_wanco_negative_cannot_become_an_untyped_rejection(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+            encoding="utf-8"
+        )
+        mutated = runner.replace(
+            'finding["code"] == "observable-projection-mismatch"',
+            'finding["code"] != ""',
+        )
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"structural negative with semantic mismatches",
+        ):
+            CONTRACT.check_wanco_canonical_evidence_closure(gate, mutated)
+
     def test_nonmatrix_artifact_drift_is_rejected(self) -> None:
         jobs = copy.deepcopy(self.jobs)
         uploads = CONTRACT.steps_using(

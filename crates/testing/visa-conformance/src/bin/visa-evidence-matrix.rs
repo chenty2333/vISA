@@ -10,7 +10,8 @@ fn main() -> ExitCode {
         return ExitCode::from(64);
     };
     let run_path = arguments.next().map(PathBuf::from);
-    if arguments.next().is_some() {
+    let artifact_root = arguments.next().map(PathBuf::from);
+    if arguments.next().is_some() || run_path.is_some() != artifact_root.is_some() {
         usage(&program);
         return ExitCode::from(64);
     }
@@ -21,7 +22,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Some(run_path) = run_path {
+    if let (Some(run_path), Some(artifact_root)) = (run_path, artifact_root) {
         let run_bytes = match fs::read(&run_path) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -29,7 +30,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-        let report = validate_evidence_matrix_run_json(&matrix_bytes, &run_bytes);
+        let report = validate_evidence_matrix_run_json(&matrix_bytes, &run_bytes, &artifact_root);
         if report.ok {
             println!(
                 "evidence matrix run closed: {} claims, sha256={}, git={}",
@@ -67,5 +68,8 @@ fn main() -> ExitCode {
 }
 
 fn usage(program: &std::path::Path) {
-    eprintln!("usage: {} <evidence-matrix.json> [evidence-matrix-run.json]", program.display());
+    eprintln!(
+        "usage: {} <evidence-matrix.json> [<evidence-matrix-run.json> <artifact-root>]",
+        program.display()
+    );
 }

@@ -922,79 +922,23 @@ eight independent qualification jobs and the exact-SHA closure in Actions run
 at a different root. The complete receipt is recorded in
 [validation](VALIDATION.md#stage-4-closure-receipt).
 
-Current CI separates repository quality from claim qualification. One job runs
-`full`; seven matrix lanes independently run Stage 1, JcoNode, legacy Stage 2,
-Strict Stage 2, Stage 3A, cross-runtime Stage 3A, and Stage 3B; a separate lane
-runs the complete Stage 4
-aggregate, one separate Docker lane runs the bounded reference/HostSubstrate
-joint-handoff cell, and one host-built lane runs the clean exact-SHA Nexus-local,
-process, older logical-request, and admission-ordered qualification publishers.
-A host-only claim-closure lane uses only `contents: read`, `actions: read`, and
-`attestations: read` to verify committed receipts and permanent release assets.
-A final `Exact-SHA qualification closure` job fails unless all twelve
-prerequisite job executions succeed for the same source SHA, making thirteen jobs
-including closure. The reference-only lane does not qualify Nexus, and neither
-joint lane substitutes for the other. Each Docker lane first makes five bounded
-attempts to preload BuildKit v0.31.2 by its exact OCI index digest, then runs the
-digest-bound driver through Buildx v0.35.0. The driver resolves Docker Hub
-content through the configured `mirror.gcr.io` mirror, including the
-digest-pinned Debian base. Every Docker image is built from that checkout and
-tagged `visa-dev:<SHA>`. Claim evidence and logs upload from
-`.ci-artifacts/` on gate success or failure. Pull-request artifacts are retained
-for 3 days and push artifacts for 14 days.
+Current CI separates repository quality from claim qualification. Independent
+lanes cover Stage 1, JcoNode, legacy and strict Stage 2, the Stage 3
+predecessors, cross-runtime Stage 3A, Wanco carrier composition, Stage 4, and
+the bounded joint-handoff axes. The final exact-SHA closure requires every
+declared prerequisite job to succeed for the same source revision. The
+reference-only joint lane does not qualify Nexus, and neither joint lane
+substitutes for the other. Docker images are built from that checkout and
+tagged with the revision; claim evidence and logs upload from `.ci-artifacts/`
+on gate success or failure.
 
-After a clean attempt-1 push run closes all thirteen jobs for the candidate
-`cross-runtime-regular-file-continuity-v1` revision, build its permanent carrier
-without extracting or recompressing the two Actions artifacts:
-
-```sh
-python3 scripts/build-claim-archive.py \
-  --run-id <accepted-run-id> \
-  --revision <accepted-head-sha> \
-  --output target/claim-archives/cross-runtime-regular-file-continuity-v1
-```
-
-The builder rechecks the live run, every job, the exact closure job, artifact
-ids, original ZIP sizes and API SHA-256 digests; creates a single-ref Git bundle
-for the accepted revision; emits sorted `SHA256SUMS` and exact rerun commands;
-then writes and independently validates a deterministic, sorted USTAR archive.
-It refuses rerun attempts, failed jobs, a non-push run, a checkout at another
-revision, a dirty checkout, an existing output path, and any downloaded-byte
-mismatch.
-
-Publish that validated output only after the accepted run and revision have
-been recorded. `ZENODO_ACCESS_TOKEN` must be a production Zenodo token with
-`deposit:write` and `deposit:actions`; it is sent only in authorization headers.
-The release tag is fixed as
-`cross-runtime-regular-file-continuity-v1-evidence`:
-
-```sh
-ZENODO_ACCESS_TOKEN=<token> \
-python3 scripts/publish-claim-archive.py \
-  --build-root target/claim-archives/cross-runtime-regular-file-continuity-v1 \
-  --creator '<Family name, Given names>'
-```
-
-Before any remote write, the publisher revalidates the archive, manifest,
-`BUILD-RESULT.json`, candidate policy, exact accepted revision, canonical tag,
-repository immutable-release setting, and any pre-existing tag or release. It
-streams the tar through Zenodo's bucket API, verifies the resulting MD5 and
-published bytes independently by SHA-256, creates or reconciles the one-asset
-immutable GitHub release, verifies both GitHub attestations, and writes the
-closure receipt only after both permanent copies match. It records the Zenodo
-deposition id and all immutable inputs in `PUBLICATION-STATE.json`; rerun the
-same command after interruption. An explicitly supplied
-`--zenodo-deposition-id` is accepted only when it matches that state, preventing
-duplicate records or recovery against different bytes.
-
-Commit the publisher's receipt and archive manifest together with the lifecycle
-promotion: change the claim registry from `candidate` to `earned`, replace the
-pending receipt kind and digest, change its required CI role to `regresses`, and
-change exactly the four successor cells in `claims/evidence-matrix.json` from
-`candidate` to `qualified`. The permanent verifier normalizes only those four
-disposition changes; every coordinate, boundary, non-claim, run requirement,
-workflow binding, semantic-contract byte, and other implementation reference
-must remain identical to the accepted revision.
+`cross-runtime-regular-file-continuity-v1` and
+`bounded-wanco-regular-file-carrier-composition-v1` use canonical validation:
+one clean exact-SHA run must satisfy their committed matrix, semantic oracle,
+mutation, repeat, and relocation contracts. Their full evidence directories
+are reproducible transient output. CI artifact retention or an optional external
+copy can aid debugging and byte-for-byte review, but neither is an acceptance
+condition.
 
 Accepted implementation `d3b07f1114cb49e26dd62fb252a895022ac2a743`
 completed the clean local and Docker gates, the same-revision eleven-job CI
@@ -1017,9 +961,13 @@ translated execution path, not a fully independent Component Model
 implementation. The separate source-lock-bound Wasmtime/Wacogo v3 matrix
 supplies that independence and only the x86-64 Linux timer/KV
 `strict-cross-runtime-continuity` claim. Stage 3A and Stage 3B add only the two
-bounded Wasmtime-to-Wasmtime regular-file and logical-request claims. Completed
+bounded Wasmtime-to-Wasmtime regular-file and logical-request claims; the
+separate Stage 3A successor qualifies the regular-file profile across Wasmtime
+and source-locked Wacogo, and the Wanco cell adds only its two-case compute
+carrier composition. Completed
 Stage 4 adds only the named native/QEMU-user target-substrate and emulated
-x86-64/AArch64 timer/KV claims described above. The joint-handoff gates regress
+x86-64/AArch64 timer/KV claims described above; S4-N separately supplies a
+physical native x86-64/Raspberry-Pi AArch64 supporting matrix. The joint-handoff gates regress
 earned historical `bounded-joint-handoff-refinement-v1` and support candidate
 `bounded-joint-handoff-refinement-v2`. The v1 reference, Nexus-local,
 exact-binary process, and older supplemental logical-request axes remain
@@ -1029,8 +977,8 @@ the admission-ordered witness but remains unearned until final exact-SHA CI,
 downloaded-artifact reverification, permanent source/evidence archival, and its
 new receipt close. This is a bounded same-boot qualification, not evidence for
 the excluded Stage 5 or production behaviors listed above.
-A second Stage 3 runtime, broader file/network families,
-cross-process Stage 3 workers, real hardware/reference-kernel/device cells,
-cross-host execution, confidential, release, performance, and production
-claims remain unavailable until their exact cells and provenance inputs
-execute.
+The remaining cells include a second logical-request runtime, the full
+regular-file profile on native AArch64, a single cell composing runtime, ISA,
+rich-resource, carrier, and fault dimensions, broader file/network families,
+reference-kernel/device execution, confidential continuity, and production
+reliability/performance.

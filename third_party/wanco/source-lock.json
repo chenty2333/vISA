@@ -1,0 +1,32 @@
+{
+  "schema": "visa-wanco-carrier-source-lock-v1",
+  "upstream": {
+    "repository": "https://github.com/tamaroning/wanco.git",
+    "revision": "3c2e400dda5ce51d78333223f6fcbde08e6b198a",
+    "tree": "a84f6f0d15de11b24a7b9566874c4cae3c53474e",
+    "license": "MIT",
+    "license_sha256": "7426766d028214e44e4135e17aaaadd4c0a5be6d0e95e98a6a05d28e494dd792",
+    "cargo_lock_sha256": "2eaf5abcd928763c88e38ffcf24b4d6e38de9978e24ed83573b6c5e6b9635177"
+  },
+  "patches": [
+    {
+      "path": "third_party/wanco/patches/0001-fix-bookworm-llvm-install-order.patch",
+      "sha256": "3509c40630c3a4c565a4a411c1f3f3e411b278df8b678ad5b57dba86417542bf",
+      "scope": "build-only",
+      "purpose": "Install curl explicitly and install libpolly-17-dev only after apt.llvm.org is configured."
+    },
+    {
+      "path": "third_party/wanco/patches/0002-persist-llvm-and-cache-dependencies.patch",
+      "sha256": "652b5c702a9f08d8a4b61bcaee5021269059302580a455a7c3215786f15cd309",
+      "scope": "build-only",
+      "purpose": "Persist the LLVM installation across layers, expose llvm-config, and keep dependency layers independent of source changes."
+    }
+  ],
+  "build": {
+    "base": "debian:bookworm-slim",
+    "llvm_major": 17,
+    "cache_root": "target/.ci-cache/wanco-carrier",
+    "excluded_source_subtree": "benchmark/",
+    "patched_dockerfile_sha256": "efe4c2b37d2025792a47172e6967cef144e9cef116c92dabf98829c27dd487b7"
+  }
+}

@@ -9,8 +9,8 @@
 //! * `snapshot_size` — how large the portable snapshot is, field by field.
 //! * `restart_baseline` — what a full journal replay costs against a lossy
 //!   read-the-last-value restart.
-//! * `evidence_overhead` — what producer-side normalization and independent
-//!   outer verification cost against a publisher-summary-only control.
+//! * `evidence_overhead` — what the independent raw-observation oracle and
+//!   production Stage 3A outer gate cost against a declared-digest control.
 //!
 //! The harness measures the real crates. Nothing here reimplements coordinator
 //! or provider behaviour; the baselines are deliberately separate code paths

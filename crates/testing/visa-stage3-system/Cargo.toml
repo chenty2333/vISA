@@ -14,6 +14,7 @@ sha2.workspace = true
 substrate_api = { path = "../../backend/substrate_api" }
 substrate_host = { path = "../../backend/substrate_host", features = ["test-control"] }
 visa-conformance = { path = "../visa-conformance" }
+visa-regular-file-observation = { path = "../visa-regular-file-observation" }
 visa_component_adapter = { path = "../../runtime/visa_component_adapter" }
 visa_profile = { path = "../../core/visa_profile" }
 visa_runtime = { path = "../../runtime/visa_runtime" }

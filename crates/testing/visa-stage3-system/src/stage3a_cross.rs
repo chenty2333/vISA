@@ -9,13 +9,14 @@ use sha2::{Digest as _, Sha256};
 use visa_conformance::{
     EVIDENCE_MATRIX_RUN_SCHEMA_VERSION, EvidenceMatrix, EvidenceMatrixArtifactReference,
     EvidenceMatrixCellReceipt, EvidenceMatrixCoordinates, EvidenceMatrixRun,
-    EvidenceMatrixVerifierIdentity, MatrixRuntime, STAGE2_STRICT_WACOGO_SIDECAR_SHA256,
-    STAGE2_STRICT_WACOGO_SOURCE_LOCK_SHA256, STAGE3A_CROSS_RUNTIME_CLAIM_ID,
-    STAGE3A_CROSS_RUNTIME_EVIDENCE_FILE, STAGE3A_CROSS_RUNTIME_EVIDENCE_SCHEMA_VERSION,
-    STAGE3A_CROSS_RUNTIME_MATRIX_RUN_FILE, STAGE3A_CROSS_RUNTIME_REQUIRED_RUNS,
-    Stage3ArtifactReference, Stage3EvidenceBundle, Stage3Profile, Stage3aCrossRuntimeCellRun,
-    Stage3aCrossRuntimeEnvironment, Stage3aCrossRuntimeEvidenceBundle, Stage3aCrossRuntimeLineage,
-    evidence_matrix_sha256, gate_stage3_evidence_bundle_json_with_artifacts,
+    EvidenceMatrixSemanticOutcome, EvidenceMatrixVerifierIdentity, MatrixRuntime,
+    STAGE2_STRICT_WACOGO_SIDECAR_SHA256, STAGE2_STRICT_WACOGO_SOURCE_LOCK_SHA256,
+    STAGE3A_CROSS_RUNTIME_CLAIM_ID, STAGE3A_CROSS_RUNTIME_EVIDENCE_FILE,
+    STAGE3A_CROSS_RUNTIME_EVIDENCE_SCHEMA_VERSION, STAGE3A_CROSS_RUNTIME_MATRIX_RUN_FILE,
+    STAGE3A_CROSS_RUNTIME_REQUIRED_RUNS, Stage3ArtifactReference, Stage3EvidenceBundle,
+    Stage3Profile, Stage3aCrossRuntimeCellRun, Stage3aCrossRuntimeEnvironment,
+    Stage3aCrossRuntimeEvidenceBundle, Stage3aCrossRuntimeLineage, evidence_matrix_sha256,
+    gate_stage3_evidence_bundle_json_with_artifacts,
     gate_stage3a_cross_runtime_evidence_bundle_json_with_artifacts,
     normalized_stage3a_semantics_sha256, parse_evidence_matrix_json, sha256_hex,
     validate_evidence_matrix,
@@ -32,11 +33,18 @@ const INCOMPLETE_MARKER: &str = "stage3a-cross-runtime-incomplete";
 const INCOMPLETE_CONTENT: &[u8] = b"cross-runtime Stage 3A publication incomplete\n";
 const ENVIRONMENT_SCHEMA: &str = "visa-stage3a-cross-runtime-environment-v1";
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GitWorktreeSeal {
+    sha: String,
+    dirty: bool,
+}
+
 pub fn run_stage3a_cross_runtime(artifact_root: &Path) -> Result<PathBuf, String> {
     create_root(artifact_root)?;
     let started = now_unix_ms()?;
-    let git_sha = git_output(&["rev-parse", "HEAD"])?;
-    let git_dirty = !git_output(&["status", "--porcelain", "--untracked-files=normal"])?.is_empty();
+    let initial_git_seal = current_git_worktree_seal()?;
+    let git_sha = initial_git_seal.sha.clone();
+    let git_dirty = initial_git_seal.dirty;
     let lineage = publish_lineage(artifact_root)?;
     let matrix_bytes = fs::read("claims/evidence-matrix.json")
         .map_err(|error| format!("cannot read canonical evidence matrix: {error}"))?;
@@ -128,6 +136,7 @@ pub fn run_stage3a_cross_runtime(artifact_root: &Path) -> Result<PathBuf, String
     };
     let bundle_bytes = serde_json::to_vec_pretty(&bundle)
         .map_err(|error| format!("cannot encode cross-runtime Stage 3A bundle: {error}"))?;
+    require_unchanged_git_worktree_seal(&initial_git_seal, &current_git_worktree_seal()?)?;
     publish_atomic(artifact_root, STAGE3A_CROSS_RUNTIME_EVIDENCE_FILE, &bundle_bytes)?;
     fs::remove_file(artifact_root.join(INCOMPLETE_MARKER))
         .map_err(|error| format!("cannot remove cross-runtime publication marker: {error}"))?;
@@ -189,7 +198,7 @@ fn run_cell(
     }
     let child: Stage3EvidenceBundle = serde_json::from_slice(&relocated_bytes)
         .map_err(|error| format!("cannot decode relocated Stage 3A bundle: {error}"))?;
-    let normalized_semantics_sha256 = normalized_stage3a_semantics_sha256(&child)?;
+    let normalized_semantics_sha256 = normalized_stage3a_semantics_sha256(&child, &relocated_root)?;
     let receipt_root = format!("runs/run-{run_ordinal}/receipts/{directory}");
     let validation_report = write_json_artifact(
         root,
@@ -315,7 +324,8 @@ fn matrix_receipt(
         validation_report: matrix_reference(&cell.validation_report),
         environment: matrix_reference(&cell.environment),
         verifier_identity: verifier,
-        passed: true,
+        expected_semantic_outcome: EvidenceMatrixSemanticOutcome::Accepted,
+        observed_semantic_outcome: EvidenceMatrixSemanticOutcome::Accepted,
         relocated_verification: true,
     })
 }
@@ -338,7 +348,8 @@ fn supporting_baseline_receipt(
         validation_report: matrix_reference(&cell.validation_report),
         environment: matrix_reference(&cell.environment),
         verifier_identity: verifier,
-        passed: true,
+        expected_semantic_outcome: EvidenceMatrixSemanticOutcome::Accepted,
+        observed_semantic_outcome: EvidenceMatrixSemanticOutcome::Accepted,
         relocated_verification: true,
     })
 }
@@ -456,9 +467,63 @@ fn git_output(arguments: &[&str]) -> Result<String, String> {
         .map_err(|error| format!("git output is not UTF-8: {error}"))
 }
 
+fn current_git_worktree_seal() -> Result<GitWorktreeSeal, String> {
+    Ok(GitWorktreeSeal {
+        sha: git_output(&["rev-parse", "HEAD"])?,
+        dirty: !git_output(&["status", "--porcelain", "--untracked-files=normal"])?.is_empty(),
+    })
+}
+
+fn require_unchanged_git_worktree_seal(
+    initial: &GitWorktreeSeal,
+    publication: &GitWorktreeSeal,
+) -> Result<(), String> {
+    if initial.sha != publication.sha {
+        return Err(format!(
+            "cross-runtime Stage 3A HEAD changed during evidence generation: {} -> {}",
+            initial.sha, publication.sha
+        ));
+    }
+    if initial.dirty != publication.dirty {
+        return Err(format!(
+            "cross-runtime Stage 3A worktree cleanliness changed during evidence generation: {} -> {}",
+            initial.dirty, publication.dirty
+        ));
+    }
+    Ok(())
+}
+
 fn now_unix_ms() -> Result<u64, String> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?;
     u64::try_from(duration.as_millis()).map_err(|_| "timestamp does not fit u64".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GitWorktreeSeal, require_unchanged_git_worktree_seal};
+
+    fn seal(sha: char, dirty: bool) -> GitWorktreeSeal {
+        GitWorktreeSeal { sha: sha.to_string().repeat(40), dirty }
+    }
+
+    #[test]
+    fn publication_seal_accepts_an_unchanged_checkout() {
+        assert!(require_unchanged_git_worktree_seal(&seal('a', false), &seal('a', false)).is_ok());
+    }
+
+    #[test]
+    fn publication_seal_rejects_a_head_change() {
+        let error =
+            require_unchanged_git_worktree_seal(&seal('a', false), &seal('b', false)).unwrap_err();
+        assert!(error.contains("HEAD changed"));
+    }
+
+    #[test]
+    fn publication_seal_rejects_a_cleanliness_change() {
+        let error =
+            require_unchanged_git_worktree_seal(&seal('a', false), &seal('a', true)).unwrap_err();
+        assert!(error.contains("cleanliness changed"));
+    }
 }

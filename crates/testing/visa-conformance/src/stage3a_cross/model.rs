@@ -1,10 +1,15 @@
+use std::{collections::BTreeMap, fs, path::Path};
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use visa_regular_file_oracle::{
+    DerivedAssertion, DerivedTerminal, ObservableProjection, evaluate_equivalence,
+};
 
 use crate::{
-    EvidenceMatrixArtifactReference, MatrixHandoffTopology, MatrixRuntime, Stage3ArtifactReference,
-    Stage3Assertion, Stage3CaseTerminal, Stage3EvidenceBundle, Stage3Profile,
-    Stage3RuntimeIdentity,
+    EvidenceMatrixArtifactReference, MatrixHandoffTopology, MatrixRuntime,
+    STAGE3A_CANDIDATE_OBSERVATION_FILE, STAGE3A_CONTROL_OBSERVATION_FILE, Stage3ArtifactReference,
+    Stage3EvidenceBundle, Stage3Profile, Stage3RuntimeIdentity,
 };
 
 pub const STAGE3A_CROSS_RUNTIME_EVIDENCE_SCHEMA_VERSION: &str =
@@ -49,23 +54,22 @@ pub struct Stage3aCrossRuntimeEnvironment {
 #[serde(deny_unknown_fields)]
 pub struct Stage3aNormalizedCase {
     pub case_id: String,
-    pub terminal: Stage3CaseTerminal,
+    pub terminal: DerivedTerminal,
+    pub assertions: Vec<Stage3aNormalizedAssertion>,
+    pub observable_projection: ObservableProjection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Stage3aNormalizedAssertion {
+    pub name: String,
     pub passed: bool,
-    pub assertions: Vec<Stage3Assertion>,
-    pub canonical_before_sha256: String,
-    pub canonical_after_sha256: String,
-    pub source_epoch: u64,
-    pub destination_epoch: Option<u64>,
-    pub profile_operations: Vec<String>,
-    pub file_before_sha256: String,
-    pub file_before_size: u64,
-    pub file_after_sha256: String,
-    pub file_after_size: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stage3aNormalizedSemantics {
+    pub oracle_schema_version: String,
     pub profile: Stage3Profile,
     pub registry_sha256: String,
     pub component_sha256: String,
@@ -134,32 +138,55 @@ pub struct Stage3aCrossRuntimeEvidenceGateResult {
 
 pub fn normalize_stage3a_semantics(
     bundle: &Stage3EvidenceBundle,
+    artifact_root: &Path,
 ) -> Result<Stage3aNormalizedSemantics, String> {
     if bundle.profile != Stage3Profile::RegularFile {
         return Err("normalized Stage 3A bundle is not the regular-file profile".to_owned());
     }
-    let mut cases = Vec::with_capacity(bundle.cases.len());
-    for case in &bundle.cases {
-        let before = unique_artifact(&case.artifacts, "file-before.bin")?;
-        let after = unique_artifact(&case.artifacts, "file-after.bin")?;
-        let assertions = canonical_assertions(&case.case_id, &case.assertions);
+    let control = fs::read(artifact_root.join(STAGE3A_CONTROL_OBSERVATION_FILE))
+        .map_err(|error| format!("cannot read regular-file control observation: {error}"))?;
+    let candidate = fs::read(artifact_root.join(STAGE3A_CANDIDATE_OBSERVATION_FILE))
+        .map_err(|error| format!("cannot read regular-file candidate observation: {error}"))?;
+    let oracle = evaluate_equivalence(&control, &candidate);
+    if !oracle.accepted {
+        return Err(format!(
+            "independent regular-file oracle rejected the paired observation: {:?}",
+            oracle.findings
+        ));
+    }
+    let candidate_reports = oracle
+        .candidate_validation
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect::<BTreeMap<_, _>>();
+    let equivalence_cases =
+        oracle.cases.iter().map(|case| (case.case_id.as_str(), case)).collect::<BTreeMap<_, _>>();
+    let mut cases = Vec::with_capacity(Stage3Profile::RegularFile.cases().len());
+    for definition in Stage3Profile::RegularFile.cases() {
+        let report = candidate_reports
+            .get(definition.id)
+            .ok_or_else(|| format!("oracle report is missing {}", definition.id))?;
+        let equivalence = equivalence_cases
+            .get(definition.id)
+            .ok_or_else(|| format!("equivalence report is missing {}", definition.id))?;
+        if !equivalence.equivalent {
+            return Err(format!("{} is not observably equivalent", definition.id));
+        }
         cases.push(Stage3aNormalizedCase {
-            case_id: case.case_id.clone(),
-            terminal: case.terminal,
-            passed: case.passed,
-            assertions,
-            canonical_before_sha256: case.canonical_before_sha256.clone(),
-            canonical_after_sha256: case.canonical_after_sha256.clone(),
-            source_epoch: case.source_epoch,
-            destination_epoch: case.destination_epoch,
-            profile_operations: case.profile_operations.clone(),
-            file_before_sha256: before.sha256.clone(),
-            file_before_size: before.size,
-            file_after_sha256: after.sha256.clone(),
-            file_after_size: after.size,
+            case_id: definition.id.to_owned(),
+            terminal: report.terminal.ok_or_else(|| {
+                format!("{} has no independently derived terminal", definition.id)
+            })?,
+            assertions: normalized_assertions(&report.assertions),
+            observable_projection: equivalence
+                .candidate_projection
+                .clone()
+                .ok_or_else(|| format!("{} has no observable projection", definition.id))?,
         });
     }
     Ok(Stage3aNormalizedSemantics {
+        oracle_schema_version: oracle.schema_version,
         profile: bundle.profile,
         registry_sha256: bundle.registry_sha256.clone(),
         component_sha256: bundle.component.sha256.clone(),
@@ -168,46 +195,28 @@ pub fn normalize_stage3a_semantics(
     })
 }
 
-fn canonical_assertions(case_id: &str, assertions: &[Stage3Assertion]) -> Vec<Stage3Assertion> {
-    let required = Stage3Profile::RegularFile
-        .cases()
+fn normalized_assertions(assertions: &[DerivedAssertion]) -> Vec<Stage3aNormalizedAssertion> {
+    let mut canonical = assertions
         .iter()
-        .find(|definition| definition.id == case_id)
-        .map(|definition| definition.required_assertions)
-        .unwrap_or_default();
-    let mut canonical = assertions.to_vec();
+        .map(|assertion| Stage3aNormalizedAssertion {
+            name: assertion.name.clone(),
+            passed: assertion.passed,
+        })
+        .collect::<Vec<_>>();
     canonical.sort_by(|left, right| {
-        let left_position =
-            required.iter().position(|name| *name == left.name).unwrap_or(usize::MAX);
-        let right_position =
-            required.iter().position(|name| *name == right.name).unwrap_or(usize::MAX);
-        left_position
-            .cmp(&right_position)
-            .then_with(|| left.name.cmp(&right.name))
-            .then_with(|| left.passed.cmp(&right.passed))
+        left.name.cmp(&right.name).then_with(|| left.passed.cmp(&right.passed))
     });
     canonical
 }
 
 pub fn normalized_stage3a_semantics_sha256(
     bundle: &Stage3EvidenceBundle,
+    artifact_root: &Path,
 ) -> Result<String, String> {
-    let normalized = normalize_stage3a_semantics(bundle)?;
+    let normalized = normalize_stage3a_semantics(bundle, artifact_root)?;
     serde_json::to_vec(&normalized)
         .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
         .map_err(|error| format!("cannot encode normalized Stage 3A semantics: {error}"))
-}
-
-fn unique_artifact<'a>(
-    artifacts: &'a [Stage3ArtifactReference],
-    suffix: &str,
-) -> Result<&'a Stage3ArtifactReference, String> {
-    let mut matches = artifacts.iter().filter(|artifact| artifact.uri.ends_with(suffix));
-    let artifact = matches.next().ok_or_else(|| format!("missing {suffix} artifact"))?;
-    if matches.next().is_some() {
-        return Err(format!("duplicate {suffix} artifact"));
-    }
-    Ok(artifact)
 }
 
 impl From<&Stage3ArtifactReference> for EvidenceMatrixArtifactReference {
@@ -221,13 +230,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn semantic_assertions_are_normalized_as_a_set() {
-        let first = Stage3Assertion { name: "transient_observe_retried".to_owned(), passed: true };
-        let second = Stage3Assertion { name: "bytes_preserved".to_owned(), passed: true };
+    fn oracle_assertions_are_normalized_without_trace_sequence_noise() {
+        let first = DerivedAssertion {
+            name: "transient_observe_retried".to_owned(),
+            passed: true,
+            supporting_sequences: vec![7, 8],
+        };
+        let second = DerivedAssertion {
+            name: "bytes_preserved".to_owned(),
+            passed: true,
+            supporting_sequences: vec![19],
+        };
 
         assert_eq!(
-            canonical_assertions("read-write-offset", &[second, first.clone()]),
-            vec![first, Stage3Assertion { name: "bytes_preserved".to_owned(), passed: true },]
+            normalized_assertions(&[first, second]),
+            vec![
+                Stage3aNormalizedAssertion { name: "bytes_preserved".to_owned(), passed: true },
+                Stage3aNormalizedAssertion {
+                    name: "transient_observe_retried".to_owned(),
+                    passed: true,
+                },
+            ]
         );
     }
 }

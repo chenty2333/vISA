@@ -40,7 +40,7 @@
       "resource_profile": "regular-file",
       "handoff_topology": "process-isolated-workers",
       "fault_model": "stage3a-regular-file-twelve-case",
-      "verifier": "stage3a-cross-runtime-normalized",
+      "verifier": "stage3a-cross-runtime-outer-and-raw-oracle",
       "disposition": "declared-gap",
       "claim_ids": [],
       "workflow_binding_ids": [],
@@ -457,7 +457,7 @@
       "resource_profile": "regular-file",
       "handoff_topology": "runner-with-dual-sidecars",
       "fault_model": "stage3a-regular-file-twelve-case",
-      "verifier": "stage3a-cross-runtime-normalized",
+      "verifier": "stage3a-cross-runtime-outer-and-raw-oracle",
       "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
@@ -465,7 +465,7 @@
       "workflow_binding_ids": [
         "stage3a-cross-runtime"
       ],
-      "evidence_boundary": "The source-lock-bound Wacogo derivative executes both regular-file endpoints over the shared host provider contract.",
+      "evidence_boundary": "The source-lock-bound Wacogo derivative executes both regular-file endpoints over the shared host provider contract; the independent raw-observable oracle validates each child before the cross-runtime outer layer compares directions.",
       "non_claims": [
         "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
@@ -485,7 +485,7 @@
       "resource_profile": "regular-file",
       "handoff_topology": "runner-with-source-sidecar",
       "fault_model": "stage3a-regular-file-twelve-case",
-      "verifier": "stage3a-cross-runtime-normalized",
+      "verifier": "stage3a-cross-runtime-outer-and-raw-oracle",
       "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
@@ -493,7 +493,7 @@
       "workflow_binding_ids": [
         "stage3a-cross-runtime"
       ],
-      "evidence_boundary": "The Wacogo source hands portable regular-file state and rebound authority to Wasmtime.",
+      "evidence_boundary": "The Wacogo source hands portable regular-file state and rebound authority to Wasmtime; the independent raw-observable oracle validates the child before cross-runtime outer comparison.",
       "non_claims": [
         "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
@@ -513,7 +513,7 @@
       "resource_profile": "regular-file",
       "handoff_topology": "runner-with-destination-sidecar",
       "fault_model": "stage3a-regular-file-twelve-case",
-      "verifier": "stage3a-cross-runtime-normalized",
+      "verifier": "stage3a-cross-runtime-outer-and-raw-oracle",
       "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
@@ -521,7 +521,7 @@
       "workflow_binding_ids": [
         "stage3a-cross-runtime"
       ],
-      "evidence_boundary": "The Wasmtime source hands portable regular-file state and rebound authority to Wacogo.",
+      "evidence_boundary": "The Wasmtime source hands portable regular-file state and rebound authority to Wacogo; the independent raw-observable oracle validates the child before cross-runtime outer comparison.",
       "non_claims": [
         "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
@@ -541,7 +541,7 @@
       "resource_profile": "regular-file",
       "handoff_topology": "in-process-distinct-stores",
       "fault_model": "stage3a-regular-file-twelve-case",
-      "verifier": "stage3a-cross-runtime-normalized",
+      "verifier": "stage3a-cross-runtime-outer-and-raw-oracle",
       "disposition": "qualified",
       "claim_ids": [
         "cross-runtime-regular-file-continuity-v1"
@@ -549,7 +549,7 @@
       "workflow_binding_ids": [
         "stage3a-cross-runtime"
       ],
-      "evidence_boundary": "The new matrix baseline uses the same common input and normalized verifier as all Wacogo directions.",
+      "evidence_boundary": "The matrix baseline uses the same independent raw-observable oracle and cross-runtime outer comparison as all Wacogo directions.",
       "non_claims": [
         "This cell does not cover unmodified upstream Wacogo, another ISA or substrate, or arbitrary filesystem objects."
       ]
@@ -569,7 +569,7 @@
       "resource_profile": "regular-file",
       "handoff_topology": "in-process-distinct-stores",
       "fault_model": "stage3a-regular-file-twelve-case",
-      "verifier": "stage3-structural",
+      "verifier": "regular-file-raw-observable-oracle",
       "disposition": "qualified",
       "claim_ids": [
         "bounded-regular-file-continuity",
@@ -578,9 +578,9 @@
       "workflow_binding_ids": [
         "stage3a"
       ],
-      "evidence_boundary": "The accepted twelve-case regular-file profile runs through distinct Wasmtime stores and provider instances.",
+      "evidence_boundary": "The accepted twelve-case regular-file profile runs through distinct Wasmtime stores and provider instances, and an independent decoder derives its semantic verdict from raw regular-file observations.",
       "non_claims": [
-        "The structural verifier does not independently recompute every semantic assertion."
+        "The oracle is independent of producer summaries and caches, not independently authored execution attestation."
       ]
     },
     {
@@ -807,6 +807,62 @@
       "non_claims": [
         "The shared baseline does not widen either claim beyond its required cells."
       ]
+    },
+    {
+      "id": "wanco.carrier-only.regular-file",
+      "source": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "destination": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "resource_profile": "regular-file",
+      "handoff_topology": "wanco-carrier-only",
+      "fault_model": "wanco-regular-file-two-case",
+      "verifier": "regular-file-raw-observable-oracle",
+      "disposition": "qualified",
+      "claim_ids": [
+        "bounded-wanco-regular-file-carrier-composition-v1"
+      ],
+      "workflow_binding_ids": [
+        "wanco-carrier"
+      ],
+      "evidence_boundary": "On one x86-64 Linux host, Wanco AOT carrier-only handoff is tested for exactly read-write-offset and append-continuity; the required oracle rejection is recorded as typed expected and observed semantic outcomes, never as equivalence.",
+      "non_claims": [
+        "This negative control does not cover arbitrary Wanco applications, other resource relations, cross-host execution, or cross-ISA execution."
+      ]
+    },
+    {
+      "id": "wanco.visa-plus-carrier.regular-file",
+      "source": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "destination": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "resource_profile": "regular-file",
+      "handoff_topology": "visa-plus-wanco-carrier",
+      "fault_model": "wanco-regular-file-two-case",
+      "verifier": "regular-file-raw-observable-oracle",
+      "disposition": "qualified",
+      "claim_ids": [
+        "bounded-wanco-regular-file-carrier-composition-v1"
+      ],
+      "workflow_binding_ids": [
+        "wanco-carrier"
+      ],
+      "evidence_boundary": "On one x86-64 Linux host, vISA rebinding plus the Wanco AOT carrier is required to preserve raw-observable equivalence for exactly read-write-offset and append-continuity.",
+      "non_claims": [
+        "This positive cell does not cover arbitrary Wanco applications, other resource relations, cross-host execution, or cross-ISA execution."
+      ]
     }
   ],
   "claim_requirements": [
@@ -859,6 +915,18 @@
       "minimum_supporting_runs_per_cell": 1,
       "requires_clean_git": true,
       "requires_relocated_verification": false
+    },
+    {
+      "claim_id": "bounded-wanco-regular-file-carrier-composition-v1",
+      "required_cells": [
+        "wanco.carrier-only.regular-file",
+        "wanco.visa-plus-carrier.regular-file"
+      ],
+      "supporting_cells": [],
+      "minimum_required_runs_per_cell": 3,
+      "minimum_supporting_runs_per_cell": 1,
+      "requires_clean_git": true,
+      "requires_relocated_verification": true
     },
     {
       "claim_id": "cooperative-stateful-component-handoff",

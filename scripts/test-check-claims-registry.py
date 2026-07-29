@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -54,6 +55,20 @@ class ClaimRegistryTests(unittest.TestCase):
             ["git", "clone", "--quiet", "--shared", str(ROOT), str(root)],
             check=True,
         )
+        paths = {"README.md"}
+        for claim in self.registry["claims"]:
+            paths.update(claim["implementation_refs"])
+            for reference in ("scope_ref", "validation_ref", "acceptance_ref"):
+                path = claim[reference].get("path")
+                if isinstance(path, str):
+                    paths.add(path)
+        for relative in sorted(paths):
+            source = ROOT / relative
+            if not source.is_file() or source.is_symlink():
+                continue
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
 
     def test_repository_registry_is_valid(self) -> None:
         self.assert_baseline_valid()
@@ -216,6 +231,19 @@ class ClaimRegistryTests(unittest.TestCase):
             r"bounded-joint-handoff-refinement-v2 non-historical claim lacks a permanent receipt",
             lambda value: value["claims"][1].__setitem__("status", "earned"),
         )
+
+    def test_wanco_claim_uses_canonical_validation_lifecycle(self) -> None:
+        claim = copy.deepcopy(
+            next(
+                claim
+                for claim in self.registry["claims"]
+                if claim["id"]
+                == "bounded-wanco-regular-file-carrier-composition-v1"
+            )
+        )
+        REGISTRY.validate_acceptance_ref(ROOT, claim)
+        claim["status"] = "earned"
+        REGISTRY.validate_acceptance_ref(ROOT, claim)
 
     def test_format_only_v1_receipt_cannot_promote_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

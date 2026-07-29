@@ -30,6 +30,7 @@ sha2.workspace = true
 substrate_api.workspace = true
 visa_local_rpc = { path = "../../core/visa_local_rpc" }
 visa_profile = { path = "../../core/visa_profile" }
+visa-regular-file-oracle = { path = "../visa-regular-file-oracle" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "=1.1.4", features = ["fs"] }
