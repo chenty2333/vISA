@@ -855,8 +855,23 @@ def check_wanco_canonical_evidence_closure(gate: str, runner: str) -> None:
     require(
         'elif route == "carrier-only":' in runner
         and 'case["equivalent"] is False' in runner
-        and 'finding["code"] == "observable-projection-mismatch"' in runner,
+        and '"observable-projection-mismatch") for case_id in case_ids' in runner
+        and "observed_outer_findings == expected_outer_findings" in runner,
         "Wanco carrier-only cell must remain a structural negative with semantic mismatches",
+    )
+    require(
+        "carrier_semantic_triplet = frozenset({" in runner
+        and '"invalid-committed-handoff-lifecycle"' in runner
+        and '"semantic-assertion-failed"' in runner
+        and '"unexpected-derived-terminal"' in runner
+        and "observed_candidate_findings == expected_candidate_findings" in runner,
+        "Wanco carrier-only cell must require its exact per-case semantic finding triplet",
+    )
+    require(
+        'assert not value["candidate_validation"]["findings"]' in runner
+        and 'assert not value["findings"]' in runner
+        and 'case["equivalent"] is True' in runner,
+        "Wanco vISA-plus-carrier cell must retain zero findings and positive equivalence",
     )
 
 

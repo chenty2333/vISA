@@ -25,7 +25,7 @@ evaluates two candidate routes against that same control:
 
 | Route | Handoff behavior | Required oracle result |
 | --- | --- | --- |
-| `carrier-only` | Wanco restores compute progress in a fresh process, but no vISA destination binding is restored. The first resource access fails closed. | Rejected; both registered projections must diverge. |
+| `carrier-only` | Wanco completes its checkpoint/restore lifecycle and restores compute progress in a fresh process, but no vISA handoff lifecycle or destination binding is performed. The first resource access fails closed. | Rejected; both registered projections must diverge. |
 | `visa-plus-carrier` | Wanco restores compute progress while a fresh canonical destination restores, validates, and resumes the portable resource state. | Accepted; both registered projections must equal the uninterrupted control. |
 
 Only these two candidate routes belong to the canonical matrix. The Wanco host
@@ -103,7 +103,12 @@ The `carrier-only` source still uses the same canonical source endpoint before
 capture. Its restored Wanco process receives no destination resource binding;
 the thin host import therefore records `lost-process-local-binding` and returns
 an error at the first destination resource call. This is the carrier-alone
-baseline the positive composition must improve upon.
+baseline the positive composition must improve upon. Wanco's successful
+checkpoint/restore lifecycle is a compute-carrier fact; it is not evidence that
+the nine-action vISA resource-handoff lifecycle occurred. The carrier-only
+observation therefore intentionally contains no successful committed vISA
+lifecycle, while `visa-plus-carrier` records that lifecycle through the
+canonical source and destination endpoints.
 
 ## Observation and independent verdict
 
@@ -129,6 +134,16 @@ closure, and topology. Producer independence here means independence from
 producer summaries, caches, and verdicts; it does not claim independently
 authored software or hostile-host attestation.
 
+The carrier-only negative is deliberately projection-bearing rather than
+structurally unreadable. For each of the two cases, its candidate validation
+must contain exactly
+`invalid-committed-handoff-lifecycle`, `unexpected-derived-terminal`, and
+`semantic-assertion-failed`: no successful vISA handoff lifecycle was observed,
+the derived terminal cannot be a committed handoff, and the resource-continuity
+relation fails. The outer comparison must then contain exactly one
+`observable-projection-mismatch` per case. Conversely, `visa-plus-carrier` must
+have zero candidate-validation and outer findings.
+
 ## Canonical execution and expected closure
 
 Run from a clean native x86-64 Linux checkout with Docker. `HEAD` must equal the
@@ -144,7 +159,9 @@ and performs three independent runs. Each run has one shared uninterrupted
 control and both required candidate routes. The required aggregate is:
 
 ```text
-carrier-only:       3/3 rejected, with exactly two projection mismatches per run
+carrier-only:       3/3 rejected, with exactly two outer projection mismatches
+                    and the exact three-finding lifecycle/terminal/semantic
+                    triplet for each case per run
 visa-plus-carrier:  3/3 accepted, with no oracle findings
 ```
 

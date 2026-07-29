@@ -183,12 +183,44 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
             encoding="utf-8"
         )
         mutated = runner.replace(
-            'finding["code"] == "observable-projection-mismatch"',
-            'finding["code"] != ""',
+            "observed_outer_findings == expected_outer_findings",
+            "bool(observed_outer_findings)",
         )
         with self.assertRaisesRegex(
             CONTRACT.ContractError,
             r"structural negative with semantic mismatches",
+        ):
+            CONTRACT.check_wanco_canonical_evidence_closure(gate, mutated)
+
+    def test_wanco_negative_requires_exact_lifecycle_finding_triplet(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+            encoding="utf-8"
+        )
+        mutated = runner.replace(
+            '        "invalid-committed-handoff-lifecycle",\n',
+            "",
+            1,
+        )
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"exact per-case semantic finding triplet",
+        ):
+            CONTRACT.check_wanco_canonical_evidence_closure(gate, mutated)
+
+    def test_wanco_positive_requires_zero_candidate_findings(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+            encoding="utf-8"
+        )
+        mutated = runner.replace(
+            'assert not value["candidate_validation"]["findings"]',
+            'assert value["candidate_validation"]["findings"] is not None',
+            1,
+        )
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"zero findings and positive equivalence",
         ):
             CONTRACT.check_wanco_canonical_evidence_closure(gate, mutated)
 

@@ -678,6 +678,7 @@ evaluate_pair() {
     python3 - "$report" "$expected" "$oracle_exit" "$route" <<'PY'
 import json
 import sys
+from collections import Counter
 
 report, expected, oracle_exit, route = sys.argv[1:]
 value = json.load(open(report, encoding="utf-8"))
@@ -685,41 +686,88 @@ accepted = value.get("accepted") is True
 assert int(oracle_exit) in {0, 1}, (report, oracle_exit)
 assert accepted == (expected == "accepted"), (report, value.get("findings"))
 assert (int(oracle_exit) == 0) == accepted, (report, oracle_exit, accepted)
-case_ids = {"read-write-offset", "append-continuity"}
-assert {case["case_id"] for case in value["cases"]} == case_ids
-assert value["control_validation"]["accepted"] is True
-assert all(case["accepted"] and case["projection"] is not None
-           for case in value["control_validation"]["cases"])
+assert (route, expected) in {
+    ("carrier-only", "rejected"),
+    ("visa-plus-carrier", "accepted"),
+}, (report, route, expected)
+case_ids = frozenset({"read-write-offset", "append-continuity"})
 
-topology_or_artifact_findings = [
-    finding for finding in value["findings"]
-    if finding["code"] != "observable-projection-mismatch"
-]
-assert not topology_or_artifact_findings, (report, topology_or_artifact_findings)
+def exact_cases(cases, label):
+    assert isinstance(cases, list) and len(cases) == len(case_ids), (
+        report, label, cases
+    )
+    by_id = {case["case_id"]: case for case in cases}
+    assert len(by_id) == len(cases) and frozenset(by_id) == case_ids, (
+        report, label, cases
+    )
+    return by_id
+
+equivalence_cases = exact_cases(value["cases"], "equivalence cases")
+control_cases = exact_cases(
+    value["control_validation"]["cases"], "control validation cases"
+)
+candidate_cases = exact_cases(
+    value["candidate_validation"]["cases"], "candidate validation cases"
+)
+assert value["control_validation"]["accepted"] is True
+assert not value["control_validation"]["findings"], (
+    report, value["control_validation"]["findings"]
+)
+assert all(case["accepted"] is True and case["projection"] is not None
+           for case in control_cases.values()), (report, control_cases)
 
 if expected == "accepted":
     assert value["candidate_validation"]["accepted"] is True
+    assert not value["candidate_validation"]["findings"], (
+        report, value["candidate_validation"]["findings"]
+    )
+    assert all(case["accepted"] is True and case["projection"] is not None
+               for case in candidate_cases.values()), (report, candidate_cases)
     assert not value["findings"]
-    assert all(case["equivalent"] is True for case in value["cases"])
-elif route == "carrier-only":
-    assert all(case["equivalent"] is False for case in value["cases"])
-    assert all(case["control_projection"] is not None and
+    assert all(case["equivalent"] is True and
+               case["control_projection"] is not None and
                case["candidate_projection"] is not None
-               for case in value["cases"])
-    assert len(value["findings"]) == len(case_ids)
-    assert {finding["case_id"] for finding in value["findings"]} == case_ids
-    assert all(finding["code"] == "observable-projection-mismatch"
-               for finding in value["findings"])
-    candidate_cases = value["candidate_validation"]["cases"]
-    assert {case["case_id"] for case in candidate_cases} == case_ids
-    assert all(case["projection"] is not None for case in candidate_cases)
-    allowed_semantic_findings = {
+               for case in equivalence_cases.values()), (
+        report, equivalence_cases
+    )
+elif route == "carrier-only":
+    assert value["candidate_validation"]["accepted"] is False
+    assert all(case["accepted"] is False and case["projection"] is not None
+               for case in candidate_cases.values()), (report, candidate_cases)
+    assert all(case["equivalent"] is False and
+               case["control_projection"] is not None and
+               case["candidate_projection"] is not None
+               for case in equivalence_cases.values()), (
+        report, equivalence_cases
+    )
+
+    expected_outer_findings = Counter(
+        (case_id, "observable-projection-mismatch") for case_id in case_ids
+    )
+    observed_outer_findings = Counter(
+        (finding.get("case_id"), finding.get("code"))
+        for finding in value["findings"]
+    )
+    assert observed_outer_findings == expected_outer_findings, (
+        report, observed_outer_findings
+    )
+
+    carrier_semantic_triplet = frozenset({
+        "invalid-committed-handoff-lifecycle",
         "semantic-assertion-failed",
         "unexpected-derived-terminal",
-    }
-    assert all(finding["code"] in allowed_semantic_findings
-               for finding in value["candidate_validation"]["findings"]), (
-        report, value["candidate_validation"]["findings"]
+    })
+    expected_candidate_findings = Counter(
+        (case_id, code)
+        for case_id in case_ids
+        for code in carrier_semantic_triplet
+    )
+    observed_candidate_findings = Counter(
+        (finding.get("case_id"), finding.get("code"))
+        for finding in value["candidate_validation"]["findings"]
+    )
+    assert observed_candidate_findings == expected_candidate_findings, (
+        report, observed_candidate_findings
     )
 PY
 }
