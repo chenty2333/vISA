@@ -279,10 +279,15 @@ complete inner validation per cell; a versioned typed normalization recomputed
 by an independent outer verifier; exact requested-to-prepared-to-live runtime
 identity chains; and explicit no-fallback proof. The timer/KV control completed
 124/124 executions and 31/31 normalized equality groups. The regular-file
-successor reused the methodology with a new typed normalization, completing
-144/144 case executions over three stability runs per direction with one
-recomputed semantic digest across Wasmtime and an independent-lineage Wacogo
-derivative.
+successor strengthens the methodology: a verdict-free observation-v2 records
+raw bytes, operation/lifecycle events, process status, and endpoint facts; an
+independently decoded oracle owns the 12-case registry, replays file state,
+recomputes canonical content digests, derives terminals and route-neutral
+equivalence, and exposes only derived projections to the outer matrix verifier.
+It completed 144/144 case executions over three stability runs per direction
+across Wasmtime and an independent-lineage Wacogo derivative. A 20-entry,
+fully resealed audit rejected 15/15 semantic defects and 2/2 integrity tampers,
+accepted 2/2 benign equivalents, and recorded one faithful-capture boundary.
 
 Assessment: **this is the more defensible primary contribution.** It is a
 methodology claim backed by a complete executable matrix, it has a crisp
@@ -579,8 +584,9 @@ The 26-entry, fully resealed corpus spans all eight named classes and is
 preclassified as 22 semantic defects, three benign equivalents, and one
 specification boundary. The measured result is 22/22 detected, 3/3 equivalents
 recognized, one boundary recorded, zero mismatches, and zero integrity-family
-hits. Remaining work is explicitly separate: later-stage verifier corpora and
-an evidence-budget curve.
+hits. S3AX separately has its completed 20-entry corpus. Remaining work is
+explicitly separate: efficacy corpora for S3B, Stage 4, and other uncovered
+verifiers, plus an evidence-budget curve.
 
 **P2.2 Composed-resource cell.** Done (2026-07-26):
 `crates/testing/visa-composite-cell` runs one component holding all four

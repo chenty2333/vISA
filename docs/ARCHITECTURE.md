@@ -39,9 +39,13 @@ qualifying native x86-64 Linux and x86-64/AArch64 QEMU-user endpoints with
 artifact-owned executables and identified sysroots. Its 7 unique cells
 completed 217/217 executions and 31/31 normalized equality groups. This does
 not establish AOT-binary portability, real ARM hardware, Stage 3 resource
-coverage across targets, or a second Stage 4 runtime. Confidential continuity
-and production readiness also remain unimplemented. The exact closure receipt
-is in [validation](VALIDATION.md#stage-4-closure-receipt).
+coverage across targets, or a second Stage 4 runtime *within S4-Q*. The
+separate S4-N supporting matrix runs all four native Hx/Ha directions on a
+physical x86-64 host and Raspberry Pi Zero 2 W AArch64 host, with the provider
+remaining on Hx; it is not an earned Stage 4 claim or provider-migration result.
+Confidential continuity and production readiness also remain unimplemented.
+The S4-Q exact closure receipt is in
+[validation](VALIDATION.md#stage-4-closure-receipt).
 
 The separate `bounded-joint-handoff-refinement-v1` research track is earned at
 implementation revision `d3b07f1114cb49e26dd62fb252a895022ac2a743`.
@@ -60,7 +64,7 @@ v1 axes and adds one admission-ordered real-Wasmtime logical-request commit
 witness. It is not earned until exact-governance-SHA CI, permanent evidence
 archival, and its closing receipt complete. This is not Roadmap Stage 5.
 
-Last reviewed: 2026-07-28.
+Last reviewed: 2026-07-29.
 
 The repository is being migrated toward this architecture. This document does
 not claim that every current code path already conforms to it.
@@ -233,11 +237,15 @@ copying the Strict Stage 2 conclusion into it. It fixes one immutable Component,
 WIT world, profile, provider contract, configuration, policy, and 12-case
 registry across Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo,
 Wacogo-to-Wasmtime, and Wacogo-to-Wacogo. Three runs per direction produce 12
-complete inner bundles and 144/144 executions. Its outer verifier recomputes a
-typed normalized semantic digest from each raw observable trace, checks exact
-runtime identity and no fallback, audits aggregate mutations, and accepts the
-same publication after relocation. The logical-request profile remains a
-Wasmtime-only predecessor cell.
+complete inner bundles and 144/144 executions. Each child observation contains
+no verdict. An independent regular-file oracle owns the 12-case registry,
+decodes raw file bytes and operation/lifecycle events, replays state, recomputes
+canonical content digests, derives terminal relations and route-neutral
+projections, and rejects endpoint/topology drift. The outer verifier binds exact
+runtime/no-fallback lineage and compares those oracle-derived projections. A
+20-entry fully resealed audit targets both semantic and aggregate layers before
+the same publication is accepted after relocation. The logical-request profile
+remains a Wasmtime-only predecessor cell.
 
 Each predecessor Stage 3 system runner creates independent source and
 destination Wasmtime stores, coordinators, and provider instances backed by

@@ -31,10 +31,11 @@ Stage 3 predecessor gates are separate Wasmtime-to-Wasmtime resource profiles
 and do not inherit the Strict Stage 2 cross-runtime result. The regular-file
 successor earns its own cross-runtime claim; the logical-request profile does
 not inherit it. The Stage 4 matrix also holds Wasmtime and timer/KV fixed
-and does not inherit that independent-runtime claim. Claim acceptance uses
-canonical exact-SHA validation; retaining a permanent copy of reproducible
-evidence is optional. Confidential, full-tier performance, general product
-release, and production validation remain outside the implemented boundary. A
+and does not inherit that independent-runtime claim. The S3AX and S3W claims use
+canonical exact-SHA validation; retaining a permanent copy of their reproducible
+evidence is optional. Archive-governed claims keep their separate registry
+lifecycle. Confidential, full-tier performance, general product release, and
+production validation remain outside the implemented boundary. A
 separate `system-joint-handoff` lane
 combines a reference protocol subreport with an independently verified
 HostSubstrate vertical for the
@@ -86,15 +87,15 @@ providers, hand-written reports, or direct canonical-state mutation.
 ## Current automated gates
 
 GitHub Actions separates repository quality from claim qualification on pushes
-and pull requests. One Docker job validates Compose and runs `full`. Seven
+and pull requests. One Docker job validates Compose and runs `full`. Eight
 parallel matrix lanes run the same `system`, `system-jco-node`, `system-stage2`,
-`system-stage2-strict`, `system-stage3a`, `system-stage3a-cross-runtime`, and
-`system-stage3b` implementations exposed locally by
+`system-stage2-strict`, `system-stage3a`, `system-stage3a-cross-runtime`,
+`system-stage3b`, and `system-wanco-carrier` implementations exposed locally by
 `scripts/run-docker-ci-gate.sh`; a separate lane runs the complete
 `system-stage4` aggregate, and another separate lane runs
 `system-joint-handoff` with a legacy reference-only artifact name but a distinct
-HostSubstrate evidence subcell. Each
-job rebuilds the development image from the exact checkout, tags it
+HostSubstrate evidence subcell. Each job rebuilds the development image from
+the exact checkout, tags it
 `visa-dev:<SHA>`, and keeps Cargo target output ephemeral instead of restoring
 it across workflow runs. System evidence and logs live outside that target tree
 under `.ci-artifacts/` and upload on gate success or failure, including partial
@@ -103,9 +104,10 @@ log, exit receipt, sidecar, and build receipt. Pull-request artifacts use 3-day
 retention; push artifacts use 14-day retention.
 
 A final fail-closed `Exact-SHA qualification closure` job depends on the quality
-job, all seven claim lanes, Stage 4, the Docker reference/HostSubstrate joint
-lane, and a separate host-built Nexus/process/logical qualification lane, and
-succeeds only when every result is `success`. The local `system-stage3` command
+job, the complete eight-lane claim matrix, Stage 4, the Docker
+reference/HostSubstrate joint lane, and a separate host-built
+Nexus/process/logical qualification lane, and succeeds only when every result
+is `success`. The local `system-stage3` command
 still runs Stage 3A and Stage 3B in sequence; CI runs them as separate
 uploadable lanes. A Stage 4 qualification closure therefore requires the
 complete workflow to pass at the same exact pushed SHA, not merely the Stage 4
@@ -168,7 +170,8 @@ The current CI workflow does not establish:
   `cargo deny` gate or reconciled policy is currently installed;
 - QEMU full-system boot/runtime behavior beyond compiling the legacy kernel
   target; Stage 4 uses QEMU-user and explicitly does not qualify that kernel;
-- a qualified second runtime for either Stage 3 resource profile;
+- a qualified second runtime for the Stage 3 logical-request profile; the
+  regular-file profile has its separate four-direction Wasmtime/Wacogo result;
 - arbitrary directory-tree/device/FIFO/open-fd continuity or arbitrary live
   TCP, socket-state, future/stream, and general async-runtime continuity;
 - a process-isolated Stage 3 worker protocol; the current gates use separate

@@ -2,7 +2,7 @@
 
 Status: current repository workflow.
 
-Last reviewed: 2026-07-28.
+Last reviewed: 2026-07-29.
 
 This document describes commands that exist in the repository today. It is not
 a claim that the current build and test surface validates the target system in
@@ -75,9 +75,10 @@ volumes by default.
 ## Repository gates
 
 The repository exposes two cumulative repository tiers, the Stage 1/2/3
-standalone system gates, one Stage 3 aggregate, and one complete bounded Stage
-4 aggregate with two edit-loop aliases, plus one bounded joint-handoff reference
-gate and source-bound Nexus/process/logical publishers.
+standalone system gates, one Stage 3 aggregate, a Wanco carrier-composition
+gate, and one complete bounded Stage 4 aggregate with two edit-loop aliases,
+plus one physical native-Ha runner, one bounded joint-handoff reference gate,
+and source-bound Nexus/process/logical publishers.
 Run the ordinary edit-loop gate with:
 
 ```sh
@@ -132,6 +133,12 @@ three stability runs per direction with:
 scripts/run-docker-ci-gate.sh system-stage3a-cross-runtime
 ```
 
+Run the source-locked Wanco carrier-only/vISA-plus-carrier matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-wanco-carrier
+```
+
 Run the bounded Stage 3B logical-request gate with:
 
 ```sh
@@ -150,6 +157,20 @@ with:
 ```sh
 scripts/run-docker-ci-gate.sh system-stage4
 ```
+
+Run the physical native Hx/Ha supporting matrix against an AArch64 host with:
+
+```sh
+scripts/run-stage4-native-hardware.sh \
+  --identity-file /secure/path/to/id_ed25519 \
+  --host-key-sha256 SHA256:<preconfirmed-ed25519-fingerprint> \
+  user@aarch64-host
+```
+
+This runner is intentionally host-driven rather than an automated CI tier. It
+requires a clean exact-source checkout, target-native workers, a preconfirmed
+host key, and key-based SSH; see
+[`docs/paper/arm-stage4-runbook.md`](paper/arm-stage4-runbook.md).
 
 `system-stage4-target` and `system-stage4-isa` are names for focused edit
 loops, not smaller claim gates. Both currently fail closed by running the same
@@ -607,9 +628,15 @@ Stage 1 detector corpus, then holds one regular-file Component, WIT world,
 profile, provider contract, configuration, policy, and 12-case registry fixed
 across Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo, Wacogo-to-Wasmtime, and
 Wacogo-to-Wacogo. Each direction runs three times: 12 cell-runs and 144/144
-case executions in total. A separate outer verifier recomputes the typed
-normalized semantics, checks exact runtime identity and no-fallback lineage,
-audits four outer-verifier mutations, and accepts the byte-identical publication
+case executions in total. Every child contains a verdict-free
+`regular-file-observation-v2`; the independent oracle owns the 12-case registry,
+decodes raw bytes and events, replays file state and handoff lifecycle,
+recomputes canonical content digests, derives terminals and route-neutral
+projections, and rejects endpoint/topology drift. The outer verifier checks
+exact runtime identity and no-fallback lineage, then compares only
+oracle-derived projections. A fully resealed 20-entry audit measures 15
+semantic defects, two integrity tampers, two benign equivalents, and one
+faithful-capture host boundary before the byte-identical publication is accepted
 again after relocation. The qualified boundary is the named bounded
 regular-file profile on x86-64 Linux; it does not cover unmodified upstream
 Wacogo, logical requests, another ISA/substrate, cross-host execution, or
@@ -631,16 +658,18 @@ not a general encrypted-channel or remote-effect atomicity claim.
 `system-stage3` runs these two standalone gates in sequence and retains one
 artifact root per profile.
 
-The predecessor `system-stage3a` and `system-stage3b` conformance commands use
-independent **structural bundle verifiers**. The executable runner evaluates the
-case semantics; the verifier then fixes the accepted registry and assertion
-shape, checks scope and runtime identities, and revalidates the published
-artifact sizes and digests. Unlike the typed Stage 2 normalizer, it does not
-recompute every semantic assertion from the raw trace and request/response
-bytes. The cross-runtime Stage 3A successor adds an independently recomputed
-typed normalization over all raw observable traces and cross-cell equality. Its
-inner per-case decisions still come from the Stage 3A runner; the outer
-normalizer is not a second full implementation of every file-profile assertion.
+The Stage 3B conformance command remains an independent **structural bundle
+verifier** over runner-derived request semantics: it fixes the accepted registry
+and assertion shape, checks scope and runtime identities, and revalidates
+published artifact sizes and digests without independently replaying every raw
+frame. Stage 3A now has a stronger two-layer path. Its verdict-free observation
+producer records raw file bytes, operation/lifecycle events, process status, and
+endpoint/carrier facts. A separately decoded oracle owns the regular-file
+registry, replays state, reconstructs content digests and terminal relations,
+and decides equivalence; the cross-runtime outer verifier then binds topology
+and compares those derived projections. This is producer-summary-independent
+semantic recomputation under faithful capture, not independently authored
+software or execution attestation.
 
 The two predecessor Stage 3 profile gates use separate source and destination
 Wasmtime stores, coordinators, and provider instances backed by local SQLite
@@ -877,14 +906,15 @@ Choose validation based on the claim affected by the change:
   substrate, resource profile, authority boundary, and fault boundary.
 
 A claim identity, status, or lineage change must update the registry, README
-index, referenced Roadmap and Validation sections, CI binding, and closure
-receipt together. Candidate-to-earned promotion additionally requires the named
-exact-SHA and permanent-archive evidence; renaming documentation is insufficient.
-The eight pre-registry earned claims are an explicit closed grandfathered set.
-No new root claim can inherit that exemption. A non-historical earned successor
-must instead carry a content-addressed receipt and committed archive manifest;
-candidate entries must carry neither file and keep their receipt digest null.
-For an archive-governed successor, the marked normative blocks inside the
+index, referenced Roadmap and Validation sections, and CI binding together;
+renaming documentation is insufficient. Acceptance policy is explicit per
+claim. Canonical-validation claims such as the regular-file cross-runtime and
+Wanco carrier cells require their clean exact-SHA executable matrix, semantic
+oracle, mutation, repeat, and relocation contracts but no permanent evidence
+copy. Archive-governed successors such as the current joint-handoff v2 candidate
+add a content-addressed receipt and committed archive manifest; candidate
+entries in that lifecycle carry neither file and keep their receipt digest null.
+For such an archive-governed successor, the marked normative blocks inside the
 referenced Roadmap and Validation sections are the semantic contract. The
 registry stores their SHA-256 identities as a mechanical cross-check; changing
 ordinary status or receipt prose cannot change those marked bytes. The unique
@@ -906,11 +936,11 @@ immutable GitHub release attestation, and byte-identical Zenodo record without
 depending on expiring Actions storage.
 
 As rechecked on 2026-07-27, repository-level Immutable Releases are enabled.
-The permanent successor still requires its first fixed archive to be published
-and independently copied before promotion. Branch protection remains a separate
-repository policy: choose and record a ruleset that requires the exact-SHA
-closure before `master` can advance. The in-repository ledger cannot enforce an
-external GitHub branch setting by itself.
+An archive-governed successor still requires its first fixed archive to be
+published and independently copied before promotion. Branch protection remains
+a separate repository policy: choose and record a ruleset that requires the
+exact-SHA closure before `master` can advance. The in-repository ledger cannot
+enforce an external GitHub branch setting by itself.
 
 Report what was run, what passed, what was skipped, and why. A green existing
 gate must not be generalized beyond the proof boundary listed above.

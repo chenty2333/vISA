@@ -2,7 +2,7 @@
 
 Status: current capability sequence; implementation evidence controls progress.
 
-Last reviewed: 2026-07-28.
+Last reviewed: 2026-07-29.
 
 This roadmap is ordered by architectural risk and executable evidence, not by
 dates, crate count, or API breadth. A stage advances only when its exit claims
