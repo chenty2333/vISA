@@ -1,0 +1,59 @@
+diff --git a/lib-rt/osr/asr_exit.cc b/lib-rt/osr/asr_exit.cc
+index 0270d48..23b0a62 100644
+--- a/lib-rt/osr/asr_exit.cc
++++ b/lib-rt/osr/asr_exit.cc
+@@ -50,8 +50,33 @@ static stackmap_table populate_stackmap(const stackmap::Stackmap &stackmap) {
+   return map;
+ }
+ 
++static bool is_supported_stackmap_gap(int32_t pc_offset, uint64_t pc,
++                                      uint32_t instruction_offset) {
++  auto difference =
++      static_cast<int32_t>(instruction_offset) - pc_offset;
++  if (std::abs(difference) <= 3)
++    return true;
++
++#if defined(__x86_64__) || defined(_M_X64)
++  // libunwind reports the return PC immediately after a call. LLVM may place
++  // the stackmap after the four-byte stack adjustment that removes outgoing
++  // stack arguments. Accept that gap only when the intervening machine
++  // instruction is exactly `add imm8, %rsp`; do not broadly weaken record
++  // matching for unrelated code.
++  auto *instruction = reinterpret_cast<const uint8_t *>(pc);
++  const auto adjustment = instruction[3];
++  if (difference == 4 && instruction[0] == 0x48 && instruction[1] == 0x83 &&
++      instruction[2] == 0xc4 && adjustment > 0 && adjustment < 0x80 &&
++      adjustment % 8 == 0)
++    return true;
++#endif
++
++  return false;
++}
++
+ static std::optional<std::shared_ptr<stackmap::StkMapRecord>>
+-lookup_stackmap(stackmap_table &map, int32_t func_index, int32_t pc_offset) {
++lookup_stackmap(stackmap_table &map, int32_t func_index, int32_t pc_offset,
++                uint64_t pc) {
+   auto it = map.find(func_index);
+   if (it == map.end()) {
+     Warn() << "Failed to find records for func_" << std::dec << func_index
+@@ -82,8 +107,8 @@ lookup_stackmap(stackmap_table &map, int32_t func_index, int32_t pc_offset) {
+   // stackmap record is big, the record is possibly different from the actual
+   // stackmap. However, there seems to be no reasonable way to validate the
+   // record.
+-  if (std::abs(static_cast<int32_t>(pc_offset -
+-                                    it2->get()->instruction_offset)) > 3) {
++  if (!is_supported_stackmap_gap(pc_offset, pc,
++                                 it2->get()->instruction_offset)) {
+     Fatal() << "The difference between pc_offset and the instruction offset in "
+                "the stackmap record is too big: pc_offset=0x"
+             << std::hex << pc_offset << ", instruction_offset=0x"
+@@ -113,6 +138,7 @@ asr_exit(const CallerSavedRegisters &regs,
+     auto func_index = std::stoi(func_index_str);
+ 
+     auto record_opt =
+-        lookup_stackmap(stackmap_table, func_index, native_frame.pc_offset);
++        lookup_stackmap(stackmap_table, func_index, native_frame.pc_offset,
++                        native_frame.pc);
+     if (!record_opt.has_value()) {
+       Fatal() << "Failed to find stackmap for " << func_name << ", pc_offset=0x"

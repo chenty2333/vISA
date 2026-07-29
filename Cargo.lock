@@ -2893,6 +2893,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa_wanco_wasi"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "visa_wasi_protocol",
+]
+
+[[package]]
+name = "visa_wasi_host"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "visa_durable_sqlite",
+ "visa_wasi_protocol",
+]
+
+[[package]]
+name = "visa_wasi_migration"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "tempfile",
+ "visa_wasi_protocol",
+]
+
+[[package]]
+name = "visa_wasi_protocol"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+]
+
+[[package]]
 name = "visa_wasmtime"
 version = "0.2.0"
 dependencies = [

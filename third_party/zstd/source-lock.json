@@ -1,0 +1,178 @@
+{
+  "schema": "visa-stock-zstd-source-lock-v1",
+  "upstream": {
+    "repository": "https://github.com/facebook/zstd.git",
+    "tag": "v1.5.7",
+    "tag_object": "ac66b19e6bd6b83238bf008eecc1298105298532",
+    "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+    "tree": "1a3cb277e9b9b37b01811a3c65f6c25d46a8f241",
+    "source_date_epoch": 1739923464,
+    "licenses": [
+      {
+        "path": "LICENSE",
+        "spdx": "BSD-3-Clause",
+        "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+      },
+      {
+        "path": "COPYING",
+        "spdx": "GPL-2.0-only",
+        "sha256": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505"
+      }
+    ]
+  },
+  "source_policy": {
+    "upstream_source_changes": "forbidden",
+    "source_patches": [],
+    "build_recipe": {
+      "path": "scripts/build-stock-zstd.sh",
+      "sha256": "1bc474b24322f8732bb6801815d8d8345b5fa7e54a0c68051750c1a786d66dce"
+    },
+    "compatibility_object": {
+      "path": "third_party/zstd/abi/visa_zstd_posix_compat.c",
+      "sha256": "1d5775d15e23aeee59b1fcab3e88d69111b7d6037bde9c93fe7beb52cd25d591",
+      "relationship": "additional-guest-object-not-upstream-source-patch"
+    },
+    "bridge_workspace": {
+      "path": "third_party/zstd/bridge-workspace.toml",
+      "sha256": "060d9f7528b013a1ee4866b0163e2e9f6f4e51ef6a59021acf418cc0bde3f2c4",
+      "relationship": "isolated-content-locked-workspace-for-stable-wanco-bridge-build"
+    },
+    "bridge_lock": {
+      "path": "third_party/zstd/bridge-Cargo.lock",
+      "sha256": "5ed0988cd3f260145b777531c6281778f409ba89940b75a8c0ac48a354e8dffd",
+      "relationship": "exact-resolved-dependencies-for-isolated-bridge-workspace"
+    }
+  },
+  "wasi_build": {
+    "target": "wasm32-wasi",
+    "compiler": "clang-17",
+    "compiler_version": "Debian clang version 17.0.6 (++20231208085813+6009708b4367-1~exp1~20231208085906.81)",
+    "optimization": "-O1",
+    "dockerfile": {
+      "path": "third_party/zstd/Dockerfile",
+      "sha256": "51e44c588c600bd7b199db2208e89bca39dd87ac65ad6562bd5eea0e1e716757"
+    },
+    "packages": [
+      {
+        "name": "wasi-libc",
+        "version": "0.0~git20220510.9886d3d-2",
+        "sha256": "513e25eeca77f7e31adf928b684714dd656cc6bc70c2970abfe3b4117e3b736f"
+      },
+      {
+        "name": "libclang-rt-17-dev-wasm32",
+        "version": "1:17.0.6~++20231208085813+6009708b4367-1~exp1~20231208085906.81",
+        "sha256": "c87eb2672d2ea22e7757658761f577b8b0179201b118dd9c61740904e97ca282"
+      }
+    ],
+    "expected_wasm_sha256": "35d9fbebbbab83eb9e5c8f2b90ee7998ecdf9edcbe797b879cb28460161e8096",
+    "expected_imports": [
+      [
+        "visa_wasi_metadata_v1",
+        "visa_wasi_metadata_path_chmod"
+      ],
+      [
+        "visa_wasi_metadata_v1",
+        "visa_wasi_metadata_path_chown"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "args_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "args_sizes_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "environ_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "environ_sizes_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "clock_time_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_close"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_fdstat_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_fdstat_set_flags"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_filestat_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_prestat_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_prestat_dir_name"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_read"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_seek"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "fd_write"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "path_create_directory"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "path_filestat_get"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "path_filestat_set_times"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "path_open"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "path_remove_directory"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "path_unlink_file"
+      ],
+      [
+        "wasi_snapshot_preview1",
+        "proc_exit"
+      ]
+    ]
+  },
+  "carrier_build": {
+    "wanco_source_lock": {
+      "path": "third_party/wanco/source-lock.json",
+      "sha256": "0ac3522b0f038610b516fd14bd4bd21780859a1eda7fa30bca3973440b7ef8fb"
+    },
+    "wanco_revision": "3c2e400dda5ce51d78333223f6fcbde08e6b198a",
+    "wanco_compiler_sha256": "0f272f36997ae49fae5adac681536ee45eba926e7f7edd882f73e09a1cec3871",
+    "wanco_runtime_sha256": "7c3c18ef9d60b5c3356b039c3f6776eef74a41de836fa78a70ab757eb43f499d",
+    "optimization": "-O1",
+    "qualification": "wanco-v2-o1-carrier-qualified",
+    "o1_status": {
+      "status": "qualified",
+      "qualification_basis": "canonical-wanco-v2-stackmap-and-lz4-validation"
+    }
+  }
+}

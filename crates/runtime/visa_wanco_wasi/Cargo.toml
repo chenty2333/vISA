@@ -1,0 +1,13 @@
+[package]
+name = "visa_wanco_wasi"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+postcard.workspace = true
+visa_wasi_protocol = { path = "../visa_wasi_protocol" }

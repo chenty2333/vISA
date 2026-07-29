@@ -151,6 +151,10 @@ active_spine_packages=(
     visa_joint_handoff
     visa_local_transport
     visa_durable_sqlite
+    visa_wasi_protocol
+    visa_wasi_host
+    visa_wanco_wasi
+    visa_wasi_migration
     visa_nexus_service
     visa_agent_store
     visa_ownership_service
@@ -264,8 +268,17 @@ gate_joint_handoff_source_lock() {
 }
 
 gate_wanco_carrier_source_lock() {
-    run_gate "source lock: Wanco AOT carrier input and build-only patches" \
+    run_gate "source lock: Wanco AOT carrier input and platform patches" \
         python3 scripts/check-wanco-carrier-source.py
+}
+
+gate_stock_zstd_source_lock() {
+    run_gate "source lock: unmodified stock zstd and transparent carrier inputs" \
+        python3 scripts/check-zstd-source.py
+    run_gate "source lock: stock zstd checker mutation tests" \
+        python3 scripts/test-check-zstd-source.py
+    run_gate "system runner: stock zstd migration matrix unit tests" \
+        python3 scripts/test-run-stock-zstd-migration-matrix.py
 }
 
 gate_nexus_handoff_verifier_self_tests() {
@@ -348,6 +361,7 @@ gate_fast() {
     gate_jco_node_toolchain
     gate_joint_handoff_source_lock
     gate_wanco_carrier_source_lock
+    gate_stock_zstd_source_lock
     gate_nexus_handoff_verifier_self_tests
     gate_active_clippy
     gate_active_tests

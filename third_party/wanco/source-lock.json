@@ -1,5 +1,5 @@
 {
-  "schema": "visa-wanco-carrier-source-lock-v1",
+  "schema": "visa-wanco-carrier-source-lock-v2",
   "upstream": {
     "repository": "https://github.com/tamaroning/wanco.git",
     "revision": "3c2e400dda5ce51d78333223f6fcbde08e6b198a",
@@ -12,21 +12,51 @@
     {
       "path": "third_party/wanco/patches/0001-fix-bookworm-llvm-install-order.patch",
       "sha256": "3509c40630c3a4c565a4a411c1f3f3e411b278df8b678ad5b57dba86417542bf",
-      "scope": "build-only",
+      "scope": "build",
       "purpose": "Install curl explicitly and install libpolly-17-dev only after apt.llvm.org is configured."
     },
     {
       "path": "third_party/wanco/patches/0002-persist-llvm-and-cache-dependencies.patch",
       "sha256": "652b5c702a9f08d8a4b61bcaee5021269059302580a455a7c3215786f15cd309",
-      "scope": "build-only",
+      "scope": "build",
       "purpose": "Persist the LLVM installation across layers, expose llvm-config, and keep dependency layers independent of source changes."
+    },
+    {
+      "path": "third_party/wanco/patches/0003-validate-x86-stackmap-call-frame-gap.patch",
+      "sha256": "b28ff61c61a95480654a9dd4c78288b200546ff133e78f5045482317b0796dd3",
+      "scope": "runtime-correctness",
+      "purpose": "Accept an LLVM stackmap immediately after a positive, ABI-aligned x86-64 outgoing-argument stack adjustment without weakening unrelated record matching."
+    },
+    {
+      "path": "third_party/wanco/patches/0004-enable-and-validate-lz4-checkpoints.patch",
+      "sha256": "dccf48407d8488300423d5e55852465c8bffe49b6d968fada12b44327c39bf3a",
+      "scope": "runtime-correctness",
+      "purpose": "Validate linear-memory bounds before allocation, compress checkpoints, and reject failed, truncated, oversized, or length-mismatched LZ4 blocks."
+    },
+    {
+      "path": "third_party/wanco/patches/0005-pin-platform-build-inputs.patch",
+      "sha256": "35bd74ba149ab63f66f2dde8390a38105aab863ec0cad829fd4a98ab40030c89",
+      "scope": "build",
+      "purpose": "Pin the amd64 Debian base manifest, Rust toolchain, and hyperfine version used by the carrier."
     }
   ],
   "build": {
-    "base": "debian:bookworm-slim",
+    "platform": "linux/amd64",
+    "base": "debian:bookworm-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e",
     "llvm_major": 17,
+    "rust_toolchain": "1.97.1",
+    "hyperfine": "1.20.0",
     "cache_root": "target/.ci-cache/wanco-carrier",
     "excluded_source_subtree": "benchmark/",
-    "patched_dockerfile_sha256": "efe4c2b37d2025792a47172e6967cef144e9cef116c92dabf98829c27dd487b7"
+    "build_recipe": {
+      "path": "scripts/build-wanco-carrier.sh",
+      "sha256": "5ca3e8902a18c9614211549933efaa0e6a252004e9b6dab9aaf7aa0d44a9f99e"
+    },
+    "patched_files": {
+      "Dockerfile": "6a34966874c5ee0c64253dcc547ff75a45af1fb4f65080aac95c24950eb77b47",
+      "lib-rt/chkpt/chkpt_protobuf.cc": "aeb89688d3e87abbca99ed87d424900f71f731cc718004e544e67a69c563456d",
+      "lib-rt/osr/asr_exit.cc": "0892435414bc6c27e4ee37d2b1c6d3d1120912af01498b9b5a82dc9815e8abeb",
+      "lib-rt/wanco.h": "071eca312bcb29afae16b56b69a7c6f7019ebbdc9c33100a722f9d3019747028"
+    }
   }
 }

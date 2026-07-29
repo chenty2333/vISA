@@ -43,7 +43,12 @@ if [[ -e "$source_root/benchmark" ]]; then
     exit 1
 fi
 
-docker build --progress=plain --tag "$image_tag" "$source_root"
+docker build \
+    --platform linux/amd64 \
+    --progress=plain \
+    --provenance=false \
+    --tag "$image_tag" \
+    "$source_root"
 image_id=$(docker image inspect --format '{{.Id}}' "$image_tag")
 llvm_config_version=$(
     docker run --rm "$image_tag" sh -ec \
@@ -52,11 +57,16 @@ llvm_config_version=$(
 rustc_version=$(docker run --rm "$image_tag" rustc --version)
 cargo_version=$(docker run --rm "$image_tag" cargo --version)
 clang_version=$(docker run --rm "$image_tag" sh -ec 'clang++-17 --version | sed -n "1p"')
+hyperfine_version=$(docker run --rm "$image_tag" hyperfine --version)
 wanco_binary_sha256=$(docker run --rm "$image_tag" sha256sum /usr/local/bin/wanco | cut -d' ' -f1)
+runtime_staticlib_sha256=$(
+    docker run --rm "$image_tag" sha256sum /usr/local/lib/libwanco_rt.a | cut -d' ' -f1
+)
 
 python3 - "$cache_root/build-receipt.json" "$revision" "$patch_set_sha" "$image_tag" "$image_id" \
     "$llvm_config_version" "$rustc_version" "$cargo_version" "$clang_version" \
-    "$wanco_binary_sha256" "${patch_paths[@]}" <<'PY'
+    "$hyperfine_version" "$wanco_binary_sha256" "$runtime_staticlib_sha256" \
+    "${patch_paths[@]}" <<'PY'
 import json
 import os
 import sys
@@ -72,22 +82,29 @@ from pathlib import Path
     rustc_version,
     cargo_version,
     clang_version,
+    hyperfine_version,
     wanco_binary_sha256,
+    runtime_staticlib_sha256,
     *patch_paths,
 ) = sys.argv[1:]
 receipt = {
-    "schema": "visa-wanco-carrier-build-receipt-v1",
+    "schema": "visa-wanco-carrier-build-receipt-v2",
     "revision": revision,
-    "build_patch_set_sha256": patch_set_sha,
-    "build_patches": patch_paths,
+    "patch_set_sha256": patch_set_sha,
+    "patches": patch_paths,
     "image_tag": image_tag,
     "image_id": image_id,
+    "platform": "linux/amd64",
     "llvm_sys_170_prefix": "/usr/lib/llvm-17",
     "llvm_config_version": llvm_config_version,
     "rustc_version": rustc_version,
     "cargo_version": cargo_version,
     "clang_version": clang_version,
+    "hyperfine_version": hyperfine_version,
     "wanco_binary_sha256": wanco_binary_sha256,
+    "runtime_staticlib_sha256": runtime_staticlib_sha256,
+    "checkpoint_memory_encoding": "lz4-block-exact-length",
+    "stackmap_gap_policy": "x86-add-imm8-rsp-only",
     "benchmark_subtree_in_build_context": False,
 }
 path = Path(output)

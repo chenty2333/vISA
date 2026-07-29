@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the exact upstream Wanco source and local build-only patches."""
+"""Validate the exact Wanco source and carrier platform patch set."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def main() -> int:
         {"schema", "upstream", "patches", "build"},
         "source lock",
     )
-    if lock["schema"] != "visa-wanco-carrier-source-lock-v1":
+    if lock["schema"] != "visa-wanco-carrier-source-lock-v2":
         fail("unknown source-lock schema")
     upstream = require_keys(
         lock["upstream"],
@@ -90,25 +90,67 @@ def main() -> int:
     build = require_keys(
         lock["build"],
         {
+            "platform",
             "base",
             "llvm_major",
+            "rust_toolchain",
+            "hyperfine",
             "cache_root",
             "excluded_source_subtree",
-            "patched_dockerfile_sha256",
+            "build_recipe",
+            "patched_files",
         },
         "build",
     )
-    if build["base"] != "debian:bookworm-slim" or build["llvm_major"] != 17:
-        fail("unexpected locked build base or LLVM major")
+    if build["platform"] != "linux/amd64":
+        fail("Wanco carrier is currently defined only for linux/amd64")
+    if not str(build["base"]).startswith("debian:bookworm-slim@sha256:"):
+        fail("build base is not digest pinned")
+    if build["llvm_major"] != 17 or build["rust_toolchain"] != "1.97.1":
+        fail("unexpected locked LLVM or Rust toolchain")
+    if build["hyperfine"] != "1.20.0":
+        fail("unexpected locked hyperfine version")
+    build_recipe = require_keys(
+        build["build_recipe"],
+        {"path", "sha256"},
+        "build.build_recipe",
+    )
+    if build_recipe["path"] != "scripts/build-wanco-carrier.sh":
+        fail("unexpected Wanco build recipe path")
+    build_recipe_path = ROOT / str(build_recipe["path"])
+    if not build_recipe_path.is_file() or build_recipe_path.is_symlink():
+        fail("Wanco build recipe is absent or unsafe")
     if (
-        not isinstance(build["patched_dockerfile_sha256"], str)
-        or HEX64.fullmatch(build["patched_dockerfile_sha256"]) is None
+        not isinstance(build_recipe["sha256"], str)
+        or HEX64.fullmatch(build_recipe["sha256"]) is None
+        or sha256(build_recipe_path) != build_recipe["sha256"]
     ):
-        fail("build.patched_dockerfile_sha256 is not a lowercase SHA-256")
+        fail("Wanco build recipe digest mismatch")
+    expected_patched_files = {
+        "Dockerfile",
+        "lib-rt/chkpt/chkpt_protobuf.cc",
+        "lib-rt/osr/asr_exit.cc",
+        "lib-rt/wanco.h",
+    }
+    patched_files = build["patched_files"]
+    if not isinstance(patched_files, dict) or set(patched_files) != expected_patched_files:
+        fail("build.patched_files does not name the complete mutation set")
+    if any(
+        not isinstance(digest, str) or HEX64.fullmatch(digest) is None
+        for digest in patched_files.values()
+    ):
+        fail("build.patched_files contains a malformed SHA-256")
 
     patches = lock["patches"]
-    if not isinstance(patches, list) or len(patches) != 2:
-        fail("exactly two ordered build-only patches are required")
+    if not isinstance(patches, list) or len(patches) != 5:
+        fail("exactly five ordered carrier platform patches are required")
+    expected_scopes = [
+        "build",
+        "build",
+        "runtime-correctness",
+        "runtime-correctness",
+        "build",
+    ]
     checked_patches: list[tuple[dict[str, object], Path]] = []
     for index, raw_patch in enumerate(patches):
         patch = require_keys(
@@ -116,8 +158,8 @@ def main() -> int:
             {"path", "sha256", "scope", "purpose"},
             f"patch[{index}]",
         )
-        if patch["scope"] != "build-only":
-            fail("Wanco runtime/compiler semantics must remain unpatched")
+        if patch["scope"] != expected_scopes[index]:
+            fail(f"patch[{index}] has the wrong scope")
         patch_path = ROOT / str(patch["path"])
         if not patch_path.is_file() or patch_path.is_symlink():
             fail(f"patch is absent or unsafe: {patch_path}")
@@ -149,10 +191,15 @@ def main() -> int:
             fail("upstream Cargo.lock digest mismatch")
         forward_patch_set = b"\n".join(path.read_bytes() for _, path in checked_patches)
         if args.patched:
-            if git(source, "status", "--short") != "M Dockerfile":
-                fail("patched source has changes outside the locked Dockerfile patches")
-            if sha256(source / "Dockerfile") != build["patched_dockerfile_sha256"]:
-                fail("patched Dockerfile differs from the locked build result")
+            status = {
+                line.strip() for line in git(source, "status", "--short").splitlines()
+            }
+            expected_status = {f"M {path}" for path in patched_files}
+            if status != expected_status:
+                fail(f"patched source mutation set differs: {sorted(status)}")
+            for relative, expected_digest in patched_files.items():
+                if sha256(source / relative) != expected_digest:
+                    fail(f"patched source digest differs: {relative}")
         else:
             git(source, "apply", "--check", "-", stdin=forward_patch_set)
             if git(source, "status", "--short"):

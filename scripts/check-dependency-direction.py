@@ -29,6 +29,12 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     ),
     "visa_local_transport": frozenset(),
     "visa_durable_sqlite": frozenset(),
+    "visa_wasi_protocol": frozenset(),
+    "visa_wasi_host": frozenset(
+        {"visa_durable_sqlite", "visa_wasi_protocol"}
+    ),
+    "visa_wanco_wasi": frozenset({"visa_wasi_protocol"}),
+    "visa_wasi_migration": frozenset({"visa_wasi_protocol"}),
     "visa_nexus_service": frozenset({"visa_durable_sqlite", "visa_local_rpc"}),
     "visa_agent_store": frozenset({"visa_durable_sqlite", "visa_local_rpc"}),
     "visa_ownership_service": frozenset(
