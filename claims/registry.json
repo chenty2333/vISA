@@ -209,9 +209,29 @@
         "heading": "Claim-evidence matrix"
       },
       "acceptance_ref": {
-        "kind": "canonical-validation",
-        "path": "docs/VALIDATION.md",
-        "heading": "Claim-evidence matrix"
+        "kind": "permanent-archive-receipt",
+        "path": "claims/receipts/cross-runtime-regular-file-continuity-v1.json",
+        "heading": null,
+        "receipt_sha256": "7d4304bcf5f3eae22b0cb7ea4a8f9749879f4aebb457d31a639f9cfe63ce01b5",
+        "semantic_contracts": {
+          "scope_sha256": "c7bd47d1d353319e7d7da8b483243f2718815f050ab97d27549fbb2293acac7b",
+          "validation_sha256": "f77b1265b51173a4d2c6e7c4a576700c53886d35bd00092a69cebb2b06f9f835"
+        },
+        "evidence_axes": [
+          "exact-sha-closure",
+          "four-direction-runtime-matrix",
+          "regular-file-resource",
+          "relocated-independent-verification",
+          "source-locked-runtime-lineage",
+          "typed-outer-normalization"
+        ],
+        "source_repositories": [
+          "chenty2333/vISA"
+        ],
+        "workflow_artifacts": [
+          "stage3a-cross-runtime-regular-file-system-evidence",
+          "stage3a-regular-file-system-evidence"
+        ]
       },
       "implementation_refs": [
         "claims/evidence-matrix.json",

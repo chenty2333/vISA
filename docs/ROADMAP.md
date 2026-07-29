@@ -308,21 +308,24 @@ to pass in all four Wasmtime/source-lock-bound-Wacogo directions on x86-64
 Linux: Wasmtime-to-Wasmtime, Wasmtime-to-Wacogo, Wacogo-to-Wasmtime, and
 Wacogo-to-Wacogo. Every cell must consume one immutable common input, retain
 exact Component, WIT, profile, provider, runtime-lineage, sidecar, and
-configuration artifacts, route and endpoint topology, and participate in one
-typed outer semantic comparison. The source-lock and no-fallback rules remain
-mandatory. A 20-entry fully resealed audit separately classifies 15 semantic
-defects, two integrity tampers, two benign equivalents, and one faithful-capture
-host boundary.
+configuration artifacts, and participate in one typed outer normalized
+comparison. The source-lock and no-fallback rules remain mandatory.
 
 The successor does not cover unmodified upstream Wacogo, logical requests,
 arbitrary filesystem objects, another ISA or substrate, cross-host execution,
-host attestation, or joint-handoff composition. It is earned when the
-four-direction gate, detector contract, repeated stability gate, clean exact-SHA
-canonical validation, and relocated verification close on one revision.
+or joint-handoff composition. It remains candidate until the four-direction
+gate, detector contract, repeated stability gate, exact-SHA CI, and permanent
+paper-artifact receipt all close on one accepted revision.
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:scope:end -->
 
-The evidence tree is reproducible transient output. Permanent external
-retention is optional and is not part of claim acceptance.
+Lifecycle closure (2026-07-27): the successor is earned at accepted revision
+`3bd9eaad5aab3e792ca793e26bd064f403f626db`. Exact-SHA workflow run
+[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012)
+completed all 13 qualification jobs on attempt 1. The immutable
+[GitHub release](https://github.com/chenty2333/vISA/releases/tag/cross-runtime-regular-file-continuity-v1-evidence)
+and [Zenodo DOI](https://doi.org/10.5281/zenodo.21627497) retain identical
+archive bytes; the permanent receipt is
+[`claims/receipts/cross-runtime-regular-file-continuity-v1.json`](../claims/receipts/cross-runtime-regular-file-continuity-v1.json).
 
 #### Wanco AOT compute-carrier composition
 

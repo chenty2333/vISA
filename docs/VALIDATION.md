@@ -1358,16 +1358,26 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | `bounded-regular-file-continuity` | The fixed 12-case Stage 3A registry through the named Wasmtime source/destination adapter, real scoped Linux file provider, reauthorization/fencing, raw observation bundles, and the independent raw-observable oracle | Arbitrary directory trees, devices, FIFOs, open fds, atomic compare-and-mutate against writers outside the advisory lock/lease protocol, a second runtime, or cross-ISA behavior |
 | `bounded-wanco-regular-file-carrier-composition-v1` | Same-host x86-64 Wanco AOT carrier-only expected rejection and vISA-plus-carrier accepted equivalence for exactly read-write-offset and append-continuity, three clean-SHA runs per cell, plus original-root and relocated oracle validation | Arbitrary Wanco applications, other file relations or resources, cross-host execution, cross-ISA execution, or additional regular-file relations |
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:validation:start -->
-| `cross-runtime-regular-file-continuity-v1` (earned) | One immutable regular-file input and the fixed 12-case registry in all four Wasmtime/source-lock-bound-Wacogo directions; verdict-free per-cell observations; independent lifecycle/file-state/content-digest replay; exact runtime, source-lock, sidecar, Component, WIT, profile, provider, configuration, route, and endpoint lineage; no-fallback proof; 20 fully resealed verifier mutations; relocated verification; repeated stability runs; and clean exact-SHA canonical validation | The cells do not widen the earned Wasmtime-only claim. They do not cover unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host behavior, arbitrary filesystem objects, host attestation, or joint-handoff composition. |
+| `cross-runtime-regular-file-continuity-v1` (candidate) | One immutable regular-file input and the fixed 12-case registry in all four Wasmtime/source-lock-bound-Wacogo directions; complete per-cell semantic evidence; exact runtime, source-lock, sidecar, Component, WIT, profile, provider, and configuration lineage; no-fallback proof; typed outer normalization; relocated verification; repeated stability runs; and an exact-SHA permanent artifact receipt | Candidate cells do not widen the earned Wasmtime-only claim. They do not cover unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host behavior, arbitrary filesystem objects, or joint-handoff composition. |
 
-The claim remains accepted only when the committed six-dimensional matrix names
+The candidate is accepted only when the committed six-dimensional matrix names
 all four required cells, the cross-runtime Stage 3A workflow artifact contains
-their common input and independently recomputed semantic outputs, the full
-12-case catalog passes in every direction without fallback, and one clean exact
-revision passes repository, predecessor-claim, detector, stability, matrix, and
-relocation validation. Evidence trees are reproducible transient output; a
-permanent external archive is not part of acceptance.
+their common input and independently recomputed normalized outputs, the full
+12-case catalog passes in every direction without fallback, and the same clean
+revision passes repository, predecessor-claim, detector, stability, relocation,
+and permanent-archive verification.
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:validation:end -->
+
+Closure receipt (2026-07-27): exact accepted revision
+`3bd9eaad5aab3e792ca793e26bd064f403f626db` passed all 13 jobs in workflow run
+[`30269498012`](https://github.com/chenty2333/vISA/actions/runs/30269498012),
+attempt 1. The four registered regular-file runtime directions are therefore
+`qualified`, and subsequent CI binds this claim as `regresses`. The permanent
+[receipt](../claims/receipts/cross-runtime-regular-file-continuity-v1.json)
+binds immutable GitHub release
+`cross-runtime-regular-file-continuity-v1-evidence`, Zenodo DOI
+[`10.5281/zenodo.21627497`](https://doi.org/10.5281/zenodo.21627497), and archive
+SHA-256 `f7752207caf1c327601bf9517a93858983543ac1e093e1a05fc27bb4a9dd35c3`.
 | `bounded-logical-request-continuity` | The fixed 14-case Stage 3B registry through the named Wasmtime source/destination adapter, real bounded loopback protocol and durable operation ledger, credential reacquisition, reauthorization/fencing, artifact digests, and independent bundle validation | Preservation of raw live TCP/socket state, credential transfer, generic future/stream continuation, a second runtime, or cross-ISA behavior |
 | `named-target-substrate-continuity-v1` | The fixed Wasmtime timer/KV workload across Hx -> Hx, Hx -> Qx, Qx -> Hx, and Qx -> Qx; raw x86-64 Linux host receipt; owned worker/QEMU artifacts plus loader/sysroot receipts; four complete inner validations; and equality within the seven-cell aggregate | Real hardware, a new kernel/device substrate, another runtime/resource family, or cross-host behavior |
 | `emulated-cross-isa-continuity-v1` | The fixed workload across Qx -> Qx, Qx -> Qa, Qa -> Qx, and Qa -> Qa; separate x86-64/AArch64 worker ELFs, artifact-owned QEMU executables and identified sysroots, four complete inner validations, and equality within the seven-cell aggregate | AOT binary portability, real AArch64 hardware, a second runtime, Stage 3 resources, 32-bit/big-endian targets, or cross-host behavior |

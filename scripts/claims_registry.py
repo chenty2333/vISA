@@ -64,7 +64,6 @@ GRANDFATHERED_EARNED_CLAIMS = {
 }
 CANONICAL_LIFECYCLE_CLAIMS = {
     "bounded-wanco-regular-file-carrier-composition-v1",
-    "cross-runtime-regular-file-continuity-v1",
 }
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
