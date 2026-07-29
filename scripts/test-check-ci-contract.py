@@ -162,6 +162,18 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
         )
         CONTRACT.check_wanco_canonical_evidence_closure(gate, runner)
 
+    def test_wanco_runner_cannot_require_unprovisioned_ripgrep(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
+            encoding="utf-8"
+        )
+        mutated = runner.replace("grep -Fq", "rg -q", 1)
+        with self.assertRaisesRegex(
+            CONTRACT.ContractError,
+            r"baseline host tools and not assume ripgrep",
+        ):
+            CONTRACT.check_wanco_canonical_evidence_closure(gate, mutated)
+
     def test_wanco_ci_cannot_drop_canonical_run_validation(self) -> None:
         gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
         runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(

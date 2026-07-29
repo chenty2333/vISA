@@ -107,7 +107,7 @@ docker run --rm \
 for executable in read-write-offset append-continuity; do
     test -x "$artifact_root/build/$executable"
     nm --defined-only "$artifact_root/build/$executable" |
-        rg -q "visa_ha_$(if [[ $executable == read-write-offset ]]; then printf regular_file; else printf append; fi)_step"
+        grep -Fq "visa_ha_$(if [[ $executable == read-write-offset ]]; then printf regular_file; else printf append; fi)_step"
 done
 
 python3 - "$artifact_root/build/receipt.json" "$image_tag" "$image_id" \
@@ -276,7 +276,7 @@ wait_for_progress_four() {
     local events=$2
     local attempt
     for attempt in $(seq 1 400); do
-        if [[ -f $events ]] && rg -q $'^RETURN\t4\t' "$events"; then
+        if [[ -f $events ]] && grep -q $'^RETURN\t4\t' "$events"; then
             return 0
         fi
         if [[ $(docker inspect --format '{{.State.Running}}' "$name") != true ]]; then
@@ -295,8 +295,8 @@ wait_for_destination_gate() {
     local events=$2
     local attempt
     for attempt in $(seq 1 400); do
-        if [[ -f $events ]] && rg -q $'^CALL\t5\t0$' "$events"; then
-            if rg -q $'^RETURN\t5\t' "$events"; then
+        if [[ -f $events ]] && grep -Fxq $'CALL\t5\t0' "$events"; then
+            if grep -q $'^RETURN\t5\t' "$events"; then
                 printf 'destination passed the resume gate before canonical RESUME: %s\n' \
                     "$name" >&2
                 return 1

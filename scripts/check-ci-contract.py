@@ -838,6 +838,10 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
 
 def check_wanco_canonical_evidence_closure(gate: str, runner: str) -> None:
     require(
+        re.search(r"(?m)(?:^|[|;&])\s*rg(?:\s|$)", runner) is None,
+        "Wanco host runner must use baseline host tools and not assume ripgrep",
+    )
+    require(
         'matrix_run_path="$system_artifact_root/evidence-matrix-run.json"' in gate
         and "canonical six-dimensional matrix-run closure" in gate
         and '"$matrix_validator" claims/evidence-matrix.json "$matrix_run_path"'
