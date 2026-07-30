@@ -51,6 +51,7 @@ members = [
     "crates/testing/visa-conformance",
     "crates/testing/visa-regular-file-observation",
     "crates/testing/visa-regular-file-oracle",
+    "crates/testing/visa-sqlite-oracle",
     "crates/testing/handoff-component",
     "crates/testing/stage3-file-component",
     "crates/testing/stage3-request-component",

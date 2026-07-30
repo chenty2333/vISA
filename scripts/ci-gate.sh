@@ -11,6 +11,7 @@ usage: scripts/ci-gate.sh \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
      system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|
      system-wanco-carrier|
+     system-stock-sqlite|
      system-stage4-target|
      system-stage4-isa|system-stage4|system-joint-handoff]
 
@@ -35,6 +36,10 @@ system-wanco-carrier builds the exact source-locked Wanco AOT carrier and runs
 three repetitions of the carrier-only negative control and the vISA-plus-carrier
 regular-file path through the verdict-free observation and standalone oracle.
 This tier must run on a native x86-64 Docker host, not inside the dev container.
+system-stock-sqlite rebuilds that locked carrier, runs the nine-cell typed
+checkpoint corpus, builds unmodified stock SQLite for WASI, and validates all
+eight rollback-journal cuts plus process recovery and source-abort replay. This
+tier also requires a native x86-64 Docker host.
 system-stage4 builds release x86-64 and AArch64 Wasmtime workers, runs the
 complete seven-cell native/QEMU-user target and cross-ISA matrix, and verifies
 the resulting evidence independently before and after a real directory
@@ -168,6 +173,7 @@ active_spine_packages=(
     stage3-request-component
     visa-regular-file-observation
     visa-regular-file-oracle
+    visa-sqlite-oracle
     visa-conformance
     visa-stage3-system
     visa-joint-handoff-system
@@ -281,6 +287,17 @@ gate_stock_zstd_source_lock() {
         python3 scripts/test-run-stock-zstd-migration-matrix.py
 }
 
+gate_stock_sqlite_source_lock() {
+    run_gate "source lock: unmodified stock SQLite and transparent carrier inputs" \
+        python3 scripts/check-sqlite-source.py
+    run_gate "source lock: stock SQLite checker mutation tests" \
+        python3 scripts/test-check-sqlite-source.py
+    run_gate "system contract: stock SQLite rollback-journal matrix tests" \
+        python3 scripts/test-sqlite-rollback-matrix.py
+    run_gate "system runner: stock SQLite rollback-journal runner tests" \
+        python3 scripts/test-run-stock-sqlite-rollback-matrix.py
+}
+
 gate_nexus_handoff_verifier_self_tests() {
     run_gate "joint handoff source-lock checker self-tests" \
         python3 scripts/test-check-joint-handoff-source-lock.py
@@ -362,6 +379,7 @@ gate_fast() {
     gate_joint_handoff_source_lock
     gate_wanco_carrier_source_lock
     gate_stock_zstd_source_lock
+    gate_stock_sqlite_source_lock
     gate_nexus_handoff_verifier_self_tests
     gate_active_clippy
     gate_active_tests
@@ -687,6 +705,7 @@ assert receipt["required_expectations"] == {
     "carrier-only": "rejected",
     "visa-plus-carrier": "accepted",
 }
+
 required = [
     item
     for item in receipt["results"]
@@ -724,6 +743,80 @@ PY
     printf 'Wanco carrier artifact root: %s\n' "$system_artifact_root"
     printf 'Wanco carrier matrix receipt: %s\n' "$system_bundle_path"
     printf 'Wanco canonical evidence matrix run: %s\n' "$matrix_run_path"
+}
+
+gate_system_stock_sqlite() {
+    local build_root
+    local corpus_root
+    local matrix_work_root
+    local scratch_root
+    local system_parent
+
+    system_parent="$(system_evidence_parent)"
+    system_artifact_kind="stock SQLite rollback-journal migration"
+    system_artifact_root="$system_parent/stock-sqlite"
+    system_bundle_path="$system_artifact_root/receipt.json"
+    if [[ -e "$system_artifact_root" ]]; then
+        printf 'refusing existing stock SQLite system artifact root: %s\n' \
+            "$system_artifact_root" >&2
+        return 1
+    fi
+    mkdir -m 0700 "$system_artifact_root"
+
+    scratch_root=$(mktemp -d /tmp/visa-stock-sqlite-system.XXXXXXXX)
+    build_root="$scratch_root/build"
+    corpus_root="$scratch_root/typed-corpus"
+    matrix_work_root="$scratch_root/matrix"
+
+    run_gate "system-stock-sqlite: exact Wanco source lock and build" \
+        scripts/build-wanco-carrier.sh
+    run_gate "system-stock-sqlite: nine-cell typed restore corpus" \
+        env VISA_WANCO_CORPUS_ROOT="$corpus_root" \
+            third_party/wanco/corpus/run-typed-checkpoint-corpus.sh
+    run_gate "system-stock-sqlite: unmodified stock SQLite build" \
+        env VISA_STOCK_SQLITE_OUT="$build_root" scripts/build-stock-sqlite.sh
+    run_gate "system-stock-sqlite: eight-cut migration and recovery matrix" \
+        python3 scripts/run-stock-sqlite-rollback-matrix.py \
+            --artifact-root "$build_root" \
+            --output "$system_bundle_path" \
+            --work-root "$matrix_work_root"
+    run_gate "system-stock-sqlite: independent matrix receipt validation" \
+        python3 scripts/sqlite_rollback_matrix.py validate "$system_bundle_path"
+    run_gate "system-stock-sqlite: clean exact-SHA receipt binding" \
+        python3 - "$system_bundle_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+receipt = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert receipt["repository_source_snapshot"]["clean"] is True
+assert len(receipt["cells"]) == 8
+assert all(cell["external_oracle"]["accepted"] is True for cell in receipt["cells"])
+assert receipt["source_abort_reconciliation_qualification"]["accepted"] is True
+assert receipt["process_recovery_qualification"]["exit_status"] == 0
+if github_sha := os.environ.get("GITHUB_SHA"):
+    assert receipt["repository_revision"] == github_sha
+PY
+
+    install -m 0644 "$build_root/receipt.json" \
+        "$system_artifact_root/stock-sqlite-build-receipt.json"
+    install -m 0644 target/.ci-cache/wanco-carrier/build-receipt.json \
+        "$system_artifact_root/wanco-build-receipt.json"
+
+    case "$scratch_root" in
+        /tmp/visa-stock-sqlite-system.*)
+            find "$scratch_root" -xdev -depth -delete
+            ;;
+        *)
+            printf 'refusing unexpected stock SQLite scratch cleanup: %s\n' \
+                "$scratch_root" >&2
+            return 1
+            ;;
+    esac
+
+    printf 'Stock SQLite artifact root: %s\n' "$system_artifact_root"
+    printf 'Stock SQLite matrix receipt: %s\n' "$system_bundle_path"
 }
 
 gate_system_stage4_target() {
@@ -882,6 +975,7 @@ case "$tier" in
     system-stage3b) gate_system_stage3b ;;
     system-stage3) gate_system_stage3 ;;
     system-wanco-carrier) gate_system_wanco_carrier ;;
+    system-stock-sqlite) gate_system_stock_sqlite ;;
     system-stage4-target) gate_system_stage4_target ;;
     system-stage4-isa) gate_system_stage4_isa ;;
     system-stage4) gate_system_stage4 ;;

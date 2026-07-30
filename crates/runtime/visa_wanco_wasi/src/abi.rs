@@ -13,7 +13,8 @@ use std::{
 };
 
 use visa_wasi_protocol::{
-    DirectoryEntry, FdStat, FileStat, LockLevel, Operation, OperationResult, SeekWhence, errno,
+    BarrierDirective, DirectoryEntry, FdStat, FileStat, LockLevel, Operation, OperationResult,
+    SeekWhence, errno,
 };
 
 use crate::{
@@ -48,7 +49,23 @@ const PLATFORM_ENVIRONMENT: [&[u8]; 6] = [
 
 static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
 
-fn result_code(result: Result<(), u16>) -> i32 {
+fn result_code(exec_env: *const ExecEnv, result: Result<(), u16>) -> i32 {
+    if std::env::var_os("VISA_WASI_TRACE_GUEST").is_some()
+        && let Err(error) = result
+    {
+        eprintln!("guest local WASI result errno={error}");
+    }
+    match transport::hostcall_completed() {
+        Ok(BarrierDirective::Continue) => {}
+        Ok(BarrierDirective::Checkpoint) => {
+            let Some(exec_env) = (unsafe { (exec_env as *mut ExecEnv).as_mut() }) else {
+                return i32::from(ERRNO_FAULT);
+            };
+            exec_env.migration_state = 1;
+        }
+        Ok(BarrierDirective::Wait) => return i32::from(errno::IO),
+        Err(error) => return i32::from(error),
+    }
     match result {
         Ok(()) => i32::from(errno::SUCCESS),
         Err(value) => i32::from(value),
@@ -354,10 +371,13 @@ pub extern "C" fn wasi_snapshot_preview1_args_sizes_get(
     count: i32,
     bytes: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        write_sizes(&memory, count, bytes, &guest_arguments(exec_env)?)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            write_sizes(&memory, count, bytes, &guest_arguments(exec_env)?)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -366,10 +386,13 @@ pub extern "C" fn wasi_snapshot_preview1_args_get(
     pointers: i32,
     buffer: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        write_string_vector(&memory, pointers, buffer, &guest_arguments(exec_env)?)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            write_string_vector(&memory, pointers, buffer, &guest_arguments(exec_env)?)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -378,10 +401,14 @@ pub extern "C" fn wasi_snapshot_preview1_environ_sizes_get(
     count: i32,
     bytes: i32,
 ) -> i32 {
-    result_code((|| {
+    let completion = (|| {
         let memory = memory(exec_env)?;
         write_sizes(&memory, count, bytes, &guest_environment()?)
-    })())
+    })();
+    if std::env::var_os("VISA_WASI_TRACE_GUEST").is_some() {
+        eprintln!("guest environ_sizes_get count={count} bytes={bytes} completion={completion:?}");
+    }
+    result_code(exec_env, completion)
 }
 
 #[unsafe(no_mangle)]
@@ -390,10 +417,16 @@ pub extern "C" fn wasi_snapshot_preview1_environ_get(
     pointers: i32,
     buffer: i32,
 ) -> i32 {
-    result_code((|| {
+    let completion = (|| {
         let memory = memory(exec_env)?;
         write_string_vector(&memory, pointers, buffer, &guest_environment()?)
-    })())
+    })();
+    if std::env::var_os("VISA_WASI_TRACE_GUEST").is_some() {
+        eprintln!(
+            "guest environ_get pointers={pointers} buffer={buffer} completion={completion:?}"
+        );
+    }
+    result_code(exec_env, completion)
 }
 
 fn clock_now(clock: u32) -> Result<u64, u16> {
@@ -416,14 +449,17 @@ pub extern "C" fn wasi_snapshot_preview1_clock_res_get(
     clock: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 8).map_err(memory_errno)?;
-        match clock as u32 {
-            0..=3 => memory.write_u64(result, 1).map_err(memory_errno),
-            _ => Err(errno::INVAL),
-        }
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 8).map_err(memory_errno)?;
+            match clock as u32 {
+                0..=3 => memory.write_u64(result, 1).map_err(memory_errno),
+                _ => Err(errno::INVAL),
+            }
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -433,11 +469,14 @@ pub extern "C" fn wasi_snapshot_preview1_clock_time_get(
     _precision: i64,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 8).map_err(memory_errno)?;
-        memory.write_u64(result, clock_now(clock as u32)?).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 8).map_err(memory_errno)?;
+            memory.write_u64(result, clock_now(clock as u32)?).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -446,24 +485,27 @@ pub extern "C" fn wasi_snapshot_preview1_random_get(
     buffer: i32,
     length: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let length = length as u32 as usize;
-        memory.validate(buffer, length).map_err(memory_errno)?;
-        let mut random = File::open("/dev/urandom").map_err(|_| errno::IO)?;
-        let mut scratch = vec![0_u8; length.min(64 * 1024)];
-        let mut completed = 0_usize;
-        while completed < length {
-            let count = scratch.len().min(length - completed);
-            random.read_exact(&mut scratch[..count]).map_err(|_| errno::IO)?;
-            let offset = (buffer as u32)
-                .checked_add(u32::try_from(completed).map_err(|_| ERRNO_FAULT)?)
-                .ok_or(ERRNO_FAULT)?;
-            memory.write(offset as i32, &scratch[..count]).map_err(memory_errno)?;
-            completed += count;
-        }
-        Ok(())
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let length = length as u32 as usize;
+            memory.validate(buffer, length).map_err(memory_errno)?;
+            let mut random = File::open("/dev/urandom").map_err(|_| errno::IO)?;
+            let mut scratch = vec![0_u8; length.min(64 * 1024)];
+            let mut completed = 0_usize;
+            while completed < length {
+                let count = scratch.len().min(length - completed);
+                random.read_exact(&mut scratch[..count]).map_err(|_| errno::IO)?;
+                let offset = (buffer as u32)
+                    .checked_add(u32::try_from(completed).map_err(|_| ERRNO_FAULT)?)
+                    .ok_or(ERRNO_FAULT)?;
+                memory.write(offset as i32, &scratch[..count]).map_err(memory_errno)?;
+                completed += count;
+            }
+            Ok(())
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -482,12 +524,18 @@ pub extern "C" fn wasi_snapshot_preview1_proc_raise(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_proc_exit(_exec_env: *const ExecEnv, status: i32) {
+    if std::env::var_os("VISA_WASI_TRACE_GUEST").is_some() {
+        eprintln!(
+            "guest proc_exit status={status}\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
     std::process::exit(status);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_advise(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     fd: i32,
     offset: i64,
     length: i64,
@@ -496,23 +544,26 @@ pub extern "C" fn wasi_snapshot_preview1_fd_advise(
     if (fd as u32) < 3 {
         return i32::from(errno::BADF);
     }
-    result_code((|| {
-        let advice = u8::try_from(advice as u32).map_err(|_| errno::INVAL)?;
-        if advice > 5 {
-            return Err(errno::INVAL);
-        }
-        expect_none(Operation::FdAdvise {
-            fd: fd as u32,
-            offset: offset as u64,
-            length: length as u64,
-            advice,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let advice = u8::try_from(advice as u32).map_err(|_| errno::INVAL)?;
+            if advice > 5 {
+                return Err(errno::INVAL);
+            }
+            expect_none(Operation::FdAdvise {
+                fd: fd as u32,
+                offset: offset as u64,
+                length: length as u64,
+                advice,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_allocate(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     fd: i32,
     offset: i64,
     length: i64,
@@ -520,35 +571,38 @@ pub extern "C" fn wasi_snapshot_preview1_fd_allocate(
     if (fd as u32) < 3 {
         return i32::from(errno::BADF);
     }
-    result_code(expect_none(Operation::FdAllocate {
-        fd: fd as u32,
-        offset: offset as u64,
-        length: length as u64,
-    }))
+    result_code(
+        exec_env,
+        expect_none(Operation::FdAllocate {
+            fd: fd as u32,
+            offset: offset as u64,
+            length: length as u64,
+        }),
+    )
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn wasi_snapshot_preview1_fd_close(_exec_env: *const ExecEnv, fd: i32) -> i32 {
+pub extern "C" fn wasi_snapshot_preview1_fd_close(exec_env: *const ExecEnv, fd: i32) -> i32 {
     if (fd as u32) < 3 {
         return i32::from(errno::SUCCESS);
     }
-    result_code(expect_none(Operation::FdClose { fd: fd as u32 }))
+    result_code(exec_env, expect_none(Operation::FdClose { fd: fd as u32 }))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn wasi_snapshot_preview1_fd_datasync(_exec_env: *const ExecEnv, fd: i32) -> i32 {
+pub extern "C" fn wasi_snapshot_preview1_fd_datasync(exec_env: *const ExecEnv, fd: i32) -> i32 {
     if (fd as u32) < 3 {
         return i32::from(errno::SUCCESS);
     }
-    result_code(expect_none(Operation::FdDataSync { fd: fd as u32 }))
+    result_code(exec_env, expect_none(Operation::FdDataSync { fd: fd as u32 }))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn wasi_snapshot_preview1_fd_sync(_exec_env: *const ExecEnv, fd: i32) -> i32 {
+pub extern "C" fn wasi_snapshot_preview1_fd_sync(exec_env: *const ExecEnv, fd: i32) -> i32 {
     if (fd as u32) < 3 {
         return i32::from(errno::SUCCESS);
     }
-    result_code(expect_none(Operation::FdSync { fd: fd as u32 }))
+    result_code(exec_env, expect_none(Operation::FdSync { fd: fd as u32 }))
 }
 
 #[unsafe(no_mangle)]
@@ -557,38 +611,47 @@ pub extern "C" fn wasi_snapshot_preview1_fd_fdstat_get(
     fd: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 24).map_err(memory_errno)?;
-        let stat = if let Some(stat) = local_fdstat(fd as u32) {
-            stat
-        } else {
-            match provider(Operation::FdStatGet { fd: fd as u32 })? {
-                OperationResult::FdStat(stat) => stat,
-                _ => return Err(errno::IO),
-            }
-        };
-        memory.write(result, &encode_fdstat(stat)).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 24).map_err(memory_errno)?;
+            let stat = if let Some(stat) = local_fdstat(fd as u32) {
+                stat
+            } else {
+                match provider(Operation::FdStatGet { fd: fd as u32 })? {
+                    OperationResult::FdStat(stat) => stat,
+                    _ => return Err(errno::IO),
+                }
+            };
+            memory.write(result, &encode_fdstat(stat)).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_fdstat_set_flags(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     fd: i32,
     flags: i32,
 ) -> i32 {
     if (fd as u32) < 3 {
         return i32::from(errno::NOTSUP);
     }
-    result_code((|| {
-        expect_none(Operation::FdStatSetFlags { fd: fd as u32, flags: masked_u16(flags, 0x1f)? })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            expect_none(Operation::FdStatSetFlags {
+                fd: fd as u32,
+                flags: masked_u16(flags, 0x1f)?,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_fdstat_set_rights(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     fd: i32,
     rights_base: i64,
     rights_inheriting: i64,
@@ -596,11 +659,14 @@ pub extern "C" fn wasi_snapshot_preview1_fd_fdstat_set_rights(
     if (fd as u32) < 3 {
         return i32::from(errno::NOTSUP);
     }
-    result_code(expect_none(Operation::FdStatSetRights {
-        fd: fd as u32,
-        rights_base: rights_base as u64,
-        rights_inheriting: rights_inheriting as u64,
-    }))
+    result_code(
+        exec_env,
+        expect_none(Operation::FdStatSetRights {
+            fd: fd as u32,
+            rights_base: rights_base as u64,
+            rights_inheriting: rights_inheriting as u64,
+        }),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -609,36 +675,42 @@ pub extern "C" fn wasi_snapshot_preview1_fd_filestat_get(
     fd: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 64).map_err(memory_errno)?;
-        let stat = if let Some(stat) = local_filestat(fd as u32) {
-            stat
-        } else {
-            match provider(Operation::FdFileStatGet { fd: fd as u32 })? {
-                OperationResult::FileStat(stat) => stat,
-                _ => return Err(errno::IO),
-            }
-        };
-        memory.write(result, &encode_filestat(stat)).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 64).map_err(memory_errno)?;
+            let stat = if let Some(stat) = local_filestat(fd as u32) {
+                stat
+            } else {
+                match provider(Operation::FdFileStatGet { fd: fd as u32 })? {
+                    OperationResult::FileStat(stat) => stat,
+                    _ => return Err(errno::IO),
+                }
+            };
+            memory.write(result, &encode_filestat(stat)).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_filestat_set_size(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     fd: i32,
     size: i64,
 ) -> i32 {
     if (fd as u32) < 3 {
         return i32::from(errno::BADF);
     }
-    result_code(expect_none(Operation::FdFileStatSetSize { fd: fd as u32, size: size as u64 }))
+    result_code(
+        exec_env,
+        expect_none(Operation::FdFileStatSetSize { fd: fd as u32, size: size as u64 }),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_filestat_set_times(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     fd: i32,
     atim: i64,
     mtim: i64,
@@ -647,14 +719,17 @@ pub extern "C" fn wasi_snapshot_preview1_fd_filestat_set_times(
     if (fd as u32) < 3 {
         return i32::from(errno::BADF);
     }
-    result_code((|| {
-        expect_none(Operation::FdFileStatSetTimes {
-            fd: fd as u32,
-            atim: atim as u64,
-            mtim: mtim as u64,
-            fst_flags: file_time_flags(fst_flags)?,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            expect_none(Operation::FdFileStatSetTimes {
+                fd: fd as u32,
+                atim: atim as u64,
+                mtim: mtim as u64,
+                fst_flags: file_time_flags(fst_flags)?,
+            })
+        })(),
+    )
 }
 
 fn fd_read_impl(
@@ -700,7 +775,7 @@ pub extern "C" fn wasi_snapshot_preview1_fd_read(
     iovecs_len: i32,
     result: i32,
 ) -> i32 {
-    result_code(fd_read_impl(exec_env, fd, iovecs, iovecs_len, None, result))
+    result_code(exec_env, fd_read_impl(exec_env, fd, iovecs, iovecs_len, None, result))
 }
 
 #[unsafe(no_mangle)]
@@ -712,7 +787,7 @@ pub extern "C" fn wasi_snapshot_preview1_fd_pread(
     offset: i64,
     result: i32,
 ) -> i32 {
-    result_code(fd_read_impl(exec_env, fd, iovecs, iovecs_len, Some(offset), result))
+    result_code(exec_env, fd_read_impl(exec_env, fd, iovecs, iovecs_len, Some(offset), result))
 }
 
 fn fd_write_impl(
@@ -759,7 +834,16 @@ pub extern "C" fn wasi_snapshot_preview1_fd_write(
     iovecs_len: i32,
     result: i32,
 ) -> i32 {
-    result_code(fd_write_impl(exec_env, fd, iovecs, iovecs_len, None, result))
+    let completion = fd_write_impl(exec_env, fd, iovecs, iovecs_len, None, result);
+    if std::env::var_os("VISA_WASI_TRACE_GUEST").is_some() {
+        let written = memory(exec_env)
+            .and_then(|memory| memory.read(result, 4).map_err(memory_errno))
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("validated four-byte read")));
+        eprintln!(
+            "guest fd_write fd={fd} iovecs={iovecs} iovecs_len={iovecs_len} result={result} completion={completion:?} nwritten={written:?}"
+        );
+    }
+    result_code(exec_env, completion)
 }
 
 #[unsafe(no_mangle)]
@@ -771,7 +855,7 @@ pub extern "C" fn wasi_snapshot_preview1_fd_pwrite(
     offset: i64,
     result: i32,
 ) -> i32 {
-    result_code(fd_write_impl(exec_env, fd, iovecs, iovecs_len, Some(offset), result))
+    result_code(exec_env, fd_write_impl(exec_env, fd, iovecs, iovecs_len, Some(offset), result))
 }
 
 #[unsafe(no_mangle)]
@@ -782,24 +866,27 @@ pub extern "C" fn wasi_snapshot_preview1_fd_seek(
     whence: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 8).map_err(memory_errno)?;
-        if (fd as u32) < 3 {
-            return Err(errno::SPIPE);
-        }
-        let whence = match whence as u32 {
-            0 => SeekWhence::Set,
-            1 => SeekWhence::Current,
-            2 => SeekWhence::End,
-            _ => return Err(errno::INVAL),
-        };
-        let offset = match provider(Operation::FdSeek { fd: fd as u32, delta, whence })? {
-            OperationResult::Offset(offset) => offset,
-            _ => return Err(errno::IO),
-        };
-        memory.write_u64(result, offset).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 8).map_err(memory_errno)?;
+            if (fd as u32) < 3 {
+                return Err(errno::SPIPE);
+            }
+            let whence = match whence as u32 {
+                0 => SeekWhence::Set,
+                1 => SeekWhence::Current,
+                2 => SeekWhence::End,
+                _ => return Err(errno::INVAL),
+            };
+            let offset = match provider(Operation::FdSeek { fd: fd as u32, delta, whence })? {
+                OperationResult::Offset(offset) => offset,
+                _ => return Err(errno::IO),
+            };
+            memory.write_u64(result, offset).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -808,30 +895,33 @@ pub extern "C" fn wasi_snapshot_preview1_fd_tell(
     fd: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 8).map_err(memory_errno)?;
-        if (fd as u32) < 3 {
-            return Err(errno::SPIPE);
-        }
-        let offset = match provider(Operation::FdTell { fd: fd as u32 })? {
-            OperationResult::Offset(offset) => offset,
-            _ => return Err(errno::IO),
-        };
-        memory.write_u64(result, offset).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 8).map_err(memory_errno)?;
+            if (fd as u32) < 3 {
+                return Err(errno::SPIPE);
+            }
+            let offset = match provider(Operation::FdTell { fd: fd as u32 })? {
+                OperationResult::Offset(offset) => offset,
+                _ => return Err(errno::IO),
+            };
+            memory.write_u64(result, offset).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasi_snapshot_preview1_fd_renumber(
-    _exec_env: *const ExecEnv,
+    exec_env: *const ExecEnv,
     from: i32,
     to: i32,
 ) -> i32 {
     if (from as u32) < 3 || (to as u32) < 3 {
         return i32::from(errno::BADF);
     }
-    result_code(expect_none(Operation::FdRenumber { from: from as u32, to: to as u32 }))
+    result_code(exec_env, expect_none(Operation::FdRenumber { from: from as u32, to: to as u32 }))
 }
 
 #[unsafe(no_mangle)]
@@ -840,23 +930,26 @@ pub extern "C" fn wasi_snapshot_preview1_fd_prestat_get(
     fd: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 8).map_err(memory_errno)?;
-        if (fd as u32) < 3 {
-            return Err(errno::BADF);
-        }
-        let name = match provider(Operation::FdPrestatGet { fd: fd as u32 })? {
-            OperationResult::Prestat { name } => name,
-            _ => return Err(errno::IO),
-        };
-        let mut encoded = [0_u8; 8];
-        encoded[0] = 0;
-        encoded[4..8].copy_from_slice(
-            &u32::try_from(name.len()).map_err(|_| errno::OVERFLOW)?.to_le_bytes(),
-        );
-        memory.write(result, &encoded).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 8).map_err(memory_errno)?;
+            if (fd as u32) < 3 {
+                return Err(errno::BADF);
+            }
+            let name = match provider(Operation::FdPrestatGet { fd: fd as u32 })? {
+                OperationResult::Prestat { name } => name,
+                _ => return Err(errno::IO),
+            };
+            let mut encoded = [0_u8; 8];
+            encoded[0] = 0;
+            encoded[4..8].copy_from_slice(
+                &u32::try_from(name.len()).map_err(|_| errno::OVERFLOW)?.to_le_bytes(),
+            );
+            memory.write(result, &encoded).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -866,22 +959,25 @@ pub extern "C" fn wasi_snapshot_preview1_fd_prestat_dir_name(
     path: i32,
     path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let path_len = path_len as u32 as usize;
-        memory.validate(path, path_len).map_err(memory_errno)?;
-        if (fd as u32) < 3 {
-            return Err(errno::BADF);
-        }
-        let name = match provider(Operation::FdPrestatDirName { fd: fd as u32 })? {
-            OperationResult::Prestat { name } => name,
-            _ => return Err(errno::IO),
-        };
-        if name.len() > path_len {
-            return Err(errno::NAMETOOLONG);
-        }
-        memory.write(path, &name).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let path_len = path_len as u32 as usize;
+            memory.validate(path, path_len).map_err(memory_errno)?;
+            if (fd as u32) < 3 {
+                return Err(errno::BADF);
+            }
+            let name = match provider(Operation::FdPrestatDirName { fd: fd as u32 })? {
+                OperationResult::Prestat { name } => name,
+                _ => return Err(errno::IO),
+            };
+            if name.len() > path_len {
+                return Err(errno::NAMETOOLONG);
+            }
+            memory.write(path, &name).map_err(memory_errno)
+        })(),
+    )
 }
 
 fn encode_directory(entries: Vec<DirectoryEntry>, capacity: usize) -> Result<Vec<u8>, u16> {
@@ -917,31 +1013,34 @@ pub extern "C" fn wasi_snapshot_preview1_fd_readdir(
     cookie: i64,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let capacity = buffer_len as u32 as usize;
-        if capacity > MAX_IO_BYTES {
-            return Err(errno::INVAL);
-        }
-        memory.validate(buffer, capacity).map_err(memory_errno)?;
-        memory.validate(result, 4).map_err(memory_errno)?;
-        if (fd as u32) < 3 {
-            return Err(errno::NOTDIR);
-        }
-        let entries = match provider(Operation::FdReadDir {
-            fd: fd as u32,
-            cookie: cookie as u64,
-            buffer_len: capacity as u32,
-        })? {
-            OperationResult::Directory(entries) => entries,
-            _ => return Err(errno::IO),
-        };
-        let encoded = encode_directory(entries, capacity)?;
-        memory.write(buffer, &encoded).map_err(memory_errno)?;
-        memory
-            .write_u32(result, u32::try_from(encoded.len()).map_err(|_| errno::OVERFLOW)?)
-            .map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let capacity = buffer_len as u32 as usize;
+            if capacity > MAX_IO_BYTES {
+                return Err(errno::INVAL);
+            }
+            memory.validate(buffer, capacity).map_err(memory_errno)?;
+            memory.validate(result, 4).map_err(memory_errno)?;
+            if (fd as u32) < 3 {
+                return Err(errno::NOTDIR);
+            }
+            let entries = match provider(Operation::FdReadDir {
+                fd: fd as u32,
+                cookie: cookie as u64,
+                buffer_len: capacity as u32,
+            })? {
+                OperationResult::Directory(entries) => entries,
+                _ => return Err(errno::IO),
+            };
+            let encoded = encode_directory(entries, capacity)?;
+            memory.write(buffer, &encoded).map_err(memory_errno)?;
+            memory
+                .write_u32(result, u32::try_from(encoded.len()).map_err(|_| errno::OVERFLOW)?)
+                .map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -951,13 +1050,16 @@ pub extern "C" fn wasi_snapshot_preview1_path_create_directory(
     path: i32,
     path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        expect_none(Operation::PathCreateDirectory {
-            dir_fd: dir_fd as u32,
-            path: guest_path(&memory, path, path_len)?,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            expect_none(Operation::PathCreateDirectory {
+                dir_fd: dir_fd as u32,
+                path: guest_path(&memory, path, path_len)?,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -969,20 +1071,23 @@ pub extern "C" fn wasi_snapshot_preview1_path_filestat_get(
     path_len: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 64).map_err(memory_errno)?;
-        let path = guest_path(&memory, path, path_len)?;
-        let stat = match provider(Operation::PathFileStatGet {
-            dir_fd: dir_fd as u32,
-            lookup_flags: self::lookup_flags(lookup_flags)?,
-            path,
-        })? {
-            OperationResult::FileStat(stat) => stat,
-            _ => return Err(errno::IO),
-        };
-        memory.write(result, &encode_filestat(stat)).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 64).map_err(memory_errno)?;
+            let path = guest_path(&memory, path, path_len)?;
+            let stat = match provider(Operation::PathFileStatGet {
+                dir_fd: dir_fd as u32,
+                lookup_flags: self::lookup_flags(lookup_flags)?,
+                path,
+            })? {
+                OperationResult::FileStat(stat) => stat,
+                _ => return Err(errno::IO),
+            };
+            memory.write(result, &encode_filestat(stat)).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -996,17 +1101,20 @@ pub extern "C" fn wasi_snapshot_preview1_path_filestat_set_times(
     mtim: i64,
     fst_flags: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        expect_none(Operation::PathFileStatSetTimes {
-            dir_fd: dir_fd as u32,
-            lookup_flags: self::lookup_flags(lookup_flags)?,
-            path: guest_path(&memory, path, path_len)?,
-            atim: atim as u64,
-            mtim: mtim as u64,
-            fst_flags: file_time_flags(fst_flags)?,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            expect_none(Operation::PathFileStatSetTimes {
+                dir_fd: dir_fd as u32,
+                lookup_flags: self::lookup_flags(lookup_flags)?,
+                path: guest_path(&memory, path, path_len)?,
+                atim: atim as u64,
+                mtim: mtim as u64,
+                fst_flags: file_time_flags(fst_flags)?,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1020,18 +1128,21 @@ pub extern "C" fn wasi_snapshot_preview1_path_link(
     new_path: i32,
     new_path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let old_path = guest_path(&memory, old_path, old_path_len)?;
-        let new_path = guest_path(&memory, new_path, new_path_len)?;
-        expect_none(Operation::PathLink {
-            old_dir_fd: old_dir_fd as u32,
-            old_lookup_flags: lookup_flags(old_lookup_flags)?,
-            old_path,
-            new_dir_fd: new_dir_fd as u32,
-            new_path,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let old_path = guest_path(&memory, old_path, old_path_len)?;
+            let new_path = guest_path(&memory, new_path, new_path_len)?;
+            expect_none(Operation::PathLink {
+                old_dir_fd: old_dir_fd as u32,
+                old_lookup_flags: lookup_flags(old_lookup_flags)?,
+                old_path,
+                new_dir_fd: new_dir_fd as u32,
+                new_path,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1047,24 +1158,27 @@ pub extern "C" fn wasi_snapshot_preview1_path_open(
     fd_flags: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 4).map_err(memory_errno)?;
-        let path = guest_path(&memory, path, path_len)?;
-        let fd = match provider(Operation::PathOpen {
-            dir_fd: dir_fd as u32,
-            lookup_flags: self::lookup_flags(lookup_flags)?,
-            path,
-            open_flags: masked_u16(open_flags, 0x0f)?,
-            rights_base: rights_base as u64,
-            rights_inheriting: rights_inheriting as u64,
-            fd_flags: masked_u16(fd_flags, 0x1f)?,
-        })? {
-            OperationResult::FileDescriptor(fd) => fd,
-            _ => return Err(errno::IO),
-        };
-        memory.write_u32(result, fd).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 4).map_err(memory_errno)?;
+            let path = guest_path(&memory, path, path_len)?;
+            let fd = match provider(Operation::PathOpen {
+                dir_fd: dir_fd as u32,
+                lookup_flags: self::lookup_flags(lookup_flags)?,
+                path,
+                open_flags: masked_u16(open_flags, 0x0f)?,
+                rights_base: rights_base as u64,
+                rights_inheriting: rights_inheriting as u64,
+                fd_flags: masked_u16(fd_flags, 0x1f)?,
+            })? {
+                OperationResult::FileDescriptor(fd) => fd,
+                _ => return Err(errno::IO),
+            };
+            memory.write_u32(result, fd).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1077,31 +1191,34 @@ pub extern "C" fn wasi_snapshot_preview1_path_readlink(
     buffer_len: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let capacity = buffer_len as u32 as usize;
-        if capacity > MAX_IO_BYTES {
-            return Err(errno::INVAL);
-        }
-        memory.validate(buffer, capacity).map_err(memory_errno)?;
-        memory.validate(result, 4).map_err(memory_errno)?;
-        let path = guest_path(&memory, path, path_len)?;
-        let bytes = match provider(Operation::PathReadLink {
-            dir_fd: dir_fd as u32,
-            path,
-            buffer_len: capacity as u32,
-        })? {
-            OperationResult::Bytes(bytes) => bytes,
-            _ => return Err(errno::IO),
-        };
-        if bytes.len() > capacity {
-            return Err(errno::IO);
-        }
-        memory.write(buffer, &bytes).map_err(memory_errno)?;
-        memory
-            .write_u32(result, u32::try_from(bytes.len()).map_err(|_| errno::OVERFLOW)?)
-            .map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let capacity = buffer_len as u32 as usize;
+            if capacity > MAX_IO_BYTES {
+                return Err(errno::INVAL);
+            }
+            memory.validate(buffer, capacity).map_err(memory_errno)?;
+            memory.validate(result, 4).map_err(memory_errno)?;
+            let path = guest_path(&memory, path, path_len)?;
+            let bytes = match provider(Operation::PathReadLink {
+                dir_fd: dir_fd as u32,
+                path,
+                buffer_len: capacity as u32,
+            })? {
+                OperationResult::Bytes(bytes) => bytes,
+                _ => return Err(errno::IO),
+            };
+            if bytes.len() > capacity {
+                return Err(errno::IO);
+            }
+            memory.write(buffer, &bytes).map_err(memory_errno)?;
+            memory
+                .write_u32(result, u32::try_from(bytes.len()).map_err(|_| errno::OVERFLOW)?)
+                .map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1111,13 +1228,16 @@ pub extern "C" fn wasi_snapshot_preview1_path_remove_directory(
     path: i32,
     path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        expect_none(Operation::PathRemoveDirectory {
-            dir_fd: dir_fd as u32,
-            path: guest_path(&memory, path, path_len)?,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            expect_none(Operation::PathRemoveDirectory {
+                dir_fd: dir_fd as u32,
+                path: guest_path(&memory, path, path_len)?,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1130,17 +1250,20 @@ pub extern "C" fn wasi_snapshot_preview1_path_rename(
     new_path: i32,
     new_path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let old_path = guest_path(&memory, old_path, old_path_len)?;
-        let new_path = guest_path(&memory, new_path, new_path_len)?;
-        expect_none(Operation::PathRename {
-            old_dir_fd: old_dir_fd as u32,
-            old_path,
-            new_dir_fd: new_dir_fd as u32,
-            new_path,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let old_path = guest_path(&memory, old_path, old_path_len)?;
+            let new_path = guest_path(&memory, new_path, new_path_len)?;
+            expect_none(Operation::PathRename {
+                old_dir_fd: old_dir_fd as u32,
+                old_path,
+                new_dir_fd: new_dir_fd as u32,
+                new_path,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1152,12 +1275,15 @@ pub extern "C" fn wasi_snapshot_preview1_path_symlink(
     new_path: i32,
     new_path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let old_path = guest_path(&memory, old_path, old_path_len)?;
-        let new_path = guest_path(&memory, new_path, new_path_len)?;
-        expect_none(Operation::PathSymlink { old_path, dir_fd: dir_fd as u32, new_path })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let old_path = guest_path(&memory, old_path, old_path_len)?;
+            let new_path = guest_path(&memory, new_path, new_path_len)?;
+            expect_none(Operation::PathSymlink { old_path, dir_fd: dir_fd as u32, new_path })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1167,13 +1293,16 @@ pub extern "C" fn wasi_snapshot_preview1_path_unlink_file(
     path: i32,
     path_len: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        expect_none(Operation::PathUnlinkFile {
-            dir_fd: dir_fd as u32,
-            path: guest_path(&memory, path, path_len)?,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            expect_none(Operation::PathUnlinkFile {
+                dir_fd: dir_fd as u32,
+                path: guest_path(&memory, path, path_len)?,
+            })
+        })(),
+    )
 }
 
 fn duration_until(clock: u32, timeout: u64, absolute: bool) -> Result<Duration, u16> {
@@ -1232,40 +1361,43 @@ pub extern "C" fn wasi_snapshot_preview1_poll_oneoff(
     subscriptions: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let count = subscriptions as u32 as usize;
-        if count == 0 || count > POLL_MAX_SUBSCRIPTIONS {
-            return Err(errno::INVAL);
-        }
-        let input_bytes = count.checked_mul(SUBSCRIPTION_BYTES).ok_or(errno::INVAL)?;
-        let output_bytes = count.checked_mul(EVENT_BYTES).ok_or(errno::INVAL)?;
-        memory.validate(input, input_bytes).map_err(memory_errno)?;
-        memory.validate(output, output_bytes).map_err(memory_errno)?;
-        memory.validate(result, 4).map_err(memory_errno)?;
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let count = subscriptions as u32 as usize;
+            if count == 0 || count > POLL_MAX_SUBSCRIPTIONS {
+                return Err(errno::INVAL);
+            }
+            let input_bytes = count.checked_mul(SUBSCRIPTION_BYTES).ok_or(errno::INVAL)?;
+            let output_bytes = count.checked_mul(EVENT_BYTES).ok_or(errno::INVAL)?;
+            memory.validate(input, input_bytes).map_err(memory_errno)?;
+            memory.validate(output, output_bytes).map_err(memory_errno)?;
+            memory.validate(result, 4).map_err(memory_errno)?;
 
-        let mut parsed = Vec::with_capacity(count);
-        for index in 0..count {
-            let offset = u32::try_from(index * SUBSCRIPTION_BYTES).map_err(|_| errno::INVAL)?;
-            parsed.push(read_poll_subscription(
-                &memory,
-                (input as u32).checked_add(offset).ok_or(ERRNO_FAULT)? as i32,
-            )?);
-        }
-        let delay = parsed.iter().map(|value| value.delay).min().unwrap_or(Duration::ZERO);
-        if !delay.is_zero() {
-            thread::sleep(delay);
-        }
-        let ready = parsed.into_iter().filter(|value| value.delay <= delay).collect::<Vec<_>>();
-        for (index, subscription) in ready.iter().copied().enumerate() {
-            let offset = u32::try_from(index * EVENT_BYTES).map_err(|_| errno::INVAL)?;
-            let target = (output as u32).checked_add(offset).ok_or(ERRNO_FAULT)?;
-            memory.write(target as i32, &encode_event(subscription)).map_err(memory_errno)?;
-        }
-        memory
-            .write_u32(result, u32::try_from(ready.len()).map_err(|_| errno::OVERFLOW)?)
-            .map_err(memory_errno)
-    })())
+            let mut parsed = Vec::with_capacity(count);
+            for index in 0..count {
+                let offset = u32::try_from(index * SUBSCRIPTION_BYTES).map_err(|_| errno::INVAL)?;
+                parsed.push(read_poll_subscription(
+                    &memory,
+                    (input as u32).checked_add(offset).ok_or(ERRNO_FAULT)? as i32,
+                )?);
+            }
+            let delay = parsed.iter().map(|value| value.delay).min().unwrap_or(Duration::ZERO);
+            if !delay.is_zero() {
+                thread::sleep(delay);
+            }
+            let ready = parsed.into_iter().filter(|value| value.delay <= delay).collect::<Vec<_>>();
+            for (index, subscription) in ready.iter().copied().enumerate() {
+                let offset = u32::try_from(index * EVENT_BYTES).map_err(|_| errno::INVAL)?;
+                let target = (output as u32).checked_add(offset).ok_or(ERRNO_FAULT)?;
+                memory.write(target as i32, &encode_event(subscription)).map_err(memory_errno)?;
+            }
+            memory
+                .write_u32(result, u32::try_from(ready.len()).map_err(|_| errno::OVERFLOW)?)
+                .map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1275,10 +1407,13 @@ pub extern "C" fn wasi_snapshot_preview1_sock_accept(
     _flags: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        memory(exec_env)?.validate(result, 4).map_err(memory_errno)?;
-        Err(errno::NOTSUP)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            memory(exec_env)?.validate(result, 4).map_err(memory_errno)?;
+            Err(errno::NOTSUP)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1291,13 +1426,16 @@ pub extern "C" fn wasi_snapshot_preview1_sock_recv(
     result_len: i32,
     result_flags: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let _ = read_iovecs(&memory, iovecs, iovecs_len)?;
-        memory.validate(result_len, 4).map_err(memory_errno)?;
-        memory.validate(result_flags, 2).map_err(memory_errno)?;
-        Err(errno::NOTSUP)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let _ = read_iovecs(&memory, iovecs, iovecs_len)?;
+            memory.validate(result_len, 4).map_err(memory_errno)?;
+            memory.validate(result_flags, 2).map_err(memory_errno)?;
+            Err(errno::NOTSUP)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1309,12 +1447,15 @@ pub extern "C" fn wasi_snapshot_preview1_sock_send(
     _flags: i32,
     result: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        let _ = read_iovecs(&memory, iovecs, iovecs_len)?;
-        memory.validate(result, 4).map_err(memory_errno)?;
-        Err(errno::NOTSUP)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            let _ = read_iovecs(&memory, iovecs, iovecs_len)?;
+            memory.validate(result, 4).map_err(memory_errno)?;
+            Err(errno::NOTSUP)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1338,28 +1479,35 @@ fn lock_level(value: i32) -> Result<LockLevel, u16> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn visa_vfs_lock(_exec_env: *const ExecEnv, fd: i32, level: i32) -> i32 {
-    result_code((|| expect_none(Operation::VfsLock { fd: fd as u32, level: lock_level(level)? }))())
+pub extern "C" fn visa_vfs_lock(exec_env: *const ExecEnv, fd: i32, level: i32) -> i32 {
+    result_code(
+        exec_env,
+        (|| expect_none(Operation::VfsLock { fd: fd as u32, level: lock_level(level)? }))(),
+    )
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn visa_vfs_unlock(_exec_env: *const ExecEnv, fd: i32, level: i32) -> i32 {
+pub extern "C" fn visa_vfs_unlock(exec_env: *const ExecEnv, fd: i32, level: i32) -> i32 {
     result_code(
+        exec_env,
         (|| expect_none(Operation::VfsUnlock { fd: fd as u32, level: lock_level(level)? }))(),
     )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn visa_vfs_check_reserved(exec_env: *const ExecEnv, fd: i32, result: i32) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        memory.validate(result, 4).map_err(memory_errno)?;
-        let reserved = match provider(Operation::VfsCheckReserved { fd: fd as u32 })? {
-            OperationResult::Reserved(reserved) => reserved,
-            _ => return Err(errno::IO),
-        };
-        memory.write_u32(result, u32::from(reserved)).map_err(memory_errno)
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            memory.validate(result, 4).map_err(memory_errno)?;
+            let reserved = match provider(Operation::VfsCheckReserved { fd: fd as u32 })? {
+                OperationResult::Reserved(reserved) => reserved,
+                _ => return Err(errno::IO),
+            };
+            memory.write_u32(result, u32::from(reserved)).map_err(memory_errno)
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1389,14 +1537,17 @@ pub extern "C" fn visa_wasi_metadata_path_chmod(
     path_len: i32,
     mode: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        expect_none(Operation::PathChmod {
-            dir_fd: dir_fd as u32,
-            path: guest_path(&memory, path, path_len)?,
-            mode: mode as u32,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            expect_none(Operation::PathChmod {
+                dir_fd: dir_fd as u32,
+                path: guest_path(&memory, path, path_len)?,
+                mode: mode as u32,
+            })
+        })(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1408,15 +1559,18 @@ pub extern "C" fn visa_wasi_metadata_path_chown(
     uid: i32,
     gid: i32,
 ) -> i32 {
-    result_code((|| {
-        let memory = memory(exec_env)?;
-        expect_none(Operation::PathChown {
-            dir_fd: dir_fd as u32,
-            path: guest_path(&memory, path, path_len)?,
-            uid: uid as u32,
-            gid: gid as u32,
-        })
-    })())
+    result_code(
+        exec_env,
+        (|| {
+            let memory = memory(exec_env)?;
+            expect_none(Operation::PathChown {
+                dir_fd: dir_fd as u32,
+                path: guest_path(&memory, path, path_len)?,
+                uid: uid as u32,
+                gid: gid as u32,
+            })
+        })(),
+    )
 }
 
 #[cfg(test)]

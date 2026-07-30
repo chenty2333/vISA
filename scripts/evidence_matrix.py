@@ -49,7 +49,13 @@ RUNTIMES = {
 }
 ISAS = {"aarch64", "not-applicable", "x86-64"}
 SUBSTRATES = {"linux-host", "linux-qemu-user", "neutral-model", "not-applicable"}
-RESOURCE_PROFILES = {"joint-handoff", "logical-request", "regular-file", "timer-kv"}
+RESOURCE_PROFILES = {
+    "joint-handoff",
+    "logical-request",
+    "regular-file",
+    "sqlite-rollback-journal",
+    "timer-kv",
+}
 HANDOFF_TOPOLOGIES = {
     "in-process-distinct-stores",
     "neutral-state-machine",
@@ -59,6 +65,7 @@ HANDOFF_TOPOLOGIES = {
     "runner-with-source-sidecar",
     "same-boot-multi-process",
     "visa-plus-wanco-carrier",
+    "visa-plus-wanco-carrier-with-provider-handoff",
     "wanco-carrier-only",
 }
 FAULT_MODELS = {
@@ -68,6 +75,7 @@ FAULT_MODELS = {
     "stage3a-regular-file-twelve-case",
     "stage3b-logical-request-fourteen-case",
     "stage4-stage1-thirty-one-case",
+    "sqlite-rollback-eight-cut-plus-process-crash",
     "wanco-regular-file-two-case",
 }
 VERIFIERS = {
@@ -79,6 +87,7 @@ VERIFIERS = {
     "stage2-strict-outer-normalized",
     "stage3-structural",
     "regular-file-raw-observable-oracle",
+    "sqlite-namespace-native-oracle",
     "stage3a-cross-runtime-outer-and-raw-oracle",
     "stage4-reconstructed-normalized",
 }

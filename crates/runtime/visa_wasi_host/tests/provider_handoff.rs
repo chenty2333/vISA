@@ -9,12 +9,13 @@ use std::{
 use tempfile::TempDir;
 use visa_wasi_host::{
     CreateConfig, ImportFile, ProviderServer, RestoreConfig, create_provider, open_provider,
-    restore_provider, send_admin, send_guest,
+    restore_provider, send_admin, send_completion, send_guest,
 };
 use visa_wasi_protocol::{
-    AdminCapability, AdminOperation, AdminRequest, ClientId, GuestCapability, GuestRequest,
-    LockLevel, Operation, OperationResult, OwnerId, PROTOCOL_VERSION, ProviderMode, SessionId,
-    errno,
+    AdminCapability, AdminOperation, AdminRequest, BarrierReleaseAction, BarrierToken, ClientId,
+    EffectId, GuestCapability, GuestCompletion, GuestRequest, HostcallKind, HostcallPredicate,
+    LockLevel, Operation, OperationResult, OutcomePredicate, OwnerId, PROTOCOL_VERSION,
+    ProviderMode, ResourceSelector, SessionId, errno,
 };
 
 const SESSION: SessionId = SessionId([1; 16]);
@@ -26,6 +27,7 @@ const DESTINATION_CAPABILITY: AdminCapability = AdminCapability([6; 32]);
 const SOURCE_GUEST_CAPABILITY: GuestCapability = GuestCapability([8; 32]);
 const DESTINATION_GUEST_CAPABILITY: GuestCapability = GuestCapability([9; 32]);
 const HANDOFF: [u8; 16] = [7; 16];
+const BARRIER: BarrierToken = BarrierToken([10; 16]);
 
 struct Guest {
     socket: PathBuf,
@@ -48,6 +50,7 @@ impl Guest {
     }
 
     fn call(&mut self, operation: Operation) -> visa_wasi_protocol::GuestResponse {
+        let effect = self.effect(self.sequence);
         let request = GuestRequest {
             version: PROTOCOL_VERSION,
             session: SESSION,
@@ -55,11 +58,13 @@ impl Guest {
             client: self.client,
             capability: self.capability,
             sequence: self.sequence,
+            effect,
             authority_epoch: self.epoch,
             operation,
         };
         let response = send_guest(&self.socket, &request).unwrap();
         assert_eq!(response.sequence, self.sequence);
+        self.complete(&request, &response);
         self.sequence += 1;
         response
     }
@@ -69,20 +74,44 @@ impl Guest {
         sequence: u64,
         operation: Operation,
     ) -> visa_wasi_protocol::GuestResponse {
-        send_guest(
-            &self.socket,
-            &GuestRequest {
+        let request = GuestRequest {
+            version: PROTOCOL_VERSION,
+            session: SESSION,
+            owner: self.owner,
+            client: self.client,
+            capability: self.capability,
+            sequence,
+            effect: self.effect(sequence),
+            authority_epoch: self.epoch,
+            operation,
+        };
+        let response = send_guest(&self.socket, &request).unwrap();
+        self.complete(&request, &response);
+        response
+    }
+
+    fn effect(&self, sequence: u64) -> EffectId {
+        let mut bytes = self.client.0;
+        for (target, byte) in bytes[8..].iter_mut().zip(sequence.to_be_bytes()) {
+            *target ^= byte;
+        }
+        EffectId(bytes)
+    }
+
+    fn complete(&self, request: &GuestRequest, response: &visa_wasi_protocol::GuestResponse) {
+        if response.completion_required {
+            let completion = GuestCompletion {
                 version: PROTOCOL_VERSION,
-                session: SESSION,
-                owner: self.owner,
-                client: self.client,
-                capability: self.capability,
-                sequence,
-                authority_epoch: self.epoch,
-                operation,
-            },
-        )
-        .unwrap()
+                session: request.session,
+                owner: request.owner,
+                client: request.client,
+                capability: request.capability,
+                sequence: request.sequence,
+                effect: request.effect,
+                authority_epoch: request.authority_epoch,
+            };
+            assert_eq!(send_completion(&self.socket, &completion).unwrap().errno, errno::SUCCESS);
+        }
     }
 }
 
@@ -199,10 +228,39 @@ fn fresh_destination_preserves_descriptors_chunks_locks_and_fencing() {
         errno::SUCCESS
     );
 
+    assert!(
+        admin(
+            &source_socket,
+            SOURCE_CAPABILITY,
+            AdminOperation::BarrierArm {
+                token: BARRIER,
+                predicate: HostcallPredicate {
+                    kind: HostcallKind::Any,
+                    resource: ResourceSelector::Any,
+                    outcome: OutcomePredicate::Any,
+                    occurrence: 1,
+                },
+            },
+        )
+        .ok
+    );
+    assert_eq!(source.call(Operation::FdTell { fd: output_fd }).errno, errno::SUCCESS);
+    assert!(
+        admin(
+            &source_socket,
+            SOURCE_CAPABILITY,
+            AdminOperation::BarrierRelease {
+                token: BARRIER,
+                action: BarrierReleaseAction::Checkpoint,
+            },
+        )
+        .ok
+    );
+
     let freeze = admin(
         &source_socket,
         SOURCE_CAPABILITY,
-        AdminOperation::Freeze { handoff: HANDOFF, destination_epoch: 2 },
+        AdminOperation::Freeze { barrier: BARRIER, handoff: HANDOFF, destination_epoch: 2 },
     );
     assert!(freeze.ok);
     assert_eq!(freeze.status.unwrap().mode, ProviderMode::Frozen);
@@ -254,6 +312,17 @@ fn fresh_destination_preserves_descriptors_chunks_locks_and_fencing() {
     );
     assert!(activation.ok);
     assert_eq!(activation.status.unwrap().mode, ProviderMode::Active);
+    assert!(
+        admin(
+            &destination_socket,
+            DESTINATION_CAPABILITY,
+            AdminOperation::BarrierRelease {
+                token: BARRIER,
+                action: BarrierReleaseAction::Continue,
+            }
+        )
+        .ok
+    );
 
     let tell = destination.call(Operation::FdTell { fd: output_fd });
     assert_eq!(tell.result, OperationResult::Offset(prefix.len() as u64));

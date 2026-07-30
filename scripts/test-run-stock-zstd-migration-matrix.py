@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import inspect
 import json
 import subprocess
 import tempfile
@@ -79,12 +80,18 @@ class RunnerTests(unittest.TestCase):
             "upstream": {"revision": revision},
         }
         wanco_receipt = {
-            "schema": "visa-wanco-carrier-build-receipt-v2",
+            "schema": "visa-wanco-carrier-build-receipt-v4",
             "revision": revision,
             "wanco_binary_sha256": compiler_sha256,
             "runtime_staticlib_sha256": runtime_sha256,
             "image_tag": "wanco:locked",
             "image_id": image_id,
+            "stackmap_binding": "exact-active-callsite-id",
+            "stackmap_layout": "typed-locals-and-value-stack-v2",
+            "indirect_call_operands_retained": True,
+            "active_data_segments_preserved_on_restore": True,
+            "per_frame_callee_saved_registers": True,
+            "post_import_checkpoint_points": True,
         }
         return {
             "build_receipt": build_receipt,
@@ -117,6 +124,15 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(len(first), 32)
         self.assertNotEqual(first, "0" * 32)
         self.assertNotEqual(first, MATRIX.stable_id("second"))
+
+    def test_checkpoint_cut_uses_exact_barrier_not_byte_polling_or_signal(self) -> None:
+        source = inspect.getsource(MATRIX.checkpoint_source)
+        self.assertIn('"barrier-arm"', source)
+        self.assertIn('"barrier-release"', source)
+        self.assertIn('"checkpoint"', source)
+        self.assertNotIn("bytes_written", source)
+        self.assertNotIn("SIGUSR1", source)
+        self.assertNotIn('"kill"', source)
 
     def test_expected_rejection_records_bounded_diagnostic(self) -> None:
         completed = subprocess.CompletedProcess(

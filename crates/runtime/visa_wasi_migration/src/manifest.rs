@@ -9,11 +9,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use visa_wasi_protocol::{ClientId, OwnerId, SessionId};
+use visa_wasi_protocol::{BarrierToken, ClientId, OwnerId, SessionId};
 
 use crate::MigrationError;
 
-pub const MANIFEST_SCHEMA: &str = "visa-transparent-wasi-migration-v1";
+pub const MANIFEST_SCHEMA: &str = "visa-transparent-wasi-migration-v3";
 pub const APPLICATION_ROLE: &str = "application";
 pub const CHECKPOINT_ROLE: &str = "compute-checkpoint";
 pub const CAPSULE_MANIFEST_ROLE: &str = "resource-capsule-manifest";
@@ -122,31 +122,46 @@ impl PlatformIdentity {
 #[serde(deny_unknown_fields)]
 pub struct ClientLineage {
     pub source_client_hex: String,
+    pub source_restore_client_hex: String,
     pub destination_client_hex: String,
 }
 
 impl ClientLineage {
     fn validate(&self) -> Result<(), MigrationError> {
         validate_identity_hex(&self.source_client_hex, 16, "source client")?;
+        validate_identity_hex(&self.source_restore_client_hex, 16, "source restore client")?;
         validate_identity_hex(&self.destination_client_hex, 16, "destination client")?;
-        if self.source_client_hex == self.destination_client_hex {
+        let clients = [
+            self.source_client_hex.as_str(),
+            self.source_restore_client_hex.as_str(),
+            self.destination_client_hex.as_str(),
+        ];
+        if clients.into_iter().collect::<BTreeSet<_>>().len() != 3 {
             return Err(MigrationError::Invalid(
-                "destination client must be fresh for the restored process",
+                "source, source-restore, and destination clients must be distinct",
             ));
         }
         Ok(())
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MigrationIntent {
     pub files: FileRoles,
     pub session: SessionId,
     pub stable_owner: OwnerId,
     pub handoff: [u8; 16],
+    /// Exact post-hostcall barrier whose checkpoint release made the resource
+    /// projection eligible for freeze.
+    pub checkpoint_barrier: BarrierToken,
     pub source_epoch: u64,
     pub destination_epoch: u64,
     pub source_client: ClientId,
+    /// Fresh native-process identity used only when a pre-commit abort restores
+    /// the source checkpoint. Native bridge request counters are not guest
+    /// checkpoint state, so reusing `source_client` would alias old sequences.
+    pub source_restore_client: ClientId,
     pub destination_client: ClientId,
     pub application_build: BuildIdentity,
     pub source_platform: PlatformIdentity,
@@ -165,12 +180,23 @@ impl MigrationIntent {
         if self.handoff == [0; 16] {
             return Err(MigrationError::Invalid("zero handoff identity"));
         }
-        if self.source_client.is_zero() || self.destination_client.is_zero() {
+        if self.checkpoint_barrier.is_zero() {
+            return Err(MigrationError::Invalid("zero checkpoint barrier identity"));
+        }
+        if self.source_client.is_zero()
+            || self.source_restore_client.is_zero()
+            || self.destination_client.is_zero()
+        {
             return Err(MigrationError::Invalid("zero client identity"));
         }
-        if self.source_client == self.destination_client {
+        if [self.source_client, self.source_restore_client, self.destination_client]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .len()
+            != 3
+        {
             return Err(MigrationError::Invalid(
-                "destination client must be fresh for the restored process",
+                "source, source-restore, and destination clients must be distinct",
             ));
         }
         if self.source_epoch == 0
@@ -188,6 +214,16 @@ impl MigrationIntent {
         self.source_platform.validate()?;
         self.destination_platform.validate()
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, MigrationError> {
+        self.validate()?;
+        serde_json_canonicalizer::to_vec(self)
+            .map_err(|error| MigrationError::Codec(error.to_string()))
+    }
+
+    pub fn digest(&self) -> Result<ManifestDigest, MigrationError> {
+        Ok(ManifestDigest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +237,7 @@ pub struct MigrationManifest {
     pub session_hex: String,
     pub stable_owner_hex: String,
     pub handoff_hex: String,
+    pub checkpoint_barrier_hex: String,
     pub source_epoch: u64,
     pub destination_epoch: u64,
     pub clients: ClientLineage,
@@ -221,10 +258,12 @@ impl MigrationManifest {
             session_hex: hex(&intent.session.0),
             stable_owner_hex: hex(&intent.stable_owner.0),
             handoff_hex: hex(&intent.handoff),
+            checkpoint_barrier_hex: hex(&intent.checkpoint_barrier.0),
             source_epoch: intent.source_epoch,
             destination_epoch: intent.destination_epoch,
             clients: ClientLineage {
                 source_client_hex: hex(&intent.source_client.0),
+                source_restore_client_hex: hex(&intent.source_restore_client.0),
                 destination_client_hex: hex(&intent.destination_client.0),
             },
             application_build: intent.application_build.clone(),
@@ -302,6 +341,7 @@ impl MigrationManifest {
         validate_identity_hex(&self.session_hex, 16, "session")?;
         validate_identity_hex(&self.stable_owner_hex, 16, "stable owner")?;
         validate_identity_hex(&self.handoff_hex, 16, "handoff")?;
+        validate_identity_hex(&self.checkpoint_barrier_hex, 16, "checkpoint barrier")?;
         self.clients.validate()?;
         if self.source_epoch == 0
             || self.destination_epoch

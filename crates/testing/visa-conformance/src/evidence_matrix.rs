@@ -52,6 +52,7 @@ pub enum MatrixResourceProfile {
     JointHandoff,
     LogicalRequest,
     RegularFile,
+    SqliteRollbackJournal,
     TimerKv,
 }
 
@@ -66,6 +67,7 @@ pub enum MatrixHandoffTopology {
     RunnerWithSourceSidecar,
     SameBootMultiProcess,
     VisaPlusWancoCarrier,
+    VisaPlusWancoCarrierWithProviderHandoff,
     WancoCarrierOnly,
 }
 
@@ -78,6 +80,7 @@ pub enum MatrixFaultModel {
     Stage3aRegularFileTwelveCase,
     Stage3bLogicalRequestFourteenCase,
     Stage4Stage1ThirtyOneCase,
+    SqliteRollbackEightCutPlusProcessCrash,
     WancoRegularFileTwoCase,
 }
 
@@ -94,6 +97,7 @@ pub enum MatrixVerifier {
     Stage3Structural,
     Stage3aCrossRuntimeOuterAndRawOracle,
     Stage4ReconstructedNormalized,
+    SqliteNamespaceNativeOracle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1390,6 +1394,18 @@ mod tests {
         assert_eq!(requirement("bounded-regular-file-continuity").required_cells.len(), 1);
         assert_eq!(Stage3Profile::RegularFile.cases().len(), 12);
         assert_eq!(Stage3Profile::LogicalRequest.cases().len(), 14);
+        let sqlite = matrix
+            .cells
+            .iter()
+            .find(|cell| cell.id == "stock-sqlite.wanco-rollback-journal")
+            .unwrap();
+        assert_eq!(sqlite.resource_profile, MatrixResourceProfile::SqliteRollbackJournal);
+        assert_eq!(
+            sqlite.handoff_topology,
+            MatrixHandoffTopology::VisaPlusWancoCarrierWithProviderHandoff
+        );
+        assert_eq!(sqlite.fault_model, MatrixFaultModel::SqliteRollbackEightCutPlusProcessCrash);
+        assert_eq!(sqlite.verifier, MatrixVerifier::SqliteNamespaceNativeOracle);
         for claim in required_stage4_claims() {
             assert_eq!(
                 requirement(claim.claim_id.as_str()).required_cells.len(),

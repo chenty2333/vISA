@@ -6,16 +6,20 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use visa_wasi_protocol::{
-    AdminRequest, AdminResponse, GuestRequest, GuestResponse, MAX_FRAME_BYTES, WireRequest,
+    AdminRequest, AdminResponse, BarrierPollRequest, BarrierPollResponse, GuestCompletion,
+    GuestCompletionResponse, GuestRequest, GuestResponse, MAX_FRAME_BYTES, WireRequest,
     WireResponse, decode_request, decode_response, encode_request, encode_response,
 };
 
 use crate::{Provider, ProviderError};
 
 pub struct ProviderServer;
+
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl ProviderServer {
     pub fn serve(mut provider: Provider, socket: &Path) -> Result<(), ProviderError> {
@@ -33,6 +37,8 @@ impl ProviderServer {
         };
         for incoming in listener.incoming() {
             let mut stream = incoming?;
+            stream.set_read_timeout(Some(CONNECTION_TIMEOUT))?;
+            stream.set_write_timeout(Some(CONNECTION_TIMEOUT))?;
             let request_bytes = match read_frame(&mut stream) {
                 Ok(bytes) => bytes,
                 Err(_) => continue,
@@ -42,11 +48,33 @@ impl ProviderServer {
                 Err(_) => continue,
             };
             let response = match request {
-                WireRequest::Guest(request) => WireResponse::Guest(provider.handle_guest(request)),
+                WireRequest::Guest(request) => {
+                    let sequence = request.sequence;
+                    let operation = request.operation.clone();
+                    let response = provider.handle_guest(request);
+                    if std::env::var_os("VISA_WASI_TRACE_GUEST").is_some() {
+                        eprintln!(
+                            "guest sequence={sequence} operation={operation:?} errno={} result={:?}",
+                            response.errno, response.result
+                        );
+                    }
+                    WireResponse::Guest(response)
+                }
+                WireRequest::Completion(completion) => {
+                    WireResponse::Completion(provider.handle_completion(completion))
+                }
+                WireRequest::BarrierPoll(poll) => {
+                    WireResponse::BarrierPoll(provider.handle_barrier_poll(poll))
+                }
                 WireRequest::Admin(request) => WireResponse::Admin(provider.handle_admin(request)),
             };
             let response_bytes = encode_response(&response).map_err(|_| ProviderError::Codec)?;
-            write_frame(&mut stream, &response_bytes)?;
+            if write_frame(&mut stream, &response_bytes).is_err() {
+                if provider.shutdown_requested() {
+                    break;
+                }
+                continue;
+            }
             if provider.shutdown_requested() {
                 break;
             }
@@ -59,14 +87,42 @@ impl ProviderServer {
 pub fn send_admin(socket: &Path, request: &AdminRequest) -> Result<AdminResponse, ProviderError> {
     match exchange(socket, &WireRequest::Admin(request.clone()))? {
         WireResponse::Admin(response) => Ok(response),
-        WireResponse::Guest(_) => Err(ProviderError::Integrity("wrong response family")),
+        WireResponse::Guest(_) | WireResponse::Completion(_) | WireResponse::BarrierPoll(_) => {
+            Err(ProviderError::Integrity("wrong response family"))
+        }
     }
 }
 
 pub fn send_guest(socket: &Path, request: &GuestRequest) -> Result<GuestResponse, ProviderError> {
     match exchange(socket, &WireRequest::Guest(request.clone()))? {
         WireResponse::Guest(response) => Ok(response),
-        WireResponse::Admin(_) => Err(ProviderError::Integrity("wrong response family")),
+        WireResponse::Completion(_) | WireResponse::BarrierPoll(_) | WireResponse::Admin(_) => {
+            Err(ProviderError::Integrity("wrong response family"))
+        }
+    }
+}
+
+pub fn send_completion(
+    socket: &Path,
+    completion: &GuestCompletion,
+) -> Result<GuestCompletionResponse, ProviderError> {
+    match exchange(socket, &WireRequest::Completion(completion.clone()))? {
+        WireResponse::Completion(response) => Ok(response),
+        WireResponse::Guest(_) | WireResponse::BarrierPoll(_) | WireResponse::Admin(_) => {
+            Err(ProviderError::Integrity("wrong response family"))
+        }
+    }
+}
+
+pub fn send_barrier_poll(
+    socket: &Path,
+    poll: &BarrierPollRequest,
+) -> Result<BarrierPollResponse, ProviderError> {
+    match exchange(socket, &WireRequest::BarrierPoll(poll.clone()))? {
+        WireResponse::BarrierPoll(response) => Ok(response),
+        WireResponse::Guest(_) | WireResponse::Completion(_) | WireResponse::Admin(_) => {
+            Err(ProviderError::Integrity("wrong response family"))
+        }
     }
 }
 

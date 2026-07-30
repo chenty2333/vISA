@@ -1,25 +1,53 @@
-use std::{cell::RefCell, fs, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    fs,
+    path::Path,
+    rc::Rc,
+};
 
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use visa_wasi_migration::{
     BuildIdentity, CanonicalCommitProof, CanonicalFenceProof, CanonicalProofVerifier,
-    ComputeControl, Driver, FileRoles, MigrationError, MigrationIntent, MigrationManifest, Phase,
-    PlatformIdentity, ProviderMode, ProviderProjection, ProviderProjectionStatus,
+    CanonicalRecovery, CanonicalSourceRetainedProof, ComputeControl, Driver, DriverRecord,
+    DriverRecordStore, FileDriverRecordStore, FileRoles, MigrationError, MigrationIntent,
+    MigrationManifest, Phase, PlatformIdentity, ProviderMode, ProviderProjection,
+    ProviderProjectionStatus,
 };
-use visa_wasi_protocol::{ClientId, OwnerId, SessionId};
+use visa_wasi_protocol::{BarrierToken, ClientId, OwnerId, SessionId};
 
 const SESSION: SessionId = SessionId([1; 16]);
 const OWNER: OwnerId = OwnerId([2; 16]);
 const HANDOFF: [u8; 16] = [3; 16];
+const CHECKPOINT_BARRIER: BarrierToken = BarrierToken([7; 16]);
 const SOURCE_CLIENT: ClientId = ClientId([4; 16]);
 const DESTINATION_CLIENT: ClientId = ClientId([5; 16]);
+const SOURCE_RESTORE_CLIENT: ClientId = ClientId([6; 16]);
 const SOURCE_EPOCH: u64 = 11;
 const DESTINATION_EPOCH: u64 = 12;
 
 type Log = Rc<RefCell<Vec<&'static str>>>;
 type CommitMutation = Box<dyn Fn(&mut CanonicalCommitProof)>;
+
+struct FailingStore {
+    inner: FileDriverRecordStore,
+    fail_generation: Rc<Cell<Option<u64>>>,
+}
+
+impl DriverRecordStore for FailingStore {
+    fn load(&mut self) -> Result<Option<DriverRecord>, MigrationError> {
+        self.inner.load()
+    }
+
+    fn save(&mut self, record: &DriverRecord) -> Result<(), MigrationError> {
+        if self.fail_generation.get() == Some(record.generation) {
+            self.fail_generation.set(None);
+            return Err(MigrationError::Durability("injected record fsync failure".to_owned()));
+        }
+        self.inner.save(record)
+    }
+}
 
 #[derive(Clone)]
 struct FakeCompute {
@@ -34,6 +62,11 @@ impl ComputeControl for FakeCompute {
 
     fn restore_destination(&mut self, _: &MigrationManifest) -> Result<(), MigrationError> {
         self.log.borrow_mut().push("compute-restore");
+        Ok(())
+    }
+
+    fn restore_source(&mut self, _: &MigrationIntent) -> Result<(), MigrationError> {
+        self.log.borrow_mut().push("source-compute-restore");
         Ok(())
     }
 }
@@ -100,36 +133,101 @@ impl ProviderProjection for FakeProvider {
 #[derive(Clone)]
 struct ReceiptVerifier {
     log: Log,
+    canonical: Rc<RefCell<CanonicalRecovery>>,
 }
 
 impl CanonicalProofVerifier for ReceiptVerifier {
     fn verify_ownership_commit(
         &self,
-        _: &MigrationManifest,
-        _: &CanonicalCommitProof,
-        canonical_receipt: &Path,
+        manifest: &MigrationManifest,
+        proof: &CanonicalCommitProof,
+        artifact_root: &Path,
     ) -> Result<(), MigrationError> {
         self.log.borrow_mut().push("verify-commit");
-        if fs::read(canonical_receipt).map_err(MigrationError::Io)? == b"canonical commit" {
-            Ok(())
-        } else {
-            Err(MigrationError::Proof("commit receipt was not canonical"))
+        let canonical_receipt = proof.verify_binding(manifest, artifact_root)?;
+        if fs::read(canonical_receipt).map_err(MigrationError::Io)? != b"canonical commit" {
+            return Err(MigrationError::Proof("commit receipt was not canonical"));
+        }
+        let mut canonical = self.canonical.borrow_mut();
+        match &*canonical {
+            CanonicalRecovery::Uncommitted => {
+                *canonical = CanonicalRecovery::OwnershipCommitted(Box::new(proof.clone()));
+                Ok(())
+            }
+            CanonicalRecovery::OwnershipCommitted(existing) if **existing == *proof => Ok(()),
+            CanonicalRecovery::SourceFenced { commit, .. } if **commit == *proof => Ok(()),
+            CanonicalRecovery::SourceRetained(_) => Err(MigrationError::Proof(
+                "source-retained authority decision already won terminal CAS",
+            )),
+            _ => Err(MigrationError::Proof("conflicting canonical ownership commit")),
         }
     }
 
     fn verify_source_fence(
         &self,
-        _: &MigrationManifest,
-        _: &CanonicalCommitProof,
-        _: &CanonicalFenceProof,
-        canonical_receipt: &Path,
+        manifest: &MigrationManifest,
+        commit: &CanonicalCommitProof,
+        fence: &CanonicalFenceProof,
+        artifact_root: &Path,
     ) -> Result<(), MigrationError> {
         self.log.borrow_mut().push("verify-fence");
-        if fs::read(canonical_receipt).map_err(MigrationError::Io)? == b"canonical fence" {
-            Ok(())
-        } else {
-            Err(MigrationError::Proof("fence receipt was not canonical"))
+        let canonical_receipt = fence.verify_binding(manifest, commit, artifact_root)?;
+        if fs::read(canonical_receipt).map_err(MigrationError::Io)? != b"canonical fence" {
+            return Err(MigrationError::Proof("fence receipt was not canonical"));
         }
+        let mut canonical = self.canonical.borrow_mut();
+        match &*canonical {
+            CanonicalRecovery::OwnershipCommitted(existing) if **existing == *commit => {
+                *canonical = CanonicalRecovery::SourceFenced {
+                    commit: Box::new(commit.clone()),
+                    fence: Box::new(fence.clone()),
+                };
+                Ok(())
+            }
+            CanonicalRecovery::SourceFenced { commit: existing_commit, fence: existing_fence }
+                if **existing_commit == *commit && **existing_fence == *fence =>
+            {
+                Ok(())
+            }
+            CanonicalRecovery::SourceRetained(_) => Err(MigrationError::Proof(
+                "source-retained authority decision excludes source fencing",
+            )),
+            _ => Err(MigrationError::Proof("conflicting canonical source fence")),
+        }
+    }
+
+    fn claim_source_retained(
+        &self,
+        manifest: &MigrationManifest,
+        root: &Path,
+    ) -> Result<CanonicalSourceRetainedProof, MigrationError> {
+        self.log.borrow_mut().push("claim-source-retained");
+        let proof = CanonicalSourceRetainedProof::bind_receipt(
+            manifest,
+            root,
+            "proofs/source-retained.receipt",
+        )?;
+        let mut canonical = self.canonical.borrow_mut();
+        match &*canonical {
+            CanonicalRecovery::Uncommitted => {
+                *canonical = CanonicalRecovery::SourceRetained(Box::new(proof.clone()));
+                Ok(proof)
+            }
+            CanonicalRecovery::SourceRetained(existing) if **existing == proof => Ok(proof),
+            CanonicalRecovery::OwnershipCommitted(_) | CanonicalRecovery::SourceFenced { .. } => {
+                Err(MigrationError::Proof("canonical ownership commit excludes source retention"))
+            }
+            _ => Err(MigrationError::Proof("conflicting source-retained proof")),
+        }
+    }
+
+    fn recover_canonical_state(
+        &self,
+        _: &MigrationManifest,
+        _: &Path,
+    ) -> Result<CanonicalRecovery, MigrationError> {
+        self.log.borrow_mut().push("recover-authority");
+        Ok(self.canonical.borrow().clone())
     }
 }
 
@@ -186,11 +284,20 @@ impl Fixture {
             .expect("commit receipt");
         fs::write(temporary.path().join("proofs/fence.receipt"), b"canonical fence")
             .expect("fence receipt");
+        fs::write(
+            temporary.path().join("proofs/source-retained.receipt"),
+            b"canonical source retained",
+        )
+        .expect("source-retained receipt");
         Self { temporary, intent: intent() }
     }
 
     fn root(&self) -> &Path {
         self.temporary.path()
+    }
+
+    fn record_path(&self) -> std::path::PathBuf {
+        self.temporary.path().join("driver/record.json")
     }
 }
 
@@ -205,9 +312,11 @@ fn intent() -> MigrationIntent {
         session: SESSION,
         stable_owner: OWNER,
         handoff: HANDOFF,
+        checkpoint_barrier: CHECKPOINT_BARRIER,
         source_epoch: SOURCE_EPOCH,
         destination_epoch: DESTINATION_EPOCH,
         source_client: SOURCE_CLIENT,
+        source_restore_client: SOURCE_RESTORE_CLIENT,
         destination_client: DESTINATION_CLIENT,
         application_build: BuildIdentity {
             source_revision: "0123456789abcdef".to_owned(),
@@ -230,18 +339,22 @@ fn platform(label: &str) -> PlatformIdentity {
     }
 }
 
-fn driver(fixture: &Fixture) -> Driver<FakeCompute, FakeProvider, ReceiptVerifier> {
+type TestDriver = Driver<FakeCompute, FakeProvider, ReceiptVerifier, FileDriverRecordStore>;
+
+fn driver(fixture: &Fixture) -> TestDriver {
     let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
     Driver::new(
         fixture.intent.clone(),
         FakeCompute { log: Rc::clone(&log) },
         FakeProvider { log: Rc::clone(&log), session: SESSION },
-        ReceiptVerifier { log },
+        ReceiptVerifier { log, canonical },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
     )
     .expect("valid driver")
 }
 
-fn prepared_driver(fixture: &Fixture) -> Driver<FakeCompute, FakeProvider, ReceiptVerifier> {
+fn prepared_driver(fixture: &Fixture) -> TestDriver {
     let mut driver = driver(fixture);
     driver.confirm_source_compute_exit().expect("exit");
     driver.freeze_source().expect("freeze");
@@ -251,10 +364,7 @@ fn prepared_driver(fixture: &Fixture) -> Driver<FakeCompute, FakeProvider, Recei
     driver
 }
 
-fn commit_proof(
-    driver: &Driver<FakeCompute, FakeProvider, ReceiptVerifier>,
-    root: &Path,
-) -> CanonicalCommitProof {
+fn commit_proof(driver: &TestDriver, root: &Path) -> CanonicalCommitProof {
     CanonicalCommitProof::bind_receipt(
         driver.manifest().expect("manifest"),
         root,
@@ -264,7 +374,7 @@ fn commit_proof(
 }
 
 fn fence_proof(
-    driver: &Driver<FakeCompute, FakeProvider, ReceiptVerifier>,
+    driver: &TestDriver,
     commit: &CanonicalCommitProof,
     root: &Path,
 ) -> CanonicalFenceProof {
@@ -275,6 +385,24 @@ fn fence_proof(
         "proofs/fence.receipt",
     )
     .expect("fence proof")
+}
+
+#[test]
+fn native_restore_processes_have_pairwise_distinct_client_identities() {
+    let fixture = Fixture::new(7);
+    let manifest = MigrationManifest::seal(&fixture.intent, fixture.root()).expect("manifest");
+    assert_eq!(manifest.clients.source_restore_client_hex, hex(&SOURCE_RESTORE_CLIENT.0));
+
+    for duplicate in [SOURCE_CLIENT, DESTINATION_CLIENT] {
+        let mut changed = fixture.intent.clone();
+        changed.source_restore_client = duplicate;
+        assert!(matches!(
+            MigrationManifest::seal(&changed, fixture.root()),
+            Err(MigrationError::Invalid(
+                "source, source-restore, and destination clients must be distinct"
+            ))
+        ));
+    }
 }
 
 #[test]
@@ -293,7 +421,7 @@ fn complete_flow_obeys_the_canonical_fence_before_activation_order() {
     driver.restore_compute().expect("duplicate restore");
     assert_eq!(driver.phase(), Phase::ComputeRestored);
 
-    let (compute, _, _) = driver.into_parts();
+    let (compute, _, _, _) = driver.into_parts();
     assert_eq!(
         compute.log.borrow().as_slice(),
         [
@@ -414,10 +542,10 @@ fn duplicate_steps_and_precommit_resume_are_idempotent() {
     driver.export_source_capsule().expect("duplicate export");
     driver.seal_manifest(fixture.root()).expect("seal");
     driver.restore_destination_prepared().expect("prepare");
-    driver.resume_source().expect("resume");
-    driver.resume_source().expect("duplicate resume");
+    driver.resume_source(fixture.root()).expect("resume");
+    driver.resume_source(fixture.root()).expect("duplicate resume");
     assert_eq!(driver.phase(), Phase::SourceResumed);
-    let (compute, _, _) = driver.into_parts();
+    let (compute, _, _, _) = driver.into_parts();
     assert_eq!(
         compute.log.borrow().as_slice(),
         [
@@ -425,7 +553,9 @@ fn duplicate_steps_and_precommit_resume_are_idempotent() {
             "provider-freeze",
             "provider-export",
             "provider-prepare",
-            "provider-resume"
+            "claim-source-retained",
+            "provider-resume",
+            "source-compute-restore"
         ]
     );
 }
@@ -436,18 +566,20 @@ fn resume_after_canonical_commit_is_rejected() {
     let mut driver = prepared_driver(&fixture);
     let commit = commit_proof(&driver, fixture.root());
     driver.record_ownership_commit(commit, fixture.root()).expect("commit");
-    assert!(matches!(driver.resume_source(), Err(MigrationError::Transition { .. })));
+    assert!(matches!(driver.resume_source(fixture.root()), Err(MigrationError::Proof(_))));
 }
 
 #[test]
 fn wrong_provider_session_does_not_advance_the_driver() {
     let fixture = Fixture::new(16);
     let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
     let mut driver = Driver::new(
         fixture.intent.clone(),
         FakeCompute { log: Rc::clone(&log) },
         FakeProvider { log, session: SessionId([99; 16]) },
-        ReceiptVerifier { log: Rc::new(RefCell::new(Vec::new())) },
+        ReceiptVerifier { log: Rc::new(RefCell::new(Vec::new())), canonical },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
     )
     .expect("driver");
     driver.confirm_source_compute_exit().expect("exit");
@@ -476,6 +608,301 @@ fn semantic_paths_and_noncanonical_manifest_encodings_are_rejected() {
     assert!(matches!(
         MigrationManifest::decode_canonical(&pretty),
         Err(MigrationError::Integrity("migration manifest is not canonical RFC 8785 JSON"))
+    ));
+}
+
+#[test]
+fn restart_replays_provider_resume_then_restores_source_compute() {
+    restart_abort_after_failed_completion_save(14, 2, 1);
+}
+
+#[test]
+fn restart_recovers_source_retention_after_the_terminal_cas_save_is_lost() {
+    let fixture = Fixture::new(30);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
+    let fail_generation = Rc::new(Cell::new(Some(12)));
+    let mut driver = Driver::new(
+        fixture.intent.clone(),
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical: Rc::clone(&canonical) },
+        FailingStore {
+            inner: FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
+            fail_generation: Rc::clone(&fail_generation),
+        },
+    )
+    .expect("driver");
+    driver.confirm_source_compute_exit().expect("exit");
+    driver.freeze_source().expect("freeze");
+    driver.export_source_capsule().expect("export");
+    driver.seal_manifest(fixture.root()).expect("seal");
+    driver.restore_destination_prepared().expect("prepare");
+
+    assert!(matches!(driver.resume_source(fixture.root()), Err(MigrationError::Durability(_))));
+    assert_eq!(driver.phase(), Phase::DestinationPrepared);
+    assert_eq!(
+        driver.record().pending_action,
+        Some(visa_wasi_migration::DriverAction::ClaimSourceRetained)
+    );
+    assert!(matches!(&*canonical.borrow(), CanonicalRecovery::SourceRetained(_)));
+    drop(driver);
+
+    let mut recovered = Driver::recover(
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical },
+        FailingStore {
+            inner: FileDriverRecordStore::acquire(fixture.record_path()).expect("reopen store"),
+            fail_generation,
+        },
+        fixture.root(),
+    )
+    .expect("recover terminal source retention");
+    assert_eq!(recovered.phase(), Phase::SourceRetained);
+    recovered.resume_source(fixture.root()).expect("finish source resume");
+    assert_eq!(recovered.phase(), Phase::SourceResumed);
+    let events = log.borrow();
+    assert_eq!(events.iter().filter(|event| **event == "claim-source-retained").count(), 1);
+    assert_eq!(events.iter().filter(|event| **event == "provider-resume").count(), 1);
+    assert_eq!(events.iter().filter(|event| **event == "source-compute-restore").count(), 1);
+}
+
+#[test]
+fn restart_projects_a_commit_that_won_against_a_pending_source_retention() {
+    let fixture = Fixture::new(29);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
+    let mut driver = Driver::new(
+        fixture.intent.clone(),
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical: Rc::clone(&canonical) },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
+    )
+    .expect("driver");
+    driver.confirm_source_compute_exit().expect("exit");
+    driver.freeze_source().expect("freeze");
+    driver.export_source_capsule().expect("export");
+    driver.seal_manifest(fixture.root()).expect("seal");
+    driver.restore_destination_prepared().expect("prepare");
+    let commit = commit_proof(&driver, fixture.root());
+    *canonical.borrow_mut() = CanonicalRecovery::OwnershipCommitted(Box::new(commit.clone()));
+
+    assert!(matches!(
+        driver.resume_source(fixture.root()),
+        Err(MigrationError::Proof("canonical ownership commit excludes source retention"))
+    ));
+    assert_eq!(driver.phase(), Phase::DestinationPrepared);
+    assert_eq!(
+        driver.record().pending_action,
+        Some(visa_wasi_migration::DriverAction::ClaimSourceRetained)
+    );
+    drop(driver);
+
+    let recovered = Driver::recover(
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("reopen store"),
+        fixture.root(),
+    )
+    .expect("recover winning commit");
+    assert_eq!(recovered.phase(), Phase::OwnershipCommitted);
+    assert!(recovered.record().pending_action.is_none());
+    assert_eq!(
+        recovered
+            .record()
+            .ownership_commit_proof
+            .as_ref()
+            .expect("stored commit")
+            .digest()
+            .unwrap(),
+        commit.digest().unwrap()
+    );
+    let events = log.borrow();
+    assert_eq!(events.iter().filter(|event| **event == "provider-resume").count(), 0);
+    assert_eq!(events.iter().filter(|event| **event == "source-compute-restore").count(), 0);
+}
+
+#[test]
+fn restart_replays_source_compute_restore_after_lost_completion_save() {
+    restart_abort_after_failed_completion_save(16, 1, 2);
+}
+
+fn restart_abort_after_failed_completion_save(
+    failed_generation: u64,
+    expected_provider_resumes: usize,
+    expected_compute_restores: usize,
+) {
+    let fixture = Fixture::new(u8::try_from(failed_generation).expect("seed"));
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
+    let fail_generation = Rc::new(Cell::new(Some(failed_generation)));
+    let store = FailingStore {
+        inner: FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
+        fail_generation: Rc::clone(&fail_generation),
+    };
+    let mut driver = Driver::new(
+        fixture.intent.clone(),
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical: Rc::clone(&canonical) },
+        store,
+    )
+    .expect("driver");
+    driver.confirm_source_compute_exit().expect("exit");
+    driver.freeze_source().expect("freeze");
+    driver.export_source_capsule().expect("export");
+    driver.seal_manifest(fixture.root()).expect("seal");
+    driver.restore_destination_prepared().expect("prepare");
+    assert!(matches!(driver.resume_source(fixture.root()), Err(MigrationError::Durability(_))));
+    drop(driver);
+
+    let recovered = Driver::recover(
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical },
+        FailingStore {
+            inner: FileDriverRecordStore::acquire(fixture.record_path()).expect("reopen store"),
+            fail_generation,
+        },
+        fixture.root(),
+    )
+    .expect("recover");
+    assert_eq!(recovered.phase(), Phase::SourceResumed);
+    let events = log.borrow();
+    assert_eq!(
+        events.iter().filter(|event| **event == "provider-resume").count(),
+        expected_provider_resumes
+    );
+    assert_eq!(
+        events.iter().filter(|event| **event == "source-compute-restore").count(),
+        expected_compute_restores
+    );
+}
+
+#[test]
+fn restart_reconciles_a_canonical_commit_missing_from_the_local_record() {
+    let fixture = Fixture::new(31);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
+    let mut driver = Driver::new(
+        fixture.intent.clone(),
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical: Rc::clone(&canonical) },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
+    )
+    .expect("driver");
+    driver.confirm_source_compute_exit().expect("exit");
+    driver.freeze_source().expect("freeze");
+    driver.export_source_capsule().expect("export");
+    driver.seal_manifest(fixture.root()).expect("seal");
+    driver.restore_destination_prepared().expect("prepare");
+    let commit = CanonicalCommitProof::bind_receipt(
+        driver.manifest().expect("manifest"),
+        fixture.root(),
+        "proofs/commit.receipt",
+    )
+    .expect("commit");
+    *canonical.borrow_mut() = CanonicalRecovery::OwnershipCommitted(Box::new(commit.clone()));
+    drop(driver);
+
+    let mut recovered = Driver::recover(
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log, canonical },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("reopen store"),
+        fixture.root(),
+    )
+    .expect("recover");
+    assert_eq!(recovered.phase(), Phase::OwnershipCommitted);
+    assert_eq!(
+        recovered
+            .record()
+            .ownership_commit_proof
+            .as_ref()
+            .expect("stored commit")
+            .digest()
+            .unwrap(),
+        commit.digest().unwrap()
+    );
+    assert!(matches!(recovered.resume_source(fixture.root()), Err(MigrationError::Proof(_))));
+}
+
+#[test]
+fn restart_projects_a_canonical_fence_missing_from_the_local_record() {
+    let fixture = Fixture::new(32);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let canonical = Rc::new(RefCell::new(CanonicalRecovery::Uncommitted));
+    let mut driver = Driver::new(
+        fixture.intent.clone(),
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical: Rc::clone(&canonical) },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("record store"),
+    )
+    .expect("driver");
+    driver.confirm_source_compute_exit().expect("exit");
+    driver.freeze_source().expect("freeze");
+    driver.export_source_capsule().expect("export");
+    driver.seal_manifest(fixture.root()).expect("seal");
+    driver.restore_destination_prepared().expect("prepare");
+    let commit = CanonicalCommitProof::bind_receipt(
+        driver.manifest().expect("manifest"),
+        fixture.root(),
+        "proofs/commit.receipt",
+    )
+    .expect("commit");
+    let fence = CanonicalFenceProof::bind_receipt(
+        driver.manifest().expect("manifest"),
+        &commit,
+        fixture.root(),
+        "proofs/fence.receipt",
+    )
+    .expect("fence");
+    *canonical.borrow_mut() = CanonicalRecovery::SourceFenced {
+        commit: Box::new(commit.clone()),
+        fence: Box::new(fence.clone()),
+    };
+    drop(driver);
+
+    let recovered = Driver::recover(
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log: Rc::clone(&log), canonical },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("reopen store"),
+        fixture.root(),
+    )
+    .expect("recover");
+    assert_eq!(recovered.phase(), Phase::SourceFenced);
+    assert_eq!(
+        recovered.record().source_fence_proof.as_ref().expect("stored fence").digest().unwrap(),
+        fence.digest().unwrap()
+    );
+    assert_eq!(log.borrow().iter().filter(|event| **event == "provider-fence").count(), 1);
+}
+
+#[test]
+fn restart_rejects_a_noncanonical_driver_record() {
+    let fixture = Fixture::new(33);
+    let driver = driver(&fixture);
+    let record = driver.record().clone();
+    drop(driver);
+    fs::write(fixture.record_path(), serde_json::to_vec_pretty(&record).expect("pretty record"))
+        .expect("replace record bytes");
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let result = Driver::recover(
+        FakeCompute { log: Rc::clone(&log) },
+        FakeProvider { log: Rc::clone(&log), session: SESSION },
+        ReceiptVerifier { log, canonical: Rc::new(RefCell::new(CanonicalRecovery::Uncommitted)) },
+        FileDriverRecordStore::acquire(fixture.record_path()).expect("reopen store"),
+        fixture.root(),
+    );
+    assert!(matches!(
+        result,
+        Err(MigrationError::Integrity("driver record is not canonical RFC 8785 JSON"))
     ));
 }
 

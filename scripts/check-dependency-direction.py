@@ -34,7 +34,9 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
         {"visa_durable_sqlite", "visa_wasi_protocol"}
     ),
     "visa_wanco_wasi": frozenset({"visa_wasi_protocol"}),
-    "visa_wasi_migration": frozenset({"visa_wasi_protocol"}),
+    "visa_wasi_migration": frozenset(
+        {"visa_durable_sqlite", "visa_wasi_protocol"}
+    ),
     "visa_nexus_service": frozenset({"visa_durable_sqlite", "visa_local_rpc"}),
     "visa_agent_store": frozenset({"visa_durable_sqlite", "visa_local_rpc"}),
     "visa_ownership_service": frozenset(
@@ -80,6 +82,7 @@ ALLOWED_WORKSPACE_DEPENDENCIES = {
     "stage3-request-component": frozenset(),
     "visa-regular-file-observation": frozenset(),
     "visa-regular-file-oracle": frozenset(),
+    "visa-sqlite-oracle": frozenset({"visa_wasi_protocol"}),
     "visa-wanco-carrier": frozenset(
         {
             "contract_core",

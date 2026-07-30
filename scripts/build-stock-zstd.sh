@@ -85,16 +85,35 @@ cache_root="$repo_root/target/.ci-cache/stock-zstd"
 mkdir -p "$cache_root"
 
 wanco_receipt="$repo_root/target/.ci-cache/wanco-carrier/build-receipt.json"
+expected_patch_set=$(
+    python3 - <<'PY'
+import hashlib
+import json
+
+with open("third_party/wanco/source-lock.json", encoding="utf-8") as source:
+    patches = json.load(source)["patches"]
+print(hashlib.sha256("".join(item["sha256"] for item in patches).encode()).hexdigest())
+PY
+)
 reuse_wanco=false
 if [[ -f $wanco_receipt ]]; then
-    candidate_image=$(python3 -c \
-        'import json,sys; print(json.load(open(sys.argv[1])).get("image_tag", ""))' \
-        "$wanco_receipt")
-    candidate_revision=$(python3 -c \
-        'import json,sys; print(json.load(open(sys.argv[1])).get("revision", ""))' \
-        "$wanco_receipt")
+    read -r candidate_image candidate_revision candidate_patch_set < <(
+        python3 - "$wanco_receipt" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    receipt = json.load(source)
+print(
+    receipt.get("image_tag", ""),
+    receipt.get("revision", ""),
+    receipt.get("patch_set_sha256", ""),
+)
+PY
+    )
     if [[ -n $candidate_image &&
-        $candidate_revision == "$expected_wanco_revision" ]] &&
+        $candidate_revision == "$expected_wanco_revision" &&
+        $candidate_patch_set == "$expected_patch_set" ]] &&
         docker image inspect "$candidate_image" >/dev/null 2>&1
     then
         reuse_wanco=true

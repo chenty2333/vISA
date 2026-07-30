@@ -8,6 +8,7 @@ usage: scripts/run-docker-ci-gate.sh [--ci-cache] [--skip-build] \
     [fast|full|system|system-jco-node|system-stage2|system-stage2-strict|
      system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|
      system-wanco-carrier|
+     system-stock-sqlite|
      system-stage4-target|
      system-stage4-isa|system-stage4|system-joint-handoff]
 
@@ -27,6 +28,8 @@ regular-file matrix; system-stage3 runs all three gates in sequence.
 system-wanco-carrier is host-special-cased because its source-locked Wanco
 build itself requires Docker. It invokes scripts/ci-gate.sh directly on the
 native x86-64 host while retaining evidence under the same CI artifact root.
+system-stock-sqlite is host-special-cased for the same reason and retains only
+its compact matrix and build receipts in the CI artifact root.
 system-stage4 cross-builds release x86-64 and AArch64 workers and validates the
 complete seven-cell native/QEMU-user matrix, a raw x86-64 Linux host receipt,
 and bundle relocation. system-stage4-target and
@@ -76,7 +79,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             exit 0
             ;;
-        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|system-wanco-carrier|system-stage4-target|system-stage4-isa|system-stage4|system-joint-handoff)
+        fast|full|system|system-jco-node|system-stage2|system-stage2-strict|system-stage3a|system-stage3a-cross-runtime|system-stage3b|system-stage3|system-wanco-carrier|system-stock-sqlite|system-stage4-target|system-stage4-isa|system-stage4|system-joint-handoff)
             if [[ -n "$tier" ]]; then
                 printf 'only one validation tier may be selected\n' >&2
                 usage
@@ -101,7 +104,7 @@ if [[ -n "$artifact_parent" && "$tier" != system-stage2-strict ]]; then
 fi
 
 repo_root=$(git rev-parse --show-toplevel)
-if [[ "$tier" == system-wanco-carrier ]]; then
+if [[ "$tier" == system-wanco-carrier || "$tier" == system-stock-sqlite ]]; then
     if [[ "$use_ci_cache" -eq 1 ]]; then
         mkdir -p \
             .ci-cache/cargo-git \
@@ -109,12 +112,12 @@ if [[ "$tier" == system-wanco-carrier ]]; then
             .ci-cache/target \
             .ci-cache/visa-ltp \
             .ci-artifacts
-        wanco_evidence_parent="$repo_root/.ci-artifacts"
+        native_evidence_parent="$repo_root/.ci-artifacts"
     else
-        wanco_evidence_parent="${VISA_EVIDENCE_PARENT:-$repo_root/target/visa-system}"
+        native_evidence_parent="${VISA_EVIDENCE_PARENT:-$repo_root/target/visa-system}"
     fi
-    exec env VISA_EVIDENCE_PARENT="$wanco_evidence_parent" \
-        scripts/ci-gate.sh system-wanco-carrier
+    exec env VISA_EVIDENCE_PARENT="$native_evidence_parent" \
+        scripts/ci-gate.sh "$tier"
 fi
 
 compose=(docker compose -f compose.yaml)

@@ -366,7 +366,7 @@ def validate(lock_path: Path = DEFAULT_LOCK) -> dict[str, Any]:
     exact_string(carrier["optimization"], "-O1", "carrier_build.optimization")
     exact_string(
         carrier["qualification"],
-        "wanco-v2-o1-carrier-qualified",
+        "wanco-v4-typed-restore-o1-carrier-qualified",
         "carrier_build.qualification",
     )
     o1 = exact_object(
@@ -381,7 +381,7 @@ def validate(lock_path: Path = DEFAULT_LOCK) -> dict[str, Any]:
     )
     exact_string(
         o1["qualification_basis"],
-        "canonical-wanco-v2-stackmap-and-lz4-validation",
+        "exact-callsite-typed-stackmap-nine-cell-active-data-and-lz4-validation",
         "carrier_build.o1_status.qualification_basis",
     )
     return lock

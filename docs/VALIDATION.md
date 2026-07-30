@@ -130,6 +130,7 @@ uploaded bytes.
 | `system-stage3a` | All 12 accepted bounded regular-file cases through separate source/destination Wasmtime stores, the shared coordinator/profile path, a real Linux regular-file provider, handoff, and independent Stage 3A bundle validation | The `bounded-regular-file-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not imply arbitrary directory trees, devices, FIFOs, already-open fds, atomic exclusion of writers outside the advisory lock/lease protocol, another runtime, or another ISA/substrate. |
 | `system-stage3a-cross-runtime` | The fixed 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three runs per direction, 12 complete inner validations, 144/144 executions, calibrated Stage 1 detector closure, verdict-free observations, independent semantic replay, a 20-entry preclassified outer-verifier corpus, and relocated verification | Regresses only `cross-runtime-regular-file-continuity-v1` for the named x86-64 Linux runtimes and bounded file profile. It does not qualify unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host execution, arbitrary filesystem objects, or joint composition. |
 | `system-wanco-carrier` | A real source-locked Wanco AOT `SIGUSR1` checkpoint and fresh-process restore for `read-write-offset` and `append-continuity`; one shared uninterrupted control, carrier-only expected rejection, vISA-plus-carrier acceptance, three clean-SHA repeats, and original-root plus relocated validation through the same verdict-free oracle | Establishes only `bounded-wanco-regular-file-carrier-composition-v1` on same-host native x86-64 Linux. It distinguishes compute-state carriage from resource rebinding; it does not qualify arbitrary Wanco applications, another file relation/resource, cross-host or cross-ISA Wanco, or a production migration service. |
+| `system-stock-sqlite` | A clean source-locked Wanco build; the nine-cell O0/O1/O2 typed-checkpoint corpus; zero-source-patch SQLite 3.53.4 built for WASI; provider kill/reopen and source-abort reconciliation; and all eight rollback-journal cuts through fresh-process restore, namespace snapshot, and native SQLite oracle | Establishes `bounded-stock-sqlite-rollback-migration-v1` for the named same-host x86-64, rollback-journal `DELETE`, `synchronous=FULL`, process-crash profile. It does not establish power-loss or storage-device ordering safety, WAL mode, cross-host/cross-ISA execution, arbitrary applications, or a production orchestrator. |
 | `system-stage3b` | All 14 accepted bounded logical-request cases through separate source/destination Wasmtime stores, a durable provider ledger, a real bounded loopback TCP protocol/peer, handoff, and independent Stage 3B bundle validation | The `bounded-logical-request-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not preserve arbitrary live TCP, socket sequence state, credential bytes, runtime future/stream state, or prove another runtime. |
 | `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
 | `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Roadmap closure additionally requires the complete-workflow and downloaded-artifact receipt recorded below. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
@@ -538,6 +539,47 @@ same-host x86-64 Wanco AOT setup. It does not establish arbitrary Wanco
 application migration, other regular-file relations, another resource family,
 cross-host execution, cross-ISA execution, hardware portability, or production
 migration service behavior.
+
+### Stock SQLite rollback-journal migration
+
+`bounded-stock-sqlite-rollback-migration-v1` is an earned canonical-validation
+claim for unmodified SQLite 3.53.4 compiled to WASI and executed by the
+source-locked Wanco AOT carrier on one native x86-64 Linux host. The SQLite
+source lock permits no upstream source patch. vISA virtualizes the required
+Preview1 file, namespace, cursor, sync, and dotfile-lock operations at the
+hostcall boundary; SQLite remains in rollback-journal `DELETE` mode with
+`synchronous=FULL`.
+
+The required cell, `stock-sqlite.wanco-rollback-journal`, pre-arms exact
+post-hostcall predicates for lock acquisition, partial journal write, journal
+sync, database-page write, database sync, journal-delete commit, lost response,
+and an active read cursor. A barrier can reach `held` only after the provider
+has durably recorded the effect and response and the bridge has written the
+result into guest state. Each cut then performs a Wanco checkpoint, canonical
+provider handoff, fresh destination process restore, complete namespace
+snapshot, and an independent native-SQLite oracle. The oracle ignores runner
+verdicts and recomputes `integrity_check`, `foreign_key_check`, ordered logical
+contents, unique transaction IDs, total-balance invariants, and exact raw ACK
+membership.
+
+The same gate proves `fd_sync`/`fd_datasync` and response replay across provider
+`SIGKILL` plus reopen, rejects migration while response delivery is uncertain,
+and exercises a real durable migration driver whose second coordinator resumes
+the source provider and restores source compute after a pre-commit crash. For a
+manifest-bound abort, resume is authorized only after the file authority's
+locked, fsynced CAS has irreversibly selected `source_retained`; the competing
+`ownership_committed` transition uses that same CAS and is mutually exclusive.
+The real qualification retains both generation-two terminals on separate
+authority instances and retains independently reconstructable, distinct adapter
+bindings for them. It rejects abort under the committed instance and exercises
+coordinator restart under the source-retained instance without resetting either
+state. This
+is a process-crash result only: power failure, torn sectors, lying `fsync`,
+device write reordering, WAL mode, arbitrary applications, cross-host or
+cross-ISA execution, and production scheduling remain explicit nonclaims.
+Canonical CI retains the compact matrix receipt and input build receipts; its
+large checkpoint and provider working directories are reproducible scratch
+state rather than archival artifacts.
 
 ### Stage 3A cross-host regular-file supporting cell
 
@@ -1356,6 +1398,7 @@ The matrix is additive. Evidence in one row cannot silently fill another row.
 | `cross-execution-path-portability` | The unchanged input and 31-case registry in all four Wasmtime/JcoNode directions, four complete inner validations, one normalized outer comparison, disclosed translator lineage, and no execution fallback | Independent Component Model implementations or cross-ISA behavior |
 | `strict-cross-runtime-continuity` | The fixed Component and timer/KV profile in all four Wasmtime/source-lock-bound-Wacogo directions, complete inner validation, exact runtime/build lineage and no-fallback proof, and equality across all 31 normalized groups | Cross-ISA behavior, additional resources, or support by unmodified upstream Wacogo |
 | `bounded-regular-file-continuity` | The fixed 12-case Stage 3A registry through the named Wasmtime source/destination adapter, real scoped Linux file provider, reauthorization/fencing, raw observation bundles, and the independent raw-observable oracle | Arbitrary directory trees, devices, FIFOs, open fds, atomic compare-and-mutate against writers outside the advisory lock/lease protocol, a second runtime, or cross-ISA behavior |
+| `bounded-stock-sqlite-rollback-migration-v1` | Unmodified SQLite 3.53.4 on the source-locked Wanco AOT carrier; the O0/O1/O2 typed-restore corpus; all eight exact rollback-journal cuts; provider kill/reopen; strict uncertain-delivery drain; source-compute abort reconciliation; complete namespace snapshots; raw ACK parsing; and an independent native-SQLite oracle | Power-loss, torn-sector, storage-reordering, or lying-`fsync` safety; WAL mode; arbitrary applications; cross-host/cross-ISA execution; or production orchestration |
 | `bounded-wanco-regular-file-carrier-composition-v1` | Same-host x86-64 Wanco AOT carrier-only expected rejection and vISA-plus-carrier accepted equivalence for exactly read-write-offset and append-continuity, three clean-SHA runs per cell, plus original-root and relocated oracle validation | Arbitrary Wanco applications, other file relations or resources, cross-host execution, cross-ISA execution, or additional regular-file relations |
 <!-- claim-semantic-contract:cross-runtime-regular-file-continuity-v1:validation:start -->
 | `cross-runtime-regular-file-continuity-v1` (candidate) | One immutable regular-file input and the fixed 12-case registry in all four Wasmtime/source-lock-bound-Wacogo directions; complete per-cell semantic evidence; exact runtime, source-lock, sidecar, Component, WIT, profile, provider, and configuration lineage; no-fallback proof; typed outer normalization; relocated verification; repeated stability runs; and an exact-SHA permanent artifact receipt | Candidate cells do not widen the earned Wasmtime-only claim. They do not cover unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host behavior, arbitrary filesystem objects, or joint-handoff composition. |

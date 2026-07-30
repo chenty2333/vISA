@@ -809,6 +809,34 @@
       ]
     },
     {
+      "id": "stock-sqlite.wanco-rollback-journal",
+      "source": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "destination": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "resource_profile": "sqlite-rollback-journal",
+      "handoff_topology": "visa-plus-wanco-carrier-with-provider-handoff",
+      "fault_model": "sqlite-rollback-eight-cut-plus-process-crash",
+      "verifier": "sqlite-namespace-native-oracle",
+      "disposition": "qualified",
+      "claim_ids": [
+        "bounded-stock-sqlite-rollback-migration-v1"
+      ],
+      "workflow_binding_ids": [
+        "stock-sqlite"
+      ],
+      "evidence_boundary": "Unmodified SQLite 3.53.4 compiled for WASI runs on same-host x86-64 Wanco AOT with vISA provider handoff at eight rollback-journal cuts; every fresh-process restore must pass a complete namespace snapshot and native SQLite oracle.",
+      "non_claims": [
+        "This cell does not claim power-loss, torn-sector, storage-reordering, cross-host, cross-ISA, WAL-mode, arbitrary-application, or production-orchestrator safety."
+      ]
+    },
+    {
       "id": "wanco.carrier-only.regular-file",
       "source": {
         "runtime": "wanco-aot",
@@ -909,6 +937,17 @@
       "claim_id": "bounded-regular-file-continuity",
       "required_cells": [
         "s3a.wasmtime-to-wasmtime.regular-file"
+      ],
+      "supporting_cells": [],
+      "minimum_required_runs_per_cell": 1,
+      "minimum_supporting_runs_per_cell": 1,
+      "requires_clean_git": true,
+      "requires_relocated_verification": false
+    },
+    {
+      "claim_id": "bounded-stock-sqlite-rollback-migration-v1",
+      "required_cells": [
+        "stock-sqlite.wanco-rollback-journal"
       ],
       "supporting_cells": [],
       "minimum_required_runs_per_cell": 1,

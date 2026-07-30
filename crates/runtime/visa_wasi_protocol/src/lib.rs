@@ -6,9 +6,10 @@ use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 1 };
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 2, minor: 0 };
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const ROOT_PREOPEN_FD: u32 = 3;
+pub const NAMESPACE_SNAPSHOT_VERSION: u16 = 2;
 
 /// Preview1 `__wasi_rights_t` bits. Keeping the canonical bit assignments in
 /// the wire crate lets every runtime adapter and the resource provider make
@@ -91,6 +92,8 @@ macro_rules! identity_type {
 identity_type!(SessionId, 16);
 identity_type!(OwnerId, 16);
 identity_type!(ClientId, 16);
+identity_type!(EffectId, 16);
+identity_type!(BarrierToken, 16);
 identity_type!(ObjectId, 16);
 identity_type!(GuestCapability, 32);
 identity_type!(AdminCapability, 32);
@@ -108,6 +111,11 @@ pub struct GuestRequest {
     /// This is independent from the administrative transition capability.
     pub capability: GuestCapability,
     pub sequence: u64,
+    /// Caller-carried identity of one logical effect. Reusing the same value
+    /// preserves provider deduplication across transport retries, client
+    /// replacement, and an authority-epoch handoff. A client-scoped generator
+    /// must instead drain every completed delivery before replacing the client.
+    pub effect: EffectId,
     pub authority_epoch: u64,
     pub operation: Operation,
 }
@@ -120,6 +128,7 @@ impl GuestRequest {
             && !self.client.is_zero()
             && !self.capability.is_zero()
             && self.sequence != 0
+            && !self.effect.is_zero()
             && self.authority_epoch != 0
     }
 }
@@ -129,9 +138,88 @@ impl GuestRequest {
 pub struct GuestResponse {
     pub version: ProtocolVersion,
     pub sequence: u64,
+    pub effect: EffectId,
+    /// True only when the provider durably recorded this delivery and the
+    /// runtime must acknowledge it after materializing the result in guest
+    /// linear memory.
+    pub completion_required: bool,
     /// Numeric Preview1 errno. Zero is success.
     pub errno: u16,
     pub result: OperationResult,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestCompletion {
+    pub version: ProtocolVersion,
+    pub session: SessionId,
+    pub owner: OwnerId,
+    pub client: ClientId,
+    pub capability: GuestCapability,
+    pub sequence: u64,
+    pub effect: EffectId,
+    pub authority_epoch: u64,
+}
+
+impl GuestCompletion {
+    pub fn is_well_formed(&self) -> bool {
+        self.version.is_supported()
+            && !self.session.is_zero()
+            && !self.owner.is_zero()
+            && !self.client.is_zero()
+            && !self.capability.is_zero()
+            && self.sequence != 0
+            && !self.effect.is_zero()
+            && self.authority_epoch != 0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestCompletionResponse {
+    pub version: ProtocolVersion,
+    pub sequence: u64,
+    pub effect: EffectId,
+    pub errno: u16,
+    pub directive: BarrierDirective,
+    pub barrier: Option<BarrierToken>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BarrierPollRequest {
+    pub version: ProtocolVersion,
+    pub session: SessionId,
+    pub owner: OwnerId,
+    pub client: ClientId,
+    pub capability: GuestCapability,
+    pub authority_epoch: u64,
+    pub token: BarrierToken,
+    pub sequence: u64,
+    pub effect: EffectId,
+}
+
+impl BarrierPollRequest {
+    pub fn is_well_formed(&self) -> bool {
+        self.version.is_supported()
+            && !self.session.is_zero()
+            && !self.owner.is_zero()
+            && !self.client.is_zero()
+            && !self.capability.is_zero()
+            && self.authority_epoch != 0
+            && !self.token.is_zero()
+            && self.sequence != 0
+            && !self.effect.is_zero()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BarrierPollResponse {
+    pub version: ProtocolVersion,
+    pub token: BarrierToken,
+    pub errno: u16,
+    pub directive: BarrierDirective,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,12 +237,15 @@ pub struct AdminResponse {
     pub ok: bool,
     pub message: String,
     pub status: Option<ProviderStatus>,
+    pub snapshot: Option<NamespaceSnapshotReceipt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireRequest {
     Guest(GuestRequest),
+    Completion(GuestCompletion),
+    BarrierPoll(BarrierPollRequest),
     Admin(AdminRequest),
 }
 
@@ -162,6 +253,8 @@ pub enum WireRequest {
 #[serde(rename_all = "snake_case")]
 pub enum WireResponse {
     Guest(GuestResponse),
+    Completion(GuestCompletionResponse),
+    BarrierPoll(BarrierPollResponse),
     Admin(AdminResponse),
 }
 
@@ -408,13 +501,93 @@ pub struct DirectoryEntry {
 #[serde(rename_all = "snake_case")]
 pub enum AdminOperation {
     Status,
-    Freeze { handoff: [u8; 16], destination_epoch: u64 },
+    BarrierArm { token: BarrierToken, predicate: HostcallPredicate },
+    BarrierRelease { token: BarrierToken, action: BarrierReleaseAction },
+    Freeze { barrier: BarrierToken, handoff: [u8; 16], destination_epoch: u64 },
     Export { bundle: String },
     Resume { handoff: [u8; 16], authority_epoch: u64 },
     Fence { handoff: [u8; 16], committed_epoch: u64 },
     Activate { handoff: [u8; 16], authority_epoch: u64 },
     Materialize { guest_path: Vec<u8>, host_path: String },
+    SnapshotNamespace { output: String },
     Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BarrierPhase {
+    Open,
+    Armed,
+    Triggered,
+    Held,
+    CheckpointReleased,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BarrierReleaseAction {
+    Continue,
+    Checkpoint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BarrierDirective {
+    Continue,
+    Wait,
+    Checkpoint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostcallKind {
+    Any,
+    FdClose,
+    FdDataSync,
+    FdPread,
+    FdPwrite,
+    FdRead,
+    FdSync,
+    FdWrite,
+    PathCreateDirectory,
+    PathOpen,
+    PathRemoveDirectory,
+    PathRename,
+    PathUnlinkFile,
+    VfsLock,
+    VfsUnlock,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceSelector {
+    Any,
+    Fd(u32),
+    ExactPath(Vec<u8>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomePredicate {
+    Any,
+    Success,
+    Errno(u16),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostcallPredicate {
+    pub kind: HostcallKind,
+    pub resource: ResourceSelector,
+    pub outcome: OutcomePredicate,
+    /// One selects the next matching completed response.
+    pub occurrence: u64,
+}
+
+impl HostcallPredicate {
+    pub const fn is_well_formed(&self) -> bool {
+        self.occurrence != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,13 +605,94 @@ pub struct ProviderStatus {
     pub session: SessionId,
     pub mode: ProviderMode,
     pub authority_epoch: u64,
+    pub barrier: BarrierPhase,
+    pub barrier_remaining: Option<u64>,
+    pub barrier_effect: Option<EffectId>,
     pub open_descriptors: u64,
     pub objects: u64,
     pub paths: u64,
     pub locks: u64,
+    pub effects: u64,
     pub completed_requests: u64,
     pub bytes_read: u64,
     pub bytes_written: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamespaceSnapshot {
+    pub version: u16,
+    pub session: SessionId,
+    pub authority_epoch: u64,
+    pub mode: ProviderMode,
+    pub barrier: BarrierPhase,
+    /// Digest of the durable effect ledger at the snapshot transaction.
+    pub effect_frontier: [u8; 32],
+    pub effects: u64,
+    pub objects: Vec<NamespaceObject>,
+    pub paths: Vec<NamespacePath>,
+    pub descriptors: Vec<NamespaceDescriptor>,
+    pub locks: Vec<NamespaceLock>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamespaceObject {
+    pub object: ObjectId,
+    pub kind: u8,
+    pub size: u64,
+    pub symlink_target: Option<Vec<u8>>,
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub accessed_ns: u64,
+    pub modified_ns: u64,
+    pub changed_ns: u64,
+    /// Complete bytes for regular files. Directories and symlinks carry none.
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamespacePath {
+    pub path: Vec<u8>,
+    pub object: ObjectId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamespaceDescriptor {
+    pub fd: u32,
+    pub object: ObjectId,
+    pub directory_path: Vec<u8>,
+    pub offset: u64,
+    pub flags: u16,
+    pub rights_base: u64,
+    pub rights_inheriting: u64,
+    pub preopen: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamespaceLock {
+    pub object: ObjectId,
+    pub owner: OwnerId,
+    pub level: LockLevel,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamespaceSnapshotReceipt {
+    pub version: u16,
+    pub sha256: [u8; 32],
+    pub effect_frontier: [u8; 32],
+    pub effects: u64,
+    pub encoded_bytes: u64,
+    pub objects: u64,
+    pub paths: u64,
+    pub descriptors: u64,
+    pub locks: u64,
+    pub unlinked_objects: u64,
 }
 
 pub fn encode_request(request: &WireRequest) -> Result<Vec<u8>, postcard::Error> {
@@ -454,6 +708,14 @@ pub fn encode_response(response: &WireResponse) -> Result<Vec<u8>, postcard::Err
 }
 
 pub fn decode_response(bytes: &[u8]) -> Result<WireResponse, postcard::Error> {
+    postcard::from_bytes(bytes)
+}
+
+pub fn encode_namespace_snapshot(snapshot: &NamespaceSnapshot) -> Result<Vec<u8>, postcard::Error> {
+    postcard::to_allocvec(snapshot)
+}
+
+pub fn decode_namespace_snapshot(bytes: &[u8]) -> Result<NamespaceSnapshot, postcard::Error> {
     postcard::from_bytes(bytes)
 }
 
@@ -498,6 +760,7 @@ mod tests {
             client: ClientId([3; 16]),
             capability: GuestCapability([4; 32]),
             sequence: 7,
+            effect: EffectId([5; 16]),
             authority_epoch: 9,
             operation: Operation::FdWrite { fd: 4, bytes: b"payload".to_vec() },
         })
@@ -521,10 +784,13 @@ mod tests {
         request.capability = GuestCapability::ZERO;
         assert!(!request.is_well_formed());
         request.capability = GuestCapability([4; 32]);
+        request.effect = EffectId::ZERO;
+        assert!(!request.is_well_formed());
+        request.effect = EffectId([5; 16]);
         request.version.major += 1;
         assert!(!request.is_well_formed());
         request.version = PROTOCOL_VERSION;
-        request.version.minor = request.version.minor.saturating_sub(1);
+        request.version.minor = request.version.minor.saturating_add(1);
         assert!(!request.is_well_formed());
     }
 }

@@ -1,0 +1,604 @@
+diff --git a/lib-rt/api.cc b/lib-rt/api.cc
+index 1475f0a..7b72ec4 100644
+--- a/lib-rt/api.cc
++++ b/lib-rt/api.cc
+@@ -22,6 +22,8 @@ namespace wanco {
+ // defined in wrt.cc
+ int32_t extend_memory(ExecEnv *exec_env, int32_t inc_pages);
+ 
++thread_local std::vector<uint64_t> active_callsites;
++
+ } // namespace wanco
+ 
+ // defined by AOT module
+@@ -51,7 +53,17 @@ extern "C" void sleep_msec(ExecEnv *exec_env, int32_t ms) {
+ ** checkpoint related functions
+ */
+ 
+-extern "C" void start_checkpoint(ExecEnv *exec_env) {
++extern "C" void push_active_callsite(ExecEnv *, uint64_t callsite_id) {
++  wanco::active_callsites.push_back(callsite_id);
++}
++
++extern "C" void pop_active_callsite(ExecEnv *) {
++  ASSERT(!wanco::active_callsites.empty() && "Active callsite stack empty");
++  wanco::active_callsites.pop_back();
++}
++
++extern "C" void start_checkpoint(ExecEnv *exec_env,
++                                  uint64_t checkpoint_callsite_id) {
+   WANCO_SAVE_REGISTERS();
+   wanco::CallerSavedRegisters regs{};
+   WANCO_RESTORE_REGISTERS(regs);
+@@ -69,8 +81,11 @@ extern "C" void start_checkpoint(ExecEnv *exec_env) {
+ 
+   const auto native_trace = wanco::get_stack_trace();
+ 
+-  const auto wasm_trace =
+-      wanco::asr_exit(regs, native_trace, wanco::g_stackmap);
++  auto checkpoint_callsites = wanco::active_callsites;
++  checkpoint_callsites.push_back(checkpoint_callsite_id);
++
++  const auto wasm_trace = wanco::asr_exit(
++      regs, native_trace, wanco::g_stackmap, checkpoint_callsites);
+ 
+   if constexpr (wanco::DEBUG_ENABLED) {
+     Debug() << "Wasm trace:" << std::endl;
+diff --git a/lib-rt/osr/asr_exit.cc b/lib-rt/osr/asr_exit.cc
+index 0270d48..5c99ef7 100644
+--- a/lib-rt/osr/asr_exit.cc
++++ b/lib-rt/osr/asr_exit.cc
+@@ -3,12 +3,11 @@
+ #include "stackmap/stackmap.h"
+ #include "stacktrace/stacktrace.h"
+ #include "wanco.h"
+-#include <algorithm>
++#include <cstdint>
+ #include <deque>
+ #include <map>
+ #include <memory>
+ #include <optional>
+-#include <utility>
+ #include <vector>
+ 
+ namespace wanco {
+@@ -19,79 +18,30 @@ static WasmStackFrame osr_exit(const NativeStackFrame &native_frame,
+                                std::shared_ptr<stackmap::StkMapRecord> record);
+ 
+ using stackmap_table =
+-    std::map<int32_t, std::vector<std::shared_ptr<stackmap::StkMapRecord>>>;
++    std::map<uint64_t, std::shared_ptr<stackmap::StkMapRecord>>;
+ 
+-// func => stackmap_record[]
+ static stackmap_table populate_stackmap(const stackmap::Stackmap &stackmap) {
+   stackmap_table map;
+-
+   for (auto &record : stackmap.stkmap_records) {
+-    auto id = record->patchpoint_id;
+-    auto loc = WasmLocation::from_stackmap_id(id);
+-
+-    auto it = map.find(loc.get_func());
+-    if (it == map.end()) {
+-      std::vector<std::shared_ptr<stackmap::StkMapRecord>> ent;
+-      ent.push_back(record);
+-      map.insert({loc.get_func(), ent});
+-    } else {
+-      auto &ent = it->second;
+-      ent.push_back(record);
++    const auto [_, inserted] = map.emplace(record->patchpoint_id, record);
++    if (!inserted) {
++      Fatal() << "Duplicate stackmap patchpoint ID " << std::dec
++              << record->patchpoint_id << '\n';
++      exit(1);
+     }
+   }
+-
+-  // sort all entries by the first element
+-  for (auto &[k, v] : map) {
+-    std::sort(v.begin(), v.end(), [](auto &left, auto &right) {
+-      return left->instruction_offset < right->instruction_offset;
+-    });
+-  }
+-
+   return map;
+ }
+ 
+ static std::optional<std::shared_ptr<stackmap::StkMapRecord>>
+-lookup_stackmap(stackmap_table &map, int32_t func_index, int32_t pc_offset) {
+-  auto it = map.find(func_index);
++lookup_stackmap(const stackmap_table &map, uint64_t callsite_id) {
++  auto it = map.find(callsite_id);
+   if (it == map.end()) {
+-    Warn() << "Failed to find records for func_" << std::dec << func_index
++    Warn() << "Failed to find exact stackmap ID " << std::dec << callsite_id
+            << '\n';
+     return std::nullopt;
+   }
+-
+-  auto records = it->second;
+-  auto it2 = std::lower_bound(records.begin(), records.end(), pc_offset,
+-                              [](const auto &record, const auto &key) {
+-                                return record->instruction_offset < key;
+-                              });
+-
+-  if (it2 == records.end()) {
+-    Warn() << "Failed to find a record for func_" << std::dec << func_index
+-           << " pc_offset=" << pc_offset << '\n';
+-    for (auto &record : records) {
+-      Debug() << "Instead, found a record for pc_offset=" << std::dec
+-              << record->instruction_offset << '\n';
+-    }
+-    return std::nullopt;
+-  }
+-
+-  DEBUG_LOG << "search pc_offset=0x" << std::hex << pc_offset
+-            << " result pc_offset=0x" << it2->get()->instruction_offset << "\n";
+-
+-  // FIXME: If the difference between actual pc and an instruction offset in the
+-  // stackmap record is big, the record is possibly different from the actual
+-  // stackmap. However, there seems to be no reasonable way to validate the
+-  // record.
+-  if (std::abs(static_cast<int32_t>(pc_offset -
+-                                    it2->get()->instruction_offset)) > 3) {
+-    Fatal() << "The difference between pc_offset and the instruction offset in "
+-               "the stackmap record is too big: pc_offset=0x"
+-            << std::hex << pc_offset << ", instruction_offset=0x"
+-            << it2->get()->instruction_offset << '\n';
+-    exit(1);
+-  }
+-
+-  return *it2;
++  return it->second;
+ }
+ 
+ // Perform All-stack replacement exit.
+@@ -99,24 +49,41 @@ lookup_stackmap(stackmap_table &map, int32_t func_index, int32_t pc_offset) {
+ std::vector<WasmStackFrame>
+ asr_exit(const CallerSavedRegisters &regs,
+          const std::deque<NativeStackFrame> &callstack,
+-         const stackmap::Stackmap &stackmap) {
++         const stackmap::Stackmap &stackmap,
++         const std::vector<uint64_t> &active_callsites) {
+   std::vector<WasmStackFrame> trace;
+-
+-  auto stackmap_table = populate_stackmap(stackmap);
+-
++  std::vector<const NativeStackFrame *> guest_frames;
+   for (const auto &native_frame : callstack) {
+-    auto func_name = native_frame.function_name;
+-    if (!func_name.starts_with("func_"))
+-      continue;
++    if (native_frame.function_name.starts_with("func_"))
++      guest_frames.push_back(&native_frame);
++  }
++  if (guest_frames.size() != active_callsites.size()) {
++    Fatal() << "Active callsite depth does not match native guest depth: "
++            << std::dec << active_callsites.size() << " vs "
++            << guest_frames.size() << '\n';
++    exit(1);
++  }
+ 
++  const auto stackmap_table = populate_stackmap(stackmap);
++  for (size_t frame_index = 0; frame_index < guest_frames.size();
++       ++frame_index) {
++    const auto &native_frame = *guest_frames.at(frame_index);
++    auto func_name = native_frame.function_name;
+     auto func_index_str = func_name.substr(5);
+     auto func_index = std::stoi(func_index_str);
+ 
+-    auto record_opt =
+-        lookup_stackmap(stackmap_table, func_index, native_frame.pc_offset);
++    const uint64_t callsite_id = active_callsites.at(frame_index);
++    const auto callsite_location = WasmLocation::from_stackmap_id(callsite_id);
++    if (callsite_location.get_func() != func_index) {
++      Fatal() << "Active callsite function does not match native guest frame: "
++              << std::dec << callsite_location.get_func() << " vs "
++              << func_index << '\n';
++      exit(1);
++    }
++    auto record_opt = lookup_stackmap(stackmap_table, callsite_id);
+     if (!record_opt.has_value()) {
+-      Fatal() << "Failed to find stackmap for " << func_name << ", pc_offset=0x"
+-              << std::hex << native_frame.pc_offset << '\n';
++      Fatal() << "Failed to find stackmap for " << func_name
++              << ", callsite_id=" << std::dec << callsite_id << '\n';
+       exit(1);
+     }
+     auto &stackmap_record = record_opt.value();
+@@ -125,8 +92,10 @@ asr_exit(const CallerSavedRegisters &regs,
+ 
+     trace.push_back(wasm_frame);
+ 
+-    Debug() << "Found stackmap record for " << func_name << ", pc_offset=0x"
+-            << std::hex << native_frame.pc_offset << '\n';
++    Debug() << "Found exact stackmap record for " << func_name
++            << ", wasm_op=" << std::dec << callsite_location.get_insn()
++            << ", native_return_pc_offset=0x" << std::hex
++            << native_frame.pc_offset << '\n';
+   }
+ 
+   return trace;
+@@ -231,14 +200,24 @@ static WasmStackFrame osr_exit(const NativeStackFrame &native_frame,
+                                const stackmap::Stackmap &stackmap,
+                                std::shared_ptr<stackmap::StkMapRecord> record) {
+ 
+-  // the first location represents the number of wasm locals
+-  uint64_t num_locals = retrieve_constant_location(record->locations.at(0));
+-  uint64_t num_stack = (record->locations.size() - 1) / 2 - num_locals;
++  constexpr int32_t STACKMAP_LAYOUT_V2 = 0x57414e43;
++  if (record->locations.size() < 3 ||
++      retrieve_constant_location(record->locations.at(0)) !=
++          STACKMAP_LAYOUT_V2) {
++    Fatal() << "Invalid typed stackmap layout" << '\n';
++    exit(1);
++  }
++  uint64_t num_locals = retrieve_constant_location(record->locations.at(1));
++  uint64_t num_stack = retrieve_constant_location(record->locations.at(2));
++  if (record->locations.size() != 3 + 2 * (num_locals + num_stack)) {
++    Fatal() << "Invalid typed stackmap location count" << '\n';
++    exit(1);
++  }
+ 
+   std::deque<Value> locals;
+   std::vector<Value> stack;
+ 
+-  size_t i = 1;
++  size_t i = 3;
+   while (num_locals--) {
+     // decode value type
+     uint64_t value_ty = retrieve_constant_location(record->locations.at(i++));
+@@ -254,7 +233,7 @@ static WasmStackFrame osr_exit(const NativeStackFrame &native_frame,
+     uint64_t value_ty = retrieve_constant_location(record->locations.at(i++));
+     Value::Type ty = decode_value_type(value_ty);
+     // decode value
+-    Value value = retrieve_value(stackmap, record->locations.at(i++), false,
++    Value value = retrieve_value(stackmap, record->locations.at(i++), true,
+                                  native_frame, regs, ty);
+     stack.push_back(value);
+   }
+@@ -265,4 +244,4 @@ static WasmStackFrame osr_exit(const NativeStackFrame &native_frame,
+       .stack = stack};
+ }
+ 
+-} // namespace wanco
+\ No newline at end of file
++} // namespace wanco
+diff --git a/lib-rt/osr/wasm_stacktrace.h b/lib-rt/osr/wasm_stacktrace.h
+index 15cb105..be3dc31 100644
+--- a/lib-rt/osr/wasm_stacktrace.h
++++ b/lib-rt/osr/wasm_stacktrace.h
+@@ -56,6 +56,7 @@ public:
+ std::vector<WasmStackFrame>
+ asr_exit(const CallerSavedRegisters &regs,
+          const std::deque<NativeStackFrame> &callstack,
+-         const stackmap::Stackmap &stackmap);
++         const stackmap::Stackmap &stackmap,
++         const std::vector<uint64_t> &active_callsites);
+ 
+ } // namespace wanco
+diff --git a/wanco/src/compile/control.rs b/wanco/src/compile/control.rs
+index bacc71b..4c9e9ae 100644
+--- a/wanco/src/compile/control.rs
++++ b/wanco/src/compile/control.rs
+@@ -10,7 +10,10 @@ use wasmparser::{BlockType, BrTable};
+ use super::{
+     compile_type::wasmty_to_llvmty,
+     cr::{
+-        checkpoint::{gen_checkpoint_unwind, generate_stackmap},
++        checkpoint::{
++            gen_checkpoint_unwind, gen_pop_active_callsite, gen_push_active_callsite,
++            generate_stackmap, spill_stackmap_values,
++        },
+         gen_migration_point, gen_restore_non_leaf,
+     },
+ };
+@@ -569,6 +572,16 @@ pub fn gen_call<'a>(
+     args.reverse();
+     args.insert(0, exec_env_ptr.as_basic_value_enum());
+ 
++    let stack_spills = if ctx.config.enable_cr {
++        spill_stackmap_values(ctx)?
++    } else {
++        Vec::new()
++    };
++    if ctx.config.enable_cr {
++        generate_stackmap(ctx, locals, &stack_spills)?;
++        gen_push_active_callsite(ctx, exec_env_ptr)?;
++    }
++
+     // call
+     let args = args
+         .iter()
+@@ -580,7 +593,7 @@ pub fn gen_call<'a>(
+         .expect("should build call");
+ 
+     if ctx.config.enable_cr {
+-        generate_stackmap(ctx, locals)?;
++        gen_pop_active_callsite(ctx, exec_env_ptr)?;
+     }
+ 
+     // Generate unwinding code for checkpoint
+@@ -612,15 +625,33 @@ pub fn gen_call_indirect<'a>(
+     let callee_type = ctx.signatures[type_index as usize];
+ 
+     if !ctx.config.no_restore && (ctx.config.enable_cr || ctx.config.legacy_cr) {
++        // A call_indirect selector is control state: restoring it as a zero
++        // placeholder can dispatch to a different function with a compatible
++        // type. Typed checkpoints therefore retain the full operand tuple,
++        // including the table index and arguments.
++        let skip_stack_top = if ctx.config.enable_cr {
++            0
++        } else {
++            callee_type.get_param_types().len()
++        };
+         gen_restore_non_leaf(
+             ctx,
+             exec_env_ptr,
+             locals,
+-            callee_type.get_param_types().len(),
++            skip_stack_top,
+         )
+         .unwrap();
+     }
+ 
++    let stack_spills = if ctx.config.enable_cr {
++        spill_stackmap_values(ctx)?
++    } else {
++        Vec::new()
++    };
++    if ctx.config.enable_cr {
++        generate_stackmap(ctx, locals, &stack_spills)?;
++    }
++
+     // Load function index
+     let idx = ctx.pop().expect("stack empty").into_int_value();
+     let fnidx_ptr = unsafe {
+@@ -664,6 +695,10 @@ pub fn gen_call_indirect<'a>(
+     args.reverse();
+     args.insert(0, exec_env_ptr.as_basic_value_enum());
+ 
++    if ctx.config.enable_cr {
++        gen_push_active_callsite(ctx, exec_env_ptr)?;
++    }
++
+     // call and push result
+     let args = args
+         .iter()
+@@ -675,7 +710,7 @@ pub fn gen_call_indirect<'a>(
+         .expect("should build indirect call");
+ 
+     if ctx.config.enable_cr {
+-        generate_stackmap(ctx, locals)?;
++        gen_pop_active_callsite(ctx, exec_env_ptr)?;
+     }
+ 
+     // Generate unwinding code for checkpoint
+diff --git a/wanco/src/compile/cr/checkpoint.rs b/wanco/src/compile/cr/checkpoint.rs
+index 219e396..0d7ab32 100644
+--- a/wanco/src/compile/cr/checkpoint.rs
++++ b/wanco/src/compile/cr/checkpoint.rs
+@@ -185,12 +185,20 @@ pub(crate) fn gen_checkpoint_start<'a>(
+     locals: &[(PointerValue<'a>, BasicTypeEnum<'a>)],
+ ) -> Result<()> {
+     if ctx.config.enable_cr {
++        let stack_spills = spill_stackmap_values(ctx)?;
++        generate_stackmap(ctx, locals, &stack_spills)?;
++        let callsite_id = current_stackmap_id(ctx);
+         ctx.builder.build_call(
+             ctx.fn_start_checkpoint.unwrap(),
+-            &[exec_env_ptr.as_basic_value_enum().into()],
++            &[
++                exec_env_ptr.as_basic_value_enum().into(),
++                ctx.inkwell_types
++                    .i64_type
++                    .const_int(callsite_id, false)
++                    .into(),
++            ],
+             "",
+         )?;
+-        generate_stackmap(ctx, locals)?;
+         // FIXME: I am not sure if this is correct
+         // This return is unreachable, but it may be required because we perform stack transformation in start_checkpoint and
+         // we need to preserve the current stack fram.
+@@ -415,10 +423,9 @@ fn gen_push_stack<'a>(
+ pub(crate) fn generate_stackmap<'a>(
+     ctx: &mut Context<'a, '_>,
+     locals: &[(PointerValue<'a>, BasicTypeEnum<'a>)],
++    stack_spills: &[(PointerValue<'a>, BasicTypeEnum<'a>)],
+ ) -> Result<()> {
+-    let func_idx = ctx.current_function_idx.unwrap();
+-    let insn_offset = ctx.current_op.unwrap();
+-    let stackmap_id = stackmap::stackmap_id(func_idx, insn_offset);
++    let stackmap_id = current_stackmap_id(ctx);
+ 
+     // Prepare arguments for llvm.experimental.stackmap
+     let mut args = vec![
+@@ -431,13 +438,25 @@ pub(crate) fn generate_stackmap<'a>(
+         ctx.inkwell_types.i32_type.const_zero().into(),
+     ];
+ 
+-    // the number of locals follows.
++    // A versioned layout makes both semantic pair counts explicit.
++    args.push(
++        ctx.inkwell_types
++            .i32_type
++            .const_int(0x5741_4e43, false)
++            .into(),
++    );
+     args.push(
+         ctx.inkwell_types
+             .i32_type
+             .const_int(locals.len() as u64, false)
+             .into(),
+     );
++    args.push(
++        ctx.inkwell_types
++            .i32_type
++            .const_int(stack_spills.len() as u64, false)
++            .into(),
++    );
+ 
+     // locals
+     for (local, local_ty) in locals {
+@@ -453,16 +472,19 @@ pub(crate) fn generate_stackmap<'a>(
+         args.push((*local).into());
+     }
+ 
+-    // value stack
+-    for value in &ctx.stack_frames.last().unwrap().stack {
+-        let encoded_ty = encode_llvm_type(ctx, &value.get_type());
++    // Value-stack entries are checkpointed through frame-local spill slots.
++    // A caller can be suspended inside its callee, before LLVM's post-call
++    // reloads have executed, so a post-call register location is not a valid
++    // description of the suspended frame.
++    for (spill, value_ty) in stack_spills {
++        let encoded_ty = encode_llvm_type(ctx, value_ty);
+         args.push(
+             ctx.inkwell_types
+                 .i32_type
+                 .const_int(encoded_ty as u64, false)
+                 .into(),
+         );
+-        args.push((*value).into());
++        args.push((*spill).into());
+     }
+ 
+     ctx.builder
+@@ -471,6 +493,68 @@ pub(crate) fn generate_stackmap<'a>(
+     Ok(())
+ }
+ 
++fn current_stackmap_id(ctx: &Context<'_, '_>) -> u64 {
++    stackmap::stackmap_id(
++        ctx.current_function_idx.unwrap(),
++        ctx.current_op.unwrap(),
++    )
++}
++
++pub(crate) fn gen_push_active_callsite<'a>(
++    ctx: &mut Context<'a, '_>,
++    exec_env_ptr: &PointerValue<'a>,
++) -> Result<()> {
++    let callsite_id = current_stackmap_id(ctx);
++    ctx.builder.build_call(
++        ctx.fn_push_active_callsite.unwrap(),
++        &[
++            exec_env_ptr.as_basic_value_enum().into(),
++            ctx.inkwell_types
++                .i64_type
++                .const_int(callsite_id, false)
++                .into(),
++        ],
++        "",
++    )?;
++    Ok(())
++}
++
++pub(crate) fn gen_pop_active_callsite<'a>(
++    ctx: &mut Context<'a, '_>,
++    exec_env_ptr: &PointerValue<'a>,
++) -> Result<()> {
++    ctx.builder.build_call(
++        ctx.fn_pop_active_callsite.unwrap(),
++        &[exec_env_ptr.as_basic_value_enum().into()],
++        "",
++    )?;
++    Ok(())
++}
++
++pub(crate) fn spill_stackmap_values<'a>(
++    ctx: &mut Context<'a, '_>,
++) -> Result<Vec<(PointerValue<'a>, BasicTypeEnum<'a>)>> {
++    let current_fn = ctx.current_fn.expect("should define current function");
++    let entry = current_fn
++        .get_first_basic_block()
++        .expect("should define function entry block");
++    let alloca_builder = ctx.ictx.create_builder();
++    if let Some(first) = entry.get_first_instruction() {
++        alloca_builder.position_before(&first);
++    } else {
++        alloca_builder.position_at_end(entry);
++    }
++
++    let mut spills = Vec::new();
++    for value in &ctx.stack_frames.last().unwrap().stack {
++        let value_ty = value.get_type();
++        let spill = alloca_builder.build_alloca(value_ty, "stackmap.spill")?;
++        ctx.builder.build_store(spill, *value)?;
++        spills.push((spill, value_ty));
++    }
++    Ok(spills)
++}
++
+ fn encode_llvm_type<'a>(ctx: &Context<'a, '_>, ty: &BasicTypeEnum<'a>) -> i32 {
+     match ty {
+         BasicTypeEnum::IntType(ty) => {
+diff --git a/wanco/src/compile/synthesize.rs b/wanco/src/compile/synthesize.rs
+index b2ddeba..5ada2d1 100644
+--- a/wanco/src/compile/synthesize.rs
++++ b/wanco/src/compile/synthesize.rs
+@@ -77,13 +77,41 @@ pub fn load_api(ctx: &mut Context<'_, '_>) {
+         let fn_type_start_checkpoint = ctx
+             .inkwell_types
+             .void_type
+-            .fn_type(&[exec_env_ptr_type.into()], false);
++            .fn_type(
++                &[
++                    exec_env_ptr_type.into(),
++                    ctx.inkwell_types.i64_type.into(),
++                ],
++                false,
++            );
+         ctx.fn_start_checkpoint = Some(ctx.module.add_function(
+             "start_checkpoint",
+             fn_type_start_checkpoint,
+             Some(Linkage::External),
+         ));
+ 
++        let fn_type_push_active_callsite = ctx.inkwell_types.void_type.fn_type(
++            &[
++                exec_env_ptr_type.into(),
++                ctx.inkwell_types.i64_type.into(),
++            ],
++            false,
++        );
++        ctx.fn_push_active_callsite = Some(ctx.module.add_function(
++            "push_active_callsite",
++            fn_type_push_active_callsite,
++            Some(Linkage::External),
++        ));
++        let fn_type_pop_active_callsite = ctx
++            .inkwell_types
++            .void_type
++            .fn_type(&[exec_env_ptr_type.into()], false);
++        ctx.fn_pop_active_callsite = Some(ctx.module.add_function(
++            "pop_active_callsite",
++            fn_type_pop_active_callsite,
++            Some(Linkage::External),
++        ));
++
+         let fn_type_push_frame = ctx
+             .inkwell_types
+             .void_type
+diff --git a/wanco/src/context.rs b/wanco/src/context.rs
+index 4c03e63..4522121 100644
+--- a/wanco/src/context.rs
++++ b/wanco/src/context.rs
+@@ -93,6 +93,8 @@ pub struct Context<'a, 'b> {
+ 
+     // checkpoint related
+     pub fn_start_checkpoint: Option<FunctionValue<'a>>,
++    pub fn_push_active_callsite: Option<FunctionValue<'a>>,
++    pub fn_pop_active_callsite: Option<FunctionValue<'a>>,
+     pub fn_push_frame: Option<FunctionValue<'a>>,
+     pub fn_set_pc_to_frame: Option<FunctionValue<'a>>,
+     pub fn_push_local_i32: Option<FunctionValue<'a>>,
+@@ -177,6 +179,8 @@ impl<'a> Context<'a, '_> {
+             unreachable_reason: UnreachableReason::Reachable,
+ 
+             fn_start_checkpoint: None,
++            fn_push_active_callsite: None,
++            fn_pop_active_callsite: None,
+             fn_push_frame: None,
+             fn_set_pc_to_frame: None,
+             fn_push_local_i32: None,

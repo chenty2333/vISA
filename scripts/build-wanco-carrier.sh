@@ -88,7 +88,7 @@ from pathlib import Path
     *patch_paths,
 ) = sys.argv[1:]
 receipt = {
-    "schema": "visa-wanco-carrier-build-receipt-v2",
+    "schema": "visa-wanco-carrier-build-receipt-v4",
     "revision": revision,
     "patch_set_sha256": patch_set_sha,
     "patches": patch_paths,
@@ -104,7 +104,12 @@ receipt = {
     "wanco_binary_sha256": wanco_binary_sha256,
     "runtime_staticlib_sha256": runtime_staticlib_sha256,
     "checkpoint_memory_encoding": "lz4-block-exact-length",
-    "stackmap_gap_policy": "x86-add-imm8-rsp-only",
+    "stackmap_binding": "exact-active-callsite-id",
+    "stackmap_layout": "typed-locals-and-value-stack-v2",
+    "indirect_call_operands_retained": True,
+    "active_data_segments_preserved_on_restore": True,
+    "per_frame_callee_saved_registers": True,
+    "post_import_checkpoint_points": True,
     "benchmark_subtree_in_build_context": False,
 }
 path = Path(output)

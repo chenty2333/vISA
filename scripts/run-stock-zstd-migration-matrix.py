@@ -16,7 +16,6 @@ import os
 import platform
 import secrets
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -25,9 +24,11 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v2"
+SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v3"
 DEFAULT_INPUT_MIB = 24
-DEFAULT_CUT_MIB = (1, 8)
+# Stock zstd writes its output through Preview1 fd_write.  These are exact
+# hostcall occurrences, not byte-count approximations.
+DEFAULT_CUT_WRITE_OCCURRENCES = (8, 64)
 PROCESS_TIMEOUT_SECONDS = 300
 PROVIDER_START_TIMEOUT_SECONDS = 20
 CHECKPOINT_CUT_TIMEOUT_SECONDS = 120
@@ -477,29 +478,39 @@ def guest_environment(
     }
 
 
-def read_bytes_written(database: Path) -> int:
-    connection = sqlite3.connect(
-        f"file:{database}?mode=ro", uri=True, timeout=0.1, isolation_level=None
-    )
-    try:
-        row = connection.execute(
-            "SELECT bytes_written FROM meta WHERE singleton = 1"
-        ).fetchone()
-    finally:
-        connection.close()
-    if row is None or not isinstance(row[0], int) or row[0] < 0:
-        raise MatrixFailure("provider bytes_written counter is invalid")
-    return row[0]
-
-
 def checkpoint_source(
     runtime: DockerAot,
     case_root: Path,
     source_directory: Path,
-    source_database: Path,
+    provider: Provider,
     environment: dict[str, str],
-    cut_bytes: int,
+    barrier_token: str,
+    write_occurrence: int,
 ) -> tuple[Path, dict[str, object]]:
+    if write_occurrence <= 0:
+        raise MatrixFailure("checkpoint write occurrence must be positive")
+    predicate = {
+        "kind": "fd-write",
+        "resource": "path:output.zst",
+        "outcome": "success",
+        "occurrence": write_occurrence,
+    }
+    provider.control(
+        "barrier-arm",
+        barrier_token,
+        predicate["kind"],
+        predicate["resource"],
+        predicate["outcome"],
+        str(write_occurrence),
+    )
+    armed_status = read_status(provider.control("status"))
+    if (
+        armed_status.get("barrier") != "armed"
+        or armed_status.get("barrier_remaining") != write_occurrence
+        or armed_status.get("barrier_effect") is not None
+    ):
+        raise MatrixFailure("provider did not retain the exact prearmed zstd predicate")
+
     stdout_path = source_directory / "aot.stdout"
     stderr_path = source_directory / "aot.stderr"
     container_name = (
@@ -520,44 +531,38 @@ def checkpoint_source(
         )
         try:
             deadline = time.monotonic() + CHECKPOINT_CUT_TIMEOUT_SECONDS
-            observed = 0
+            held_status: dict[str, object] | None = None
             while time.monotonic() < deadline:
                 status = process.poll()
                 if status is not None:
                     raise MatrixFailure(
                         f"source AOT exited before checkpoint cut with status {status}"
                     )
-                try:
-                    observed = read_bytes_written(source_database)
-                except sqlite3.Error:
-                    time.sleep(0.01)
-                    continue
-                if observed >= cut_bytes:
-                    signaled = run(
-                        [
-                            runtime.docker,
-                            "kill",
-                            "--signal",
-                            "USR1",
-                            container_name,
-                        ],
-                        cwd=source_directory,
-                        timeout=30,
-                        check=False,
-                    )
-                    if signaled.returncode != 0:
-                        raise MatrixFailure(
-                            "failed to signal Wanco container: "
-                            + signaled.stderr.decode(
-                                "utf-8", errors="replace"
-                            )
-                        )
+                current = read_status(provider.control("status"))
+                phase = current.get("barrier")
+                if phase == "held":
+                    held_status = current
                     break
-                time.sleep(0.01)
+                if phase not in ("armed", "triggered"):
+                    raise MatrixFailure(
+                        f"source barrier left its exact-cut path at phase {phase!r}"
+                    )
+                time.sleep(0.005)
             else:
                 raise MatrixFailure(
-                    f"source AOT did not reach {cut_bytes} written bytes; observed {observed}"
+                    "source AOT did not reach the exact post-hostcall barrier at "
+                    f"fd-write occurrence {write_occurrence}"
                 )
+            if held_status is None or held_status.get("barrier_effect") is None:
+                raise MatrixFailure("held zstd barrier has no durable target effect")
+            provider.control("barrier-release", barrier_token, "checkpoint")
+            released_status = read_status(provider.control("status"))
+            if (
+                released_status.get("barrier") != "checkpoint_released"
+                or released_status.get("barrier_effect")
+                != held_status.get("barrier_effect")
+            ):
+                raise MatrixFailure("provider did not release the exact zstd checkpoint")
             try:
                 status = process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as error:
@@ -581,8 +586,14 @@ def checkpoint_source(
     if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
         raise MatrixFailure("Wanco did not publish a non-empty checkpoint.pb")
     return checkpoint, {
-        "requested_after_bytes_written": cut_bytes,
-        "observed_bytes_written": observed,
+        "cut_location_source": "prearmed-post-hostcall-predicate",
+        "byte_counter_trigger_used": False,
+        "signal_checkpoint_used": False,
+        "barrier_token": barrier_token,
+        "predicate": predicate,
+        "armed_status": armed_status,
+        "held_status": held_status,
+        "checkpoint_released_status": released_status,
         "checkpoint": file_identity(checkpoint),
     }
 
@@ -741,7 +752,9 @@ def write_intent(
     session: str,
     owner: str,
     handoff: str,
+    checkpoint_barrier: str,
     source_client: str,
+    source_restore_client: str,
     destination_client: str,
     build_receipt: dict[str, object],
     build_configuration_sha256: str,
@@ -765,9 +778,11 @@ def write_intent(
         "session_hex": session,
         "stable_owner_hex": owner,
         "handoff_hex": handoff,
+        "checkpoint_barrier_hex": checkpoint_barrier,
         "source_epoch": 1,
         "destination_epoch": 2,
         "source_client_hex": source_client,
+        "source_restore_client_hex": source_restore_client,
         "destination_client_hex": destination_client,
         "application_build": {
             "source_revision": str(build_receipt["zstd_revision"]),
@@ -834,7 +849,7 @@ def copy_tree_hardlink(source: Path, destination: Path) -> None:
 def run_migrated_cell(
     root: Path,
     index: int,
-    cut_bytes: int,
+    write_occurrence: int,
     host_binary: Path,
     bind_binary: Path,
     runtime: DockerAot,
@@ -851,16 +866,19 @@ def run_migrated_cell(
     source = case / "source"
     ensure_private_directory(source)
     binding_root = case / "binding"
+    ensure_private_directory(binding_root)
     ensure_private_directory(binding_root / "artifacts")
     ensure_private_directory(binding_root / "proofs")
 
     session = stable_id(f"{label}-session")
     owner = stable_id(f"{label}-owner")
     source_client = stable_id(f"{label}-source-client")
+    source_restore_client = stable_id(f"{label}-source-restore-client")
     destination_client = stable_id(f"{label}-destination-client")
     carrier_only_client = stable_id(f"{label}-carrier-only-client")
     spoofed_client = stable_id(f"{label}-spoofed-client")
     handoff = stable_id(f"{label}-handoff")
+    checkpoint_barrier = stable_id(f"{label}-checkpoint-barrier")
     source_admin_capability = secrets.token_hex(32)
     source_guest_capability = secrets.token_hex(32)
     destination_admin_capability = secrets.token_hex(32)
@@ -889,7 +907,7 @@ def run_migrated_cell(
             runtime,
             case,
             source,
-            source_database,
+            source_provider,
             guest_environment(
                 source_socket,
                 session,
@@ -898,7 +916,8 @@ def run_migrated_cell(
                 source_guest_capability,
                 1,
             ),
-            cut_bytes,
+            checkpoint_barrier,
+            write_occurrence,
         )
 
         source_post_checkpoint_status = read_status(
@@ -1004,7 +1023,7 @@ def run_migrated_cell(
             }
         )
 
-        source_provider.control("freeze", handoff, "2")
+        source_provider.control("freeze", checkpoint_barrier, handoff, "2")
         source_frozen_status = read_status(source_provider.control("status"))
         require_status(
             source_frozen_status,
@@ -1025,7 +1044,9 @@ def run_migrated_cell(
             session=session,
             owner=owner,
             handoff=handoff,
+            checkpoint_barrier=checkpoint_barrier,
             source_client=source_client,
+            source_restore_client=source_restore_client,
             destination_client=destination_client,
             build_receipt=build_receipt,
             build_configuration_sha256=build_configuration_sha256,
@@ -1492,8 +1513,18 @@ def validate_execution_input_chain(
         )
     if wanco_source_lock.get("schema") != "visa-wanco-carrier-source-lock-v2":
         raise MatrixFailure("Wanco source-lock schema is unsupported")
-    if wanco_receipt.get("schema") != "visa-wanco-carrier-build-receipt-v2":
+    if wanco_receipt.get("schema") != "visa-wanco-carrier-build-receipt-v4":
         raise MatrixFailure("Wanco build receipt schema is unsupported")
+    if (
+        wanco_receipt.get("stackmap_binding") != "exact-active-callsite-id"
+        or wanco_receipt.get("stackmap_layout")
+        != "typed-locals-and-value-stack-v2"
+        or wanco_receipt.get("indirect_call_operands_retained") is not True
+        or wanco_receipt.get("active_data_segments_preserved_on_restore") is not True
+        or wanco_receipt.get("per_frame_callee_saved_registers") is not True
+        or wanco_receipt.get("post_import_checkpoint_points") is not True
+    ):
+        raise MatrixFailure("Wanco build lacks the qualified typed-restore contract")
 
     equalities = (
         (
@@ -1722,10 +1753,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-mib", type=int, default=DEFAULT_INPUT_MIB)
     parser.add_argument(
-        "--cut-mib",
+        "--cut-write-occurrence",
         type=int,
         nargs="+",
-        default=list(DEFAULT_CUT_MIB),
+        default=list(DEFAULT_CUT_WRITE_OCCURRENCES),
     )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--allow-dirty-snapshot", action="store_true")
@@ -1766,12 +1797,13 @@ def main() -> int:
     if arguments.input_mib < 12 or arguments.input_mib > 1024:
         raise MatrixFailure("--input-mib must be from 12 through 1024")
     if (
-        len(arguments.cut_mib) < 2
-        or len(set(arguments.cut_mib)) != len(arguments.cut_mib)
-        or any(value <= 0 or value >= arguments.input_mib for value in arguments.cut_mib)
+        len(arguments.cut_write_occurrence) < 2
+        or len(set(arguments.cut_write_occurrence))
+        != len(arguments.cut_write_occurrence)
+        or any(value <= 0 for value in arguments.cut_write_occurrence)
     ):
         raise MatrixFailure(
-            "--cut-mib requires at least two unique positive cuts below input size"
+            "--cut-write-occurrence requires at least two unique positive occurrences"
         )
     artifact_root = (repository / arguments.artifact_root).resolve()
     output = (repository / arguments.output).resolve()
@@ -1830,11 +1862,13 @@ def main() -> int:
         control = run_control(work, host_binary, runtime, input_path, zstd)
         migrated_cells: list[dict[str, object]] = []
         fault_cells: list[dict[str, object]] = []
-        for index, cut_mib in enumerate(arguments.cut_mib):
+        for index, write_occurrence in enumerate(
+            arguments.cut_write_occurrence
+        ):
             cell, faults = run_migrated_cell(
                 work,
                 index,
-                cut_mib * 1024 * 1024,
+                write_occurrence,
                 host_binary,
                 bind_binary,
                 runtime,
@@ -1849,7 +1883,7 @@ def main() -> int:
             )
             migrated_cells.append(cell)
             fault_cells.extend(faults)
-        if len(fault_cells) != len(arguments.cut_mib) * 5:
+        if len(fault_cells) != len(arguments.cut_write_occurrence) * 5:
             raise MatrixFailure(
                 "each migration cut must publish exactly five fault cells"
             )

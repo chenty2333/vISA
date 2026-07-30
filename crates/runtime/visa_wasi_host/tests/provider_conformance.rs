@@ -11,9 +11,11 @@ use visa_wasi_host::{
     restore_provider,
 };
 use visa_wasi_protocol::{
-    AdminCapability, AdminOperation, AdminRequest, ClientId, GuestCapability, GuestRequest,
-    GuestResponse, LockLevel, Operation, OperationResult, OwnerId, PROTOCOL_VERSION, ProviderMode,
-    SessionId, errno, rights,
+    AdminCapability, AdminOperation, AdminRequest, BarrierPhase, BarrierReleaseAction,
+    BarrierToken, ClientId, EffectId, GuestCapability, GuestCompletion, GuestRequest,
+    GuestResponse, HostcallKind, HostcallPredicate, LockLevel, Operation, OperationResult,
+    OutcomePredicate, OwnerId, PROTOCOL_VERSION, ProviderMode, ResourceSelector, SessionId, errno,
+    rights,
 };
 
 const SESSION: SessionId = SessionId([11; 16]);
@@ -28,6 +30,8 @@ const CAPABILITY_B: AdminCapability = AdminCapability([17; 32]);
 const GUEST_CAPABILITY_A: GuestCapability = GuestCapability([19; 32]);
 const GUEST_CAPABILITY_B: GuestCapability = GuestCapability([20; 32]);
 const HANDOFF: [u8; 16] = [18; 16];
+const BARRIER_A: BarrierToken = BarrierToken([23; 16]);
+const BARRIER_B: BarrierToken = BarrierToken([24; 16]);
 
 struct Guest {
     owner: OwnerId,
@@ -48,6 +52,10 @@ impl Guest {
     }
 
     fn request(&self, sequence: u64, operation: Operation) -> GuestRequest {
+        let mut effect = self.client.0;
+        for (target, byte) in effect[8..].iter_mut().zip(sequence.to_be_bytes()) {
+            *target ^= byte;
+        }
         GuestRequest {
             version: PROTOCOL_VERSION,
             session: SESSION,
@@ -55,14 +63,33 @@ impl Guest {
             client: self.client,
             capability: self.capability,
             sequence,
+            effect: EffectId(effect),
             authority_epoch: self.epoch,
             operation,
         }
     }
 
     fn call(&mut self, provider: &mut Provider, operation: Operation) -> GuestResponse {
-        let response = provider.handle_guest(self.request(self.sequence, operation));
+        let request = self.request(self.sequence, operation);
+        let response = provider.handle_guest(request.clone());
         assert_eq!(response.sequence, self.sequence);
+        if response.completion_required {
+            assert_eq!(
+                provider
+                    .handle_completion(GuestCompletion {
+                        version: PROTOCOL_VERSION,
+                        session: request.session,
+                        owner: request.owner,
+                        client: request.client,
+                        capability: request.capability,
+                        sequence: request.sequence,
+                        effect: request.effect,
+                        authority_epoch: request.authority_epoch,
+                    })
+                    .errno,
+                errno::SUCCESS
+            );
+        }
         self.sequence += 1;
         response
     }
@@ -73,7 +100,26 @@ impl Guest {
         sequence: u64,
         operation: Operation,
     ) -> GuestResponse {
-        provider.handle_guest(self.request(sequence, operation))
+        let request = self.request(sequence, operation);
+        let response = provider.handle_guest(request.clone());
+        if response.completion_required {
+            assert_eq!(
+                provider
+                    .handle_completion(GuestCompletion {
+                        version: PROTOCOL_VERSION,
+                        session: request.session,
+                        owner: request.owner,
+                        client: request.client,
+                        capability: request.capability,
+                        sequence: request.sequence,
+                        effect: request.effect,
+                        authority_epoch: request.authority_epoch,
+                    })
+                    .errno,
+                errno::SUCCESS
+            );
+        }
+        response
     }
 }
 
@@ -146,6 +192,56 @@ fn admin(
     operation: AdminOperation,
 ) -> visa_wasi_protocol::AdminResponse {
     provider.handle_admin(AdminRequest { version: PROTOCOL_VERSION, capability, operation })
+}
+
+fn hold(provider: &mut Provider, capability: AdminCapability, token: BarrierToken) {
+    assert!(
+        admin(
+            provider,
+            capability,
+            AdminOperation::BarrierArm {
+                token,
+                predicate: HostcallPredicate {
+                    kind: HostcallKind::Any,
+                    resource: ResourceSelector::Any,
+                    outcome: OutcomePredicate::Any,
+                    occurrence: 1,
+                },
+            },
+        )
+        .ok
+    );
+    let mut barrier_guest = Guest {
+        owner: OWNER_C,
+        client: CLIENT_C,
+        capability: GUEST_CAPABILITY_A,
+        epoch: 1,
+        sequence: u64::from(token.0[0]),
+    };
+    assert_eq!(barrier_guest.call(provider, Operation::FdStatGet { fd: 3 }).errno, errno::SUCCESS);
+    assert_eq!(
+        admin(provider, capability, AdminOperation::Status).status.unwrap().barrier,
+        BarrierPhase::Held
+    );
+    assert!(
+        admin(
+            provider,
+            capability,
+            AdminOperation::BarrierRelease { token, action: BarrierReleaseAction::Checkpoint },
+        )
+        .ok
+    );
+}
+
+fn release(provider: &mut Provider, capability: AdminCapability, token: BarrierToken) {
+    assert!(
+        admin(
+            provider,
+            capability,
+            AdminOperation::BarrierRelease { token, action: BarrierReleaseAction::Continue },
+        )
+        .ok
+    );
 }
 
 #[test]
@@ -897,11 +993,12 @@ fn metadata_is_real_and_survives_capsule_restore() {
             .errno,
         errno::SUCCESS
     );
+    hold(&mut provider, CAPABILITY_A, BARRIER_A);
     assert!(
         admin(
             &mut provider,
             CAPABILITY_A,
-            AdminOperation::Freeze { handoff: HANDOFF, destination_epoch: 2 }
+            AdminOperation::Freeze { barrier: BARRIER_A, handoff: HANDOFF, destination_epoch: 2 }
         )
         .ok
     );
@@ -952,11 +1049,12 @@ fn metadata_is_real_and_survives_capsule_restore() {
 fn capsule_tamper_and_invalid_state_invariants_are_rejected() {
     let temporary = temporary();
     let (_, mut provider) = create(&temporary, &[(b"file", b"payload")]);
+    hold(&mut provider, CAPABILITY_A, BARRIER_A);
     assert!(
         admin(
             &mut provider,
             CAPABILITY_A,
-            AdminOperation::Freeze { handoff: HANDOFF, destination_epoch: 2 }
+            AdminOperation::Freeze { barrier: BARRIER_A, handoff: HANDOFF, destination_epoch: 2 }
         )
         .ok
     );
@@ -1041,11 +1139,12 @@ fn database_audit_rejects_chunk_foreign_key_and_transition_corruption() {
 fn prepared_epoch_resume_and_fence_transitions_are_closed() {
     let temporary = temporary();
     let (_, mut source) = create(&temporary, &[]);
+    hold(&mut source, CAPABILITY_A, BARRIER_A);
     assert!(
         !admin(
             &mut source,
             CAPABILITY_A,
-            AdminOperation::Freeze { handoff: HANDOFF, destination_epoch: 3 }
+            AdminOperation::Freeze { barrier: BARRIER_A, handoff: HANDOFF, destination_epoch: 3 }
         )
         .ok
     );
@@ -1053,7 +1152,7 @@ fn prepared_epoch_resume_and_fence_transitions_are_closed() {
         admin(
             &mut source,
             CAPABILITY_A,
-            AdminOperation::Freeze { handoff: HANDOFF, destination_epoch: 2 }
+            AdminOperation::Freeze { barrier: BARRIER_A, handoff: HANDOFF, destination_epoch: 2 }
         )
         .ok
     );
@@ -1075,6 +1174,7 @@ fn prepared_epoch_resume_and_fence_transitions_are_closed() {
         )
         .ok
     );
+    release(&mut source, CAPABILITY_A, BARRIER_A);
     assert!(
         !admin(
             &mut source,
@@ -1095,11 +1195,12 @@ fn prepared_epoch_resume_and_fence_transitions_are_closed() {
         admin(&mut source, CAPABILITY_A, AdminOperation::Status).status.unwrap().mode,
         ProviderMode::Active
     );
+    hold(&mut source, CAPABILITY_A, BARRIER_B);
     assert!(
         admin(
             &mut source,
             CAPABILITY_A,
-            AdminOperation::Freeze { handoff: HANDOFF, destination_epoch: 2 }
+            AdminOperation::Freeze { barrier: BARRIER_B, handoff: HANDOFF, destination_epoch: 2 }
         )
         .ok
     );
@@ -1169,6 +1270,7 @@ fn prepared_epoch_resume_and_fence_transitions_are_closed() {
         )
         .ok
     );
+    release(&mut destination, CAPABILITY_B, BARRIER_B);
     assert_eq!(
         destination_guest.call(&mut destination, Operation::FdStatGet { fd: 3 }).errno,
         errno::SUCCESS

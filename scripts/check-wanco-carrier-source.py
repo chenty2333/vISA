@@ -128,9 +128,18 @@ def main() -> int:
         fail("Wanco build recipe digest mismatch")
     expected_patched_files = {
         "Dockerfile",
+        "lib-rt/api.cc",
+        "lib-rt/arch/x86_64.h",
         "lib-rt/chkpt/chkpt_protobuf.cc",
         "lib-rt/osr/asr_exit.cc",
+        "lib-rt/osr/wasm_stacktrace.h",
+        "lib-rt/stacktrace/stacktrace.cc",
+        "lib-rt/stacktrace/stacktrace.h",
         "lib-rt/wanco.h",
+        "wanco/src/compile/control.rs",
+        "wanco/src/compile/cr/checkpoint.rs",
+        "wanco/src/compile/synthesize.rs",
+        "wanco/src/context.rs",
     }
     patched_files = build["patched_files"]
     if not isinstance(patched_files, dict) or set(patched_files) != expected_patched_files:
@@ -142,14 +151,17 @@ def main() -> int:
         fail("build.patched_files contains a malformed SHA-256")
 
     patches = lock["patches"]
-    if not isinstance(patches, list) or len(patches) != 5:
-        fail("exactly five ordered carrier platform patches are required")
+    if not isinstance(patches, list) or len(patches) != 8:
+        fail("exactly eight ordered carrier platform patches are required")
     expected_scopes = [
         "build",
         "build",
         "runtime-correctness",
         "runtime-correctness",
         "build",
+        "runtime-correctness",
+        "runtime-correctness",
+        "runtime-correctness",
     ]
     checked_patches: list[tuple[dict[str, object], Path]] = []
     for index, raw_patch in enumerate(patches):

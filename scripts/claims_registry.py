@@ -63,6 +63,7 @@ GRANDFATHERED_EARNED_CLAIMS = {
     "strict-cross-runtime-continuity",
 }
 CANONICAL_LIFECYCLE_CLAIMS = {
+    "bounded-stock-sqlite-rollback-migration-v1",
     "bounded-wanco-regular-file-carrier-composition-v1",
 }
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")

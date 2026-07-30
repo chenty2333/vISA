@@ -2690,6 +2690,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "visa-sqlite-oracle"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "visa_wasi_protocol",
+]
+
+[[package]]
 name = "visa-stage3-system"
 version = "0.1.0"
 dependencies = [
@@ -2897,6 +2909,7 @@ name = "visa_wanco_wasi"
 version = "0.1.0"
 dependencies = [
  "postcard",
+ "sha2",
  "visa_wasi_protocol",
 ]
 
@@ -2906,6 +2919,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
@@ -2918,11 +2932,13 @@ dependencies = [
 name = "visa_wasi_migration"
 version = "0.1.0"
 dependencies = [
+ "rustix",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
  "sha2",
  "tempfile",
+ "visa_durable_sqlite",
  "visa_wasi_protocol",
 ]
 

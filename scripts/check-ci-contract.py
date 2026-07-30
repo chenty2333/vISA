@@ -796,28 +796,33 @@ def check_claim_matrix(job: dict[str, Any]) -> None:
 
 
 def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
-    non_wanco_condition = "${{ matrix.lane != 'wanco-carrier' }}"
+    container_lane_condition = (
+        "${{ matrix.lane != 'wanco-carrier' && matrix.lane != 'stock-sqlite' }}"
+    )
     image_builds = steps_using(job, "docker/build-push-action@")
     require(
-        len(image_builds) == 1 and image_builds[0].get("if") == non_wanco_condition,
-        "Wanco carrier lane must skip the unused vISA development image build",
+        len(image_builds) == 1
+        and image_builds[0].get("if") == container_lane_condition,
+        "native Docker lanes must skip the unused vISA development image build",
     )
     image_inspection = step_with_name(job, "Inspect exact-SHA Docker image")
     require(
-        image_inspection.get("if") == non_wanco_condition,
-        "Wanco carrier lane must skip inspection of the omitted development image",
+        image_inspection.get("if") == container_lane_condition,
+        "native Docker lanes must skip inspection of the omitted development image",
     )
 
     wrapper = (ROOT / "scripts/run-docker-ci-gate.sh").read_text(encoding="utf-8")
-    require(
-        'if [[ "$tier" == system-wanco-carrier ]]; then' in wrapper
-        and 'scripts/ci-gate.sh system-wanco-carrier' in wrapper
-        and 'VISA_EVIDENCE_PARENT="$wanco_evidence_parent"' in wrapper,
-        "Wanco carrier tier must execute on the Docker host with host-visible evidence",
+    native_branch_start = (
+        'if [[ "$tier" == system-wanco-carrier || '
+        '"$tier" == system-stock-sqlite ]]; then'
     )
-    host_branch = wrapper.split(
-        'if [[ "$tier" == system-wanco-carrier ]]; then', 1
-    )[1].split("\nfi\n", 1)[0]
+    require(
+        native_branch_start in wrapper
+        and 'scripts/ci-gate.sh "$tier"' in wrapper
+        and 'VISA_EVIDENCE_PARENT="$native_evidence_parent"' in wrapper,
+        "native Docker tiers must execute on the host with host-visible evidence",
+    )
+    host_branch = wrapper.split(native_branch_start, 1)[1].split("\nfi\n", 1)[0]
     require(
         "docker compose" not in host_branch,
         "Wanco carrier host branch must not recurse through the dev container",
@@ -829,6 +834,13 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
         and "scripts/run-wanco-carrier-matrix.sh" in gate
         and "system-wanco-carrier) gate_system_wanco_carrier ;;" in gate,
         "Wanco carrier host tier is not wired to the real matrix runner",
+    )
+    require(
+        "gate_system_stock_sqlite()" in gate
+        and "scripts/run-stock-sqlite-rollback-matrix.py" in gate
+        and "scripts/sqlite_rollback_matrix.py validate" in gate
+        and "system-stock-sqlite) gate_system_stock_sqlite ;;" in gate,
+        "stock SQLite host tier is not wired to the real validated matrix runner",
     )
     runner = (ROOT / "scripts/run-wanco-carrier-matrix.sh").read_text(
         encoding="utf-8"

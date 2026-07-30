@@ -8,7 +8,9 @@ use visa_wasi_host::{
     restore_provider, send_admin,
 };
 use visa_wasi_protocol::{
-    AdminCapability, AdminOperation, AdminRequest, GuestCapability, PROTOCOL_VERSION, SessionId,
+    AdminCapability, AdminOperation, AdminRequest, BarrierReleaseAction, BarrierToken,
+    GuestCapability, HostcallKind, HostcallPredicate, OutcomePredicate, PROTOCOL_VERSION,
+    ResourceSelector, SessionId,
 };
 
 fn usage() -> ! {
@@ -18,12 +20,15 @@ visa_wasi_host create <database> <session-hex> <admin-capability-hex> <guest-cap
 visa_wasi_host restore <bundle> <database> <admin-capability-hex> <guest-capability-hex>\n  \
 visa_wasi_host serve <database> <socket>\n  \
 visa_wasi_host control <socket> <capability-hex> status\n  \
-visa_wasi_host control <socket> <capability-hex> freeze <handoff-hex> <destination-epoch>\n  \
+visa_wasi_host control <socket> <capability-hex> barrier-arm <barrier-hex> <kind> <any|fd:N|path:P> <any|success|errno:N> <occurrence>\n  \
+visa_wasi_host control <socket> <capability-hex> barrier-release <barrier-hex> <continue|checkpoint>\n  \
+visa_wasi_host control <socket> <capability-hex> freeze <barrier-hex> <handoff-hex> <destination-epoch>\n  \
 visa_wasi_host control <socket> <capability-hex> export <bundle>\n  \
 visa_wasi_host control <socket> <capability-hex> resume <handoff-hex> <source-epoch>\n  \
 visa_wasi_host control <socket> <capability-hex> fence <handoff-hex> <committed-epoch>\n  \
 visa_wasi_host control <socket> <capability-hex> activate <handoff-hex> <destination-epoch>\n  \
 visa_wasi_host control <socket> <capability-hex> materialize <guest-path> <host-path>\n  \
+visa_wasi_host control <socket> <capability-hex> snapshot-namespace <output>\n  \
 visa_wasi_host control <socket> <capability-hex> shutdown"
     );
     std::process::exit(64);
@@ -52,6 +57,50 @@ fn parse_epoch(value: &str) -> Result<u64, String> {
     } else {
         Ok(epoch)
     }
+}
+
+fn parse_barrier_predicate(args: &[String]) -> Result<HostcallPredicate, String> {
+    let kind = match args[0].as_str() {
+        "any" => HostcallKind::Any,
+        "fd-close" => HostcallKind::FdClose,
+        "fd-datasync" => HostcallKind::FdDataSync,
+        "fd-pread" => HostcallKind::FdPread,
+        "fd-pwrite" => HostcallKind::FdPwrite,
+        "fd-read" => HostcallKind::FdRead,
+        "fd-sync" => HostcallKind::FdSync,
+        "fd-write" => HostcallKind::FdWrite,
+        "path-create-directory" => HostcallKind::PathCreateDirectory,
+        "path-open" => HostcallKind::PathOpen,
+        "path-remove-directory" => HostcallKind::PathRemoveDirectory,
+        "path-rename" => HostcallKind::PathRename,
+        "path-unlink-file" => HostcallKind::PathUnlinkFile,
+        "vfs-lock" => HostcallKind::VfsLock,
+        "vfs-unlock" => HostcallKind::VfsUnlock,
+        value => return Err(format!("unsupported barrier hostcall kind {value:?}")),
+    };
+    let resource = if args[1] == "any" {
+        ResourceSelector::Any
+    } else if let Some(value) = args[1].strip_prefix("fd:") {
+        ResourceSelector::Fd(value.parse().map_err(|_| format!("invalid barrier fd {value:?}"))?)
+    } else if let Some(value) = args[1].strip_prefix("path:") {
+        ResourceSelector::ExactPath(value.as_bytes().to_vec())
+    } else {
+        return Err(format!("unsupported barrier resource selector {:?}", args[1]));
+    };
+    let outcome = if args[2] == "any" {
+        OutcomePredicate::Any
+    } else if args[2] == "success" {
+        OutcomePredicate::Success
+    } else if let Some(value) = args[2].strip_prefix("errno:") {
+        OutcomePredicate::Errno(
+            value.parse().map_err(|_| format!("invalid barrier errno {value:?}"))?,
+        )
+    } else {
+        return Err(format!("unsupported barrier outcome predicate {:?}", args[2]));
+    };
+    let occurrence =
+        args[3].parse::<u64>().map_err(|_| format!("invalid barrier occurrence {:?}", args[3]))?;
+    Ok(HostcallPredicate { kind, resource, outcome, occurrence })
 }
 
 fn create(args: &[String]) -> Result<(), String> {
@@ -109,9 +158,22 @@ fn control(args: &[String]) -> Result<(), String> {
     let capability = AdminCapability(parse_hex(&args[3], "admin capability")?);
     let operation = match args[4].as_str() {
         "status" if args.len() == 5 => AdminOperation::Status,
-        "freeze" if args.len() == 7 => AdminOperation::Freeze {
-            handoff: parse_hex(&args[5], "handoff")?,
-            destination_epoch: parse_epoch(&args[6])?,
+        "barrier-arm" if args.len() == 10 => AdminOperation::BarrierArm {
+            token: BarrierToken(parse_hex(&args[5], "barrier")?),
+            predicate: parse_barrier_predicate(&args[6..10])?,
+        },
+        "barrier-release" if args.len() == 7 => AdminOperation::BarrierRelease {
+            token: BarrierToken(parse_hex(&args[5], "barrier")?),
+            action: match args[6].as_str() {
+                "continue" => BarrierReleaseAction::Continue,
+                "checkpoint" => BarrierReleaseAction::Checkpoint,
+                _ => usage(),
+            },
+        },
+        "freeze" if args.len() == 8 => AdminOperation::Freeze {
+            barrier: BarrierToken(parse_hex(&args[5], "barrier")?),
+            handoff: parse_hex(&args[6], "handoff")?,
+            destination_epoch: parse_epoch(&args[7])?,
         },
         "export" if args.len() == 6 => AdminOperation::Export { bundle: args[5].clone() },
         "resume" if args.len() == 7 => AdminOperation::Resume {
@@ -130,6 +192,9 @@ fn control(args: &[String]) -> Result<(), String> {
             guest_path: args[5].as_bytes().to_vec(),
             host_path: args[6].clone(),
         },
+        "snapshot-namespace" if args.len() == 6 => {
+            AdminOperation::SnapshotNamespace { output: args[5].clone() }
+        }
         "shutdown" if args.len() == 5 => AdminOperation::Shutdown,
         _ => usage(),
     };

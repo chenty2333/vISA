@@ -22,10 +22,10 @@
       "purpose": "Persist the LLVM installation across layers, expose llvm-config, and keep dependency layers independent of source changes."
     },
     {
-      "path": "third_party/wanco/patches/0003-validate-x86-stackmap-call-frame-gap.patch",
-      "sha256": "b28ff61c61a95480654a9dd4c78288b200546ff133e78f5045482317b0796dd3",
+      "path": "third_party/wanco/patches/0003-bind-typed-stackmaps-to-exact-callsites.patch",
+      "sha256": "45b8b225e48e112d55984392ac4f063a1d7982bb91de075809b44fa41f786e3b",
       "scope": "runtime-correctness",
-      "purpose": "Accept an LLVM stackmap immediately after a positive, ABI-aligned x86-64 outgoing-argument stack adjustment without weakening unrelated record matching."
+      "purpose": "Use versioned typed spills bound to exact active callsites, and retain indirect-call operands so restore cannot redirect a type-compatible call."
     },
     {
       "path": "third_party/wanco/patches/0004-enable-and-validate-lz4-checkpoints.patch",
@@ -38,6 +38,24 @@
       "sha256": "35bd74ba149ab63f66f2dde8390a38105aab863ec0cad829fd4a98ab40030c89",
       "scope": "build",
       "purpose": "Pin the amd64 Debian base manifest, Rust toolchain, and hyperfine version used by the carrier."
+    },
+    {
+      "path": "third_party/wanco/patches/0006-preserve-restored-data-segments.patch",
+      "sha256": "3a021bf2145e84552ea678881def401962fba76d671570099948fb89c788ed62",
+      "scope": "runtime-correctness",
+      "purpose": "Skip active data-segment initialization on restore so the decoded linear-memory snapshot is not replaced by the module image."
+    },
+    {
+      "path": "third_party/wanco/patches/0007-reconstruct-callee-saved-registers-per-frame.patch",
+      "sha256": "bb567d874c68febd03b85f0c6154a4a620f4f090365bc10269160fe2e393aa98",
+      "scope": "runtime-correctness",
+      "purpose": "Recover callee-saved registers from each unwind frame instead of reusing the checkpoint helper frame for every guest frame."
+    },
+    {
+      "path": "third_party/wanco/patches/0008-checkpoint-after-import-completion.patch",
+      "sha256": "1e6ec9824dabb8bde3db8e6cd63caa62c9990882a8de5de104065fe9223e0532",
+      "scope": "runtime-correctness",
+      "purpose": "Emit an exact migration point after a direct imported hostcall has returned and its result has been materialized in guest execution state."
     }
   ],
   "build": {
@@ -50,13 +68,22 @@
     "excluded_source_subtree": "benchmark/",
     "build_recipe": {
       "path": "scripts/build-wanco-carrier.sh",
-      "sha256": "5ca3e8902a18c9614211549933efaa0e6a252004e9b6dab9aaf7aa0d44a9f99e"
+      "sha256": "189f01de9e56aadcccbf86dfec24ab7e037eb8bc8ff39ed9f714501c32c6420f"
     },
     "patched_files": {
       "Dockerfile": "6a34966874c5ee0c64253dcc547ff75a45af1fb4f65080aac95c24950eb77b47",
+      "lib-rt/api.cc": "97e84bf73769a905641d53fc982183517b9c0d8172dc8f480799e5bb910dec30",
+      "lib-rt/arch/x86_64.h": "c5e937d93e172d9709958bac9cbcade0cc8fbff21a9924fe7f98cddcc67cf4d5",
       "lib-rt/chkpt/chkpt_protobuf.cc": "aeb89688d3e87abbca99ed87d424900f71f731cc718004e544e67a69c563456d",
-      "lib-rt/osr/asr_exit.cc": "0892435414bc6c27e4ee37d2b1c6d3d1120912af01498b9b5a82dc9815e8abeb",
-      "lib-rt/wanco.h": "071eca312bcb29afae16b56b69a7c6f7019ebbdc9c33100a722f9d3019747028"
+      "lib-rt/osr/asr_exit.cc": "0a7ced6653da79fe897668142f6ad0b2634842483c87b0f6d9c4b817eae67315",
+      "lib-rt/osr/wasm_stacktrace.h": "85b76288c780ba6d107ddfb4779110a431bc143b4931aca2e37accf8d46bc1e4",
+      "lib-rt/stacktrace/stacktrace.cc": "248ee8cec7d24d8eccf0a4c382f40a1093158ae76622ab5267b71c93d6ea8885",
+      "lib-rt/stacktrace/stacktrace.h": "ffc82e6f45cbdb3c5fdec3023c0fcc11077205a2f7b6b3470bb63b7974a845d5",
+      "lib-rt/wanco.h": "071eca312bcb29afae16b56b69a7c6f7019ebbdc9c33100a722f9d3019747028",
+      "wanco/src/compile/control.rs": "092014256e58884ba15a3210104aefb55256f5ce1f52540842b9cd5c8da9c1f7",
+      "wanco/src/compile/cr/checkpoint.rs": "298b9c47ce0d9f0084fdc2446b71ff2c45df100fc35d3b56210a0ef0cb66762f",
+      "wanco/src/compile/synthesize.rs": "f139d7d182565e229e1247c08a16042af728219640175b2ef455c18d467ad9f1",
+      "wanco/src/context.rs": "405a47791ba34690e989736d6f635897f901e1184c5975397eadc24c80ec5ee4"
     }
   }
 }

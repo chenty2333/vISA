@@ -15,7 +15,7 @@ use visa_wasi_migration::{
     BuildIdentity, CanonicalCommitProof, CanonicalFenceProof, FileRoles, MigrationIntent,
     MigrationManifest, PlatformIdentity,
 };
-use visa_wasi_protocol::{ClientId, OwnerId, SessionId};
+use visa_wasi_protocol::{BarrierToken, ClientId, OwnerId, SessionId};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,9 +24,11 @@ struct IntentDocument {
     session_hex: String,
     stable_owner_hex: String,
     handoff_hex: String,
+    checkpoint_barrier_hex: String,
     source_epoch: u64,
     destination_epoch: u64,
     source_client_hex: String,
+    source_restore_client_hex: String,
     destination_client_hex: String,
     application_build: BuildIdentity,
     source_platform: PlatformIdentity,
@@ -126,9 +128,17 @@ fn seal(args: &[String]) -> Result<(), String> {
         session: SessionId(parse_hex(&document.session_hex, "session")?),
         stable_owner: OwnerId(parse_hex(&document.stable_owner_hex, "stable owner")?),
         handoff: parse_hex(&document.handoff_hex, "handoff")?,
+        checkpoint_barrier: BarrierToken(parse_hex(
+            &document.checkpoint_barrier_hex,
+            "checkpoint barrier",
+        )?),
         source_epoch: document.source_epoch,
         destination_epoch: document.destination_epoch,
         source_client: ClientId(parse_hex(&document.source_client_hex, "source client")?),
+        source_restore_client: ClientId(parse_hex(
+            &document.source_restore_client_hex,
+            "source restore client",
+        )?),
         destination_client: ClientId(parse_hex(
             &document.destination_client_hex,
             "destination client",

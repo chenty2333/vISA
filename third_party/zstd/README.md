@@ -75,9 +75,13 @@ stack-adjustment fix for that defect and validated exact-length LZ4 checkpoint
 decoding.  This source lock therefore selects only the content-pinned Wanco v2
 `-O1` carrier.  That carrier qualification is not itself an application-level
 migration result: stock zstd is qualified separately by the transparent
-migration matrix, including real signal cutpoints, a fresh provider/process,
-external native-zstd byte comparison, and negative cells.  The build script
+migration matrix. The v3 runner pre-arms exact successful `fd_write`
+occurrences on `output.zst`, waits until the durable response has been written
+back into guest memory, releases Wanco to checkpoint, and binds that barrier
+token into the provider freeze. It does not poll byte counters or signal the
+container to choose a cut. The matrix also uses a fresh provider/process,
+external native-zstd byte comparison, and negative cells. The build script
 rejects optimization overrides so an `-O0` diagnostic cannot be mislabeled as
-the qualified matrix input. The matrix v2 runner also resolves the live Wanco
+the qualified matrix input. The matrix v3 runner also resolves the live Wanco
 Docker image ID and cross-checks it through both build receipts and both source
 locks before it is allowed to state that artifact bindings were verified.

@@ -124,6 +124,34 @@
       "predecessor_ids": []
     },
     {
+      "id": "bounded-stock-sqlite-rollback-migration-v1",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Stock SQLite rollback-journal migration"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Stock SQLite rollback-journal migration"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Stock SQLite rollback-journal migration"
+      },
+      "implementation_refs": [
+        "crates/runtime/visa_wanco_wasi/src/abi.rs",
+        "crates/runtime/visa_wasi_host/src/provider.rs",
+        "crates/runtime/visa_wasi_migration/src/driver.rs",
+        "crates/testing/visa-sqlite-oracle/src/lib.rs",
+        "scripts/run-stock-sqlite-rollback-matrix.py"
+      ],
+      "predecessor_ids": [
+        "bounded-wanco-regular-file-carrier-composition-v1"
+      ]
+    },
+    {
       "id": "bounded-wanco-regular-file-carrier-composition-v1",
       "track": "roadmap",
       "status": "earned",
@@ -462,6 +490,19 @@
         {
           "id": "named-target-substrate-continuity-v1",
           "role": "regresses"
+        }
+      ]
+    },
+    {
+      "id": "stock-sqlite",
+      "job": "docker-claim-gates",
+      "matrix_lane": "stock-sqlite",
+      "tier": "system-stock-sqlite",
+      "artifact": "stock-sqlite-rollback-migration-system-evidence",
+      "claims": [
+        {
+          "id": "bounded-stock-sqlite-rollback-migration-v1",
+          "role": "required"
         }
       ]
     },

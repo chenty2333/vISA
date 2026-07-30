@@ -10,6 +10,7 @@ use std::{
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+use rustix::fs::{CWD, RenameFlags, renameat_with};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use visa_durable_sqlite::{
@@ -18,14 +19,18 @@ use visa_durable_sqlite::{
     sync_file, sync_parent_directory,
 };
 use visa_wasi_protocol::{
-    AdminCapability, AdminOperation, AdminRequest, AdminResponse, DirectoryEntry, FdStat, FileStat,
-    GuestCapability, GuestRequest, GuestResponse, LockLevel, ObjectId, Operation, OperationResult,
-    OwnerId, PROTOCOL_VERSION, ProviderMode, ProviderStatus, ROOT_PREOPEN_FD, SeekWhence,
-    SessionId, errno, rights,
+    AdminCapability, AdminOperation, AdminRequest, AdminResponse, BarrierDirective, BarrierPhase,
+    BarrierPollRequest, BarrierPollResponse, BarrierReleaseAction, BarrierToken, DirectoryEntry,
+    EffectId, FdStat, FileStat, GuestCapability, GuestCompletion, GuestCompletionResponse,
+    GuestRequest, GuestResponse, HostcallKind, HostcallPredicate, LockLevel,
+    NAMESPACE_SNAPSHOT_VERSION, NamespaceDescriptor, NamespaceLock, NamespaceObject, NamespacePath,
+    NamespaceSnapshot, NamespaceSnapshotReceipt, ObjectId, Operation, OperationResult,
+    OutcomePredicate, OwnerId, PROTOCOL_VERSION, ProviderMode, ProviderStatus, ROOT_PREOPEN_FD,
+    ResourceSelector, SeekWhence, SessionId, encode_namespace_snapshot, errno, rights,
 };
 
 const APPLICATION_ID: i64 = 0x5657_4153;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 5;
 const SQLITE_PAGE_SIZE: i64 = 4096;
 const FILE_TYPE_DIRECTORY: u8 = 3;
 const FILE_TYPE_REGULAR: u8 = 4;
@@ -45,7 +50,7 @@ const BUNDLE_SCHEMA: &str = "visa-wasi-filesystem-capsule-v2";
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE meta (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 5),
     session BLOB NOT NULL CHECK(length(session) = 16),
     capability_digest BLOB NOT NULL CHECK(length(capability_digest) = 32),
     guest_capability_digest BLOB NOT NULL CHECK(length(guest_capability_digest) = 32),
@@ -54,6 +59,15 @@ CREATE TABLE meta (
     handoff BLOB CHECK(handoff IS NULL OR length(handoff) = 16),
     destination_epoch INTEGER,
     completed_handoff BLOB CHECK(completed_handoff IS NULL OR length(completed_handoff) = 16),
+    barrier_phase INTEGER NOT NULL DEFAULT 0 CHECK(barrier_phase BETWEEN 0 AND 4),
+    barrier_token BLOB CHECK(barrier_token IS NULL OR length(barrier_token) = 16),
+    barrier_predicate BLOB,
+    barrier_remaining INTEGER CHECK(barrier_remaining IS NULL OR barrier_remaining > 0),
+    barrier_effect BLOB CHECK(barrier_effect IS NULL OR length(barrier_effect) = 16),
+    completed_barrier BLOB CHECK(completed_barrier IS NULL OR length(completed_barrier) = 16),
+    completed_barrier_effect BLOB CHECK(
+        completed_barrier_effect IS NULL OR length(completed_barrier_effect) = 16
+    ),
     next_object INTEGER NOT NULL CHECK(next_object > 0),
     next_fd INTEGER NOT NULL CHECK(next_fd >= 4),
     completed_requests INTEGER NOT NULL DEFAULT 0 CHECK(completed_requests >= 0),
@@ -104,9 +118,18 @@ CREATE TABLE locks (
 CREATE TABLE requests (
     client BLOB NOT NULL CHECK(length(client) = 16),
     sequence INTEGER NOT NULL CHECK(sequence > 0),
+    effect_id BLOB NOT NULL REFERENCES effects(effect_id),
     request_digest BLOB NOT NULL CHECK(length(request_digest) = 32),
     response BLOB NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0, 1)),
     PRIMARY KEY(client, sequence)
+) STRICT;
+CREATE TABLE effects (
+    effect_id BLOB PRIMARY KEY CHECK(length(effect_id) = 16),
+    owner BLOB NOT NULL CHECK(length(owner) = 16),
+    operation_digest BLOB NOT NULL CHECK(length(operation_digest) = 32),
+    response BLOB NOT NULL,
+    first_authority_epoch INTEGER NOT NULL CHECK(first_authority_epoch > 0)
 ) STRICT;
 "#;
 
@@ -126,7 +149,7 @@ impl fmt::Display for ProviderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(message) => write!(formatter, "invalid provider input: {message}"),
-            Self::Busy => formatter.write_str("provider store is already open"),
+            Self::Busy => formatter.write_str("provider is busy"),
             Self::AlreadyExists => formatter.write_str("provider target already exists"),
             Self::Missing => formatter.write_str("provider input is missing"),
             Self::Integrity(message) => write!(formatter, "provider integrity failure: {message}"),
@@ -190,7 +213,7 @@ pub struct Provider {
     shutdown_requested: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Meta {
     session: SessionId,
     mode: ProviderMode,
@@ -198,9 +221,30 @@ struct Meta {
     handoff: Option<[u8; 16]>,
     destination_epoch: Option<u64>,
     completed_handoff: Option<[u8; 16]>,
+    barrier: BarrierPhase,
+    barrier_token: Option<BarrierToken>,
+    barrier_predicate: Option<Vec<u8>>,
+    barrier_remaining: Option<u64>,
+    barrier_effect: Option<EffectId>,
+    completed_barrier: Option<BarrierToken>,
+    completed_barrier_effect: Option<EffectId>,
 }
 
-type RawMeta = (Vec<u8>, i64, i64, Option<Vec<u8>>, Option<i64>, Option<Vec<u8>>);
+type RawMeta = (
+    Vec<u8>,
+    i64,
+    i64,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<Vec<u8>>,
+    i64,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+);
 
 #[derive(Clone)]
 struct Descriptor {
@@ -231,6 +275,13 @@ struct ApplyResult {
     bytes_written: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredEffectResponse {
+    errno: u16,
+    result: OperationResult,
+}
+
 impl ApplyResult {
     fn ok(result: OperationResult) -> Self {
         Self { errno: errno::SUCCESS, result, bytes_read: 0, bytes_written: 0 }
@@ -256,12 +307,16 @@ struct BundleManifest {
 
 impl Provider {
     pub fn handle_guest(&mut self, request: GuestRequest) -> GuestResponse {
-        let invalid = || GuestResponse {
+        let response = |errno, result, completion_required| GuestResponse {
             version: PROTOCOL_VERSION,
             sequence: request.sequence,
-            errno: errno::INVAL,
-            result: OperationResult::None,
+            effect: request.effect,
+            completion_required,
+            errno,
+            result,
         };
+        let invalid = || response(errno::INVAL, OperationResult::None, false);
+        let unavailable = || response(errno::IO, OperationResult::None, false);
         if !request.is_well_formed()
             || request.sequence > i64::MAX as u64
             || request.authority_epoch > i64::MAX as u64
@@ -269,57 +324,83 @@ impl Provider {
             return invalid();
         }
         if !self.guest_capability_matches(request.capability).unwrap_or(false) {
-            return GuestResponse {
-                version: PROTOCOL_VERSION,
-                sequence: request.sequence,
-                errno: errno::ACCES,
-                result: OperationResult::None,
-            };
+            return response(errno::ACCES, OperationResult::None, false);
         }
         let operation_bytes = match postcard::to_allocvec(&request.operation) {
             Ok(bytes) if bytes.len() <= visa_wasi_protocol::MAX_FRAME_BYTES => bytes,
             _ => return invalid(),
         };
+        let mut operation_hasher = Sha256::new();
+        operation_hasher.update(b"vISA/WASI/effect/v1\0");
+        operation_hasher.update(request.session.0);
+        operation_hasher.update(request.owner.0);
+        operation_hasher.update(&operation_bytes);
+        let operation_digest = operation_hasher.finalize();
         let mut request_hasher = Sha256::new();
+        request_hasher.update(b"vISA/WASI/request/v2\0");
         request_hasher.update(request.session.0);
         request_hasher.update(request.owner.0);
         request_hasher.update(request.client.0);
         request_hasher.update(request.capability.0);
+        request_hasher.update(request.sequence.to_le_bytes());
+        request_hasher.update(request.effect.0);
         request_hasher.update(request.authority_epoch.to_le_bytes());
         request_hasher.update(&operation_bytes);
         let request_digest = request_hasher.finalize();
         let transaction =
             match self.connection.transaction_with_behavior(TransactionBehavior::Immediate) {
                 Ok(transaction) => transaction,
-                Err(_) => {
-                    return GuestResponse {
-                        version: PROTOCOL_VERSION,
-                        sequence: request.sequence,
-                        errno: errno::AGAIN,
-                        result: OperationResult::None,
-                    };
-                }
+                Err(_) => return response(errno::AGAIN, OperationResult::None, false),
             };
+        let meta = match load_meta(&transaction) {
+            Ok(meta) => meta,
+            Err(_) => return invalid(),
+        };
+        let authority_errno = if meta.session != request.session {
+            Some(errno::ACCES)
+        } else {
+            match meta.mode {
+                ProviderMode::Prepared => Some(errno::AGAIN),
+                ProviderMode::Frozen | ProviderMode::Fenced => Some(errno::PERM),
+                ProviderMode::Active if meta.authority_epoch != request.authority_epoch => {
+                    Some(errno::PERM)
+                }
+                ProviderMode::Active => None,
+            }
+        };
+        if let Some(errno) = authority_errno {
+            return response(errno, OperationResult::None, false);
+        }
         let replay = transaction
             .query_row(
-                "SELECT request_digest, response FROM requests WHERE client = ?1 AND sequence = ?2",
+                "SELECT effect_id, request_digest, response
+                 FROM requests WHERE client = ?1 AND sequence = ?2",
                 params![request.client.0.as_slice(), request.sequence as i64],
-                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
             )
             .optional();
-        if let Ok(Some((stored_digest, response_bytes))) = replay {
-            if stored_digest.as_slice() != request_digest.as_slice() {
+        if let Ok(Some((stored_effect, stored_digest, response_bytes))) = replay {
+            if stored_effect.as_slice() != request.effect.0.as_slice()
+                || stored_digest.as_slice() != request_digest.as_slice()
+            {
                 return invalid();
             }
             return postcard::from_bytes(&response_bytes).unwrap_or_else(|_| invalid());
         }
         if replay.is_err() {
-            return GuestResponse {
-                version: PROTOCOL_VERSION,
-                sequence: request.sequence,
-                errno: errno::IO,
-                result: OperationResult::None,
-            };
+            return unavailable();
+        }
+        if matches!(
+            meta.barrier,
+            BarrierPhase::Triggered | BarrierPhase::Held | BarrierPhase::CheckpointReleased
+        ) {
+            return response(errno::AGAIN, OperationResult::None, false);
         }
         let previous_sequence: Result<Option<i64>, _> = transaction.query_row(
             "SELECT max(sequence) FROM requests WHERE client = ?1",
@@ -334,38 +415,54 @@ impl Provider {
         if !sequence_is_fresh {
             return invalid();
         }
-        let meta = match load_meta(&transaction) {
-            Ok(meta) => meta,
-            Err(_) => return invalid(),
-        };
-        let admission_errno = if meta.session != request.session {
-            Some(errno::ACCES)
-        } else {
-            match meta.mode {
-                ProviderMode::Prepared => Some(errno::AGAIN),
-                ProviderMode::Frozen | ProviderMode::Fenced => Some(errno::PERM),
-                ProviderMode::Active if meta.authority_epoch != request.authority_epoch => {
-                    Some(errno::PERM)
-                }
-                ProviderMode::Active => None,
+
+        let effect = transaction
+            .query_row(
+                "SELECT owner, operation_digest, response FROM effects WHERE effect_id = ?1",
+                params![request.effect.0.as_slice()],
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional();
+        if let Ok(Some((stored_owner, stored_digest, stored_response))) = effect {
+            if stored_owner.as_slice() != request.owner.0
+                || stored_digest.as_slice() != operation_digest.as_slice()
+            {
+                return invalid();
             }
-        };
-        if let Some(errno) = admission_errno {
-            return GuestResponse {
-                version: PROTOCOL_VERSION,
-                sequence: request.sequence,
-                errno,
-                result: OperationResult::None,
+            let stored: StoredEffectResponse = match postcard::from_bytes(&stored_response) {
+                Ok(stored) => stored,
+                Err(_) => return unavailable(),
             };
+            let replayed = response(stored.errno, stored.result, true);
+            let response_bytes = match postcard::to_allocvec(&replayed) {
+                Ok(bytes) => bytes,
+                Err(_) => return unavailable(),
+            };
+            if record_request(&transaction, &request, request_digest.as_slice(), &response_bytes)
+                .and_then(|()| transaction.commit())
+                .is_err()
+            {
+                return unavailable();
+            }
+            return replayed;
+        }
+        if effect.is_err() {
+            return unavailable();
         }
         if transaction.execute_batch("SAVEPOINT guest_operation").is_err() {
-            return GuestResponse {
-                version: PROTOCOL_VERSION,
-                sequence: request.sequence,
-                errno: errno::IO,
-                result: OperationResult::None,
-            };
+            return unavailable();
         }
+        let barrier_outcome =
+            match barrier_outcome_for_operation(&transaction, &meta, &request.operation) {
+                Ok(matches) => matches,
+                Err(_) => return unavailable(),
+            };
         let applied = match apply_operation(&transaction, &request.owner, &request.operation) {
             Ok(applied) => applied,
             Err(error) => ApplyResult::error(operation_errno(&error)),
@@ -382,34 +479,34 @@ impl Provider {
             )
         };
         if operation_finalized.is_err() {
-            return GuestResponse {
-                version: PROTOCOL_VERSION,
-                sequence: request.sequence,
-                errno: errno::IO,
-                result: OperationResult::None,
-            };
+            return unavailable();
         }
-        let response = GuestResponse {
-            version: PROTOCOL_VERSION,
-            sequence: request.sequence,
-            errno: applied.errno,
-            result: applied.result,
+        let stored = StoredEffectResponse { errno: applied.errno, result: applied.result.clone() };
+        let response = response(applied.errno, applied.result, true);
+        let stored_bytes = match postcard::to_allocvec(&stored) {
+            Ok(bytes) => bytes,
+            Err(_) => return unavailable(),
         };
         let response_bytes = match postcard::to_allocvec(&response) {
             Ok(bytes) => bytes,
-            Err(_) => return invalid(),
+            Err(_) => return unavailable(),
         };
         if transaction
             .execute(
-                "INSERT INTO requests(client, sequence, request_digest, response)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO effects(effect_id, owner, operation_digest, response,
+                 first_authority_epoch) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
-                    request.client.0.as_slice(),
-                    request.sequence as i64,
-                    request_digest.as_slice(),
-                    response_bytes
+                    request.effect.0.as_slice(),
+                    request.owner.0.as_slice(),
+                    operation_digest.as_slice(),
+                    stored_bytes,
+                    request.authority_epoch as i64,
                 ],
             )
+            .map(|_| ())
+            .and_then(|()| {
+                record_request(&transaction, &request, request_digest.as_slice(), &response_bytes)
+            })
             .and_then(|_| {
                 transaction.execute(
                     "UPDATE meta SET completed_requests = completed_requests + 1,
@@ -422,26 +519,186 @@ impl Provider {
                 )
             })
             .and_then(|_| {
-                // Arrival of sequence N proves that the synchronous guest
-                // received every earlier response from this client. Keep only
-                // the one uncertain response window instead of copying a full
-                // input stream into the replay ledger.
-                transaction.execute(
-                    "DELETE FROM requests WHERE client = ?1 AND sequence < ?2",
-                    params![request.client.0.as_slice(), request.sequence as i64],
+                advance_barrier_after_response(
+                    &transaction,
+                    &meta,
+                    barrier_outcome,
+                    applied.errno,
+                    request.effect,
                 )
             })
             .and_then(|_| transaction.commit())
             .is_err()
         {
-            return GuestResponse {
-                version: PROTOCOL_VERSION,
-                sequence: request.sequence,
-                errno: errno::IO,
-                result: OperationResult::None,
-            };
+            return unavailable();
         }
         response
+    }
+
+    pub fn handle_completion(&mut self, completion: GuestCompletion) -> GuestCompletionResponse {
+        let response = |errno, directive, barrier| GuestCompletionResponse {
+            version: PROTOCOL_VERSION,
+            sequence: completion.sequence,
+            effect: completion.effect,
+            errno,
+            directive,
+            barrier,
+        };
+        if !completion.is_well_formed()
+            || completion.sequence > i64::MAX as u64
+            || completion.authority_epoch > i64::MAX as u64
+        {
+            return response(errno::INVAL, BarrierDirective::Continue, None);
+        }
+        if !self.guest_capability_matches(completion.capability).unwrap_or(false) {
+            return response(errno::ACCES, BarrierDirective::Continue, None);
+        }
+        let transaction =
+            match self.connection.transaction_with_behavior(TransactionBehavior::Immediate) {
+                Ok(transaction) => transaction,
+                Err(_) => return response(errno::AGAIN, BarrierDirective::Continue, None),
+            };
+        let meta = match load_meta(&transaction) {
+            Ok(meta) => meta,
+            Err(_) => return response(errno::IO, BarrierDirective::Continue, None),
+        };
+        if meta.session != completion.session {
+            return response(errno::ACCES, BarrierDirective::Continue, None);
+        }
+        if meta.mode != ProviderMode::Active || meta.authority_epoch != completion.authority_epoch {
+            return response(errno::PERM, BarrierDirective::Continue, None);
+        }
+        let binding = transaction
+            .query_row(
+                "SELECT e.owner, r.completed FROM requests r
+                 JOIN effects e ON e.effect_id = r.effect_id
+                 WHERE r.client = ?1 AND r.sequence = ?2 AND r.effect_id = ?3",
+                params![
+                    completion.client.0.as_slice(),
+                    completion.sequence as i64,
+                    completion.effect.0.as_slice(),
+                ],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional();
+        let Ok(Some((owner, completed))) = binding else {
+            return response(
+                if binding.is_err() { errno::IO } else { errno::INVAL },
+                BarrierDirective::Continue,
+                None,
+            );
+        };
+        if owner.as_slice() != completion.owner.0.as_slice() || !matches!(completed, 0 | 1) {
+            return response(errno::INVAL, BarrierDirective::Continue, None);
+        }
+        if completed == 0
+            && transaction
+                .execute(
+                    "UPDATE requests SET completed = 1
+                     WHERE client = ?1 AND sequence = ?2 AND effect_id = ?3",
+                    params![
+                        completion.client.0.as_slice(),
+                        completion.sequence as i64,
+                        completion.effect.0.as_slice(),
+                    ],
+                )
+                .ok()
+                != Some(1)
+        {
+            return response(errno::IO, BarrierDirective::Continue, None);
+        }
+        let target = meta.barrier_effect == Some(completion.effect);
+        if target
+            && meta.barrier == BarrierPhase::Triggered
+            && transaction
+                .execute(
+                    "UPDATE meta SET barrier_phase = 3 WHERE singleton = 1
+                     AND barrier_phase = 2 AND barrier_effect = ?1",
+                    params![completion.effect.0.as_slice()],
+                )
+                .ok()
+                != Some(1)
+        {
+            return response(errno::IO, BarrierDirective::Continue, None);
+        }
+        if transaction.commit().is_err() {
+            return response(errno::IO, BarrierDirective::Continue, None);
+        }
+        let (directive, barrier) = match (target, meta.barrier) {
+            (true, BarrierPhase::Triggered | BarrierPhase::Held) => {
+                (BarrierDirective::Wait, meta.barrier_token)
+            }
+            (true, BarrierPhase::CheckpointReleased) => {
+                (BarrierDirective::Checkpoint, meta.barrier_token)
+            }
+            _ => (BarrierDirective::Continue, None),
+        };
+        response(errno::SUCCESS, directive, barrier)
+    }
+
+    pub fn handle_barrier_poll(&mut self, poll: BarrierPollRequest) -> BarrierPollResponse {
+        let response = |errno, directive| BarrierPollResponse {
+            version: PROTOCOL_VERSION,
+            token: poll.token,
+            errno,
+            directive,
+        };
+        if !poll.is_well_formed() || poll.authority_epoch > i64::MAX as u64 {
+            return response(errno::INVAL, BarrierDirective::Continue);
+        }
+        if !self.guest_capability_matches(poll.capability).unwrap_or(false) {
+            return response(errno::ACCES, BarrierDirective::Continue);
+        }
+        let Ok(meta) = load_meta(&self.connection) else {
+            return response(errno::IO, BarrierDirective::Continue);
+        };
+        if meta.session != poll.session {
+            return response(errno::ACCES, BarrierDirective::Continue);
+        }
+        if meta.mode != ProviderMode::Active || meta.authority_epoch != poll.authority_epoch {
+            return response(errno::PERM, BarrierDirective::Continue);
+        }
+        let binding = self
+            .connection
+            .query_row(
+                "SELECT e.owner, r.completed FROM requests r
+                 JOIN effects e ON e.effect_id = r.effect_id
+                 WHERE r.client = ?1 AND r.sequence = ?2 AND r.effect_id = ?3",
+                params![poll.client.0.as_slice(), poll.sequence as i64, poll.effect.0.as_slice()],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional();
+        let (owner, completed) = match binding {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return response(errno::INVAL, BarrierDirective::Continue),
+            Err(_) => return response(errno::IO, BarrierDirective::Continue),
+        };
+        if completed != 1 {
+            return response(errno::INVAL, BarrierDirective::Continue);
+        }
+        if owner.as_slice() != poll.owner.0.as_slice() {
+            return response(errno::INVAL, BarrierDirective::Continue);
+        }
+        if meta.barrier == BarrierPhase::Open
+            && meta.completed_barrier == Some(poll.token)
+            && meta.completed_barrier_effect == Some(poll.effect)
+        {
+            return response(errno::SUCCESS, BarrierDirective::Continue);
+        }
+        if meta.barrier_token != Some(poll.token) || meta.barrier_effect != Some(poll.effect) {
+            return response(errno::INVAL, BarrierDirective::Continue);
+        }
+        match meta.barrier {
+            BarrierPhase::Triggered | BarrierPhase::Held => {
+                response(errno::SUCCESS, BarrierDirective::Wait)
+            }
+            BarrierPhase::CheckpointReleased => {
+                response(errno::SUCCESS, BarrierDirective::Checkpoint)
+            }
+            BarrierPhase::Open | BarrierPhase::Armed => {
+                response(errno::INVAL, BarrierDirective::Continue)
+            }
+        }
     }
 
     pub fn handle_admin(&mut self, request: AdminRequest) -> AdminResponse {
@@ -450,6 +707,7 @@ impl Provider {
             ok: false,
             message: message.to_owned(),
             status: None,
+            snapshot: None,
         };
         if !request.version.is_supported() {
             return reject("unsupported protocol version");
@@ -459,40 +717,55 @@ impl Provider {
         }
         let result = match request.operation {
             AdminOperation::Status => {
-                self.status().map(|status| ("status".to_owned(), Some(status)))
+                self.status().map(|status| ("status".to_owned(), Some(status), None))
             }
-            AdminOperation::Freeze { handoff, destination_epoch } => self
-                .freeze(handoff, destination_epoch)
+            AdminOperation::BarrierArm { token, predicate } => self
+                .barrier_arm(token, &predicate)
                 .and_then(|()| self.status())
-                .map(|status| ("source frozen".to_owned(), Some(status))),
+                .map(|status| ("barrier armed".to_owned(), Some(status), None)),
+            AdminOperation::BarrierRelease { token, action } => self
+                .barrier_release(token, action)
+                .and_then(|()| self.status())
+                .map(|status| ("barrier released".to_owned(), Some(status), None)),
+            AdminOperation::Freeze { barrier, handoff, destination_epoch } => self
+                .freeze(barrier, handoff, destination_epoch)
+                .and_then(|()| self.status())
+                .map(|status| ("source frozen".to_owned(), Some(status), None)),
             AdminOperation::Export { bundle } => self
                 .export_bundle(Path::new(&bundle))
                 .and_then(|()| self.status())
-                .map(|status| ("capsule exported".to_owned(), Some(status))),
+                .map(|status| ("capsule exported".to_owned(), Some(status), None)),
             AdminOperation::Resume { handoff, authority_epoch } => self
                 .resume(handoff, authority_epoch)
                 .and_then(|()| self.status())
-                .map(|status| ("source resumed".to_owned(), Some(status))),
+                .map(|status| ("source resumed".to_owned(), Some(status), None)),
             AdminOperation::Fence { handoff, committed_epoch } => self
                 .fence(handoff, committed_epoch)
                 .and_then(|()| self.status())
-                .map(|status| ("source fenced".to_owned(), Some(status))),
+                .map(|status| ("source fenced".to_owned(), Some(status), None)),
             AdminOperation::Activate { handoff, authority_epoch } => self
                 .activate(handoff, authority_epoch)
                 .and_then(|()| self.status())
-                .map(|status| ("destination activated".to_owned(), Some(status))),
+                .map(|status| ("destination activated".to_owned(), Some(status), None)),
             AdminOperation::Materialize { guest_path, host_path } => self
                 .materialize(&guest_path, Path::new(&host_path))
                 .and_then(|()| self.status())
-                .map(|status| ("file materialized".to_owned(), Some(status))),
+                .map(|status| ("file materialized".to_owned(), Some(status), None)),
+            AdminOperation::SnapshotNamespace { output } => {
+                self.snapshot_namespace(Path::new(&output)).and_then(|receipt| {
+                    self.status().map(|status| {
+                        ("namespace snapshot published".to_owned(), Some(status), Some(receipt))
+                    })
+                })
+            }
             AdminOperation::Shutdown => {
                 self.shutdown_requested = true;
-                self.status().map(|status| ("shutdown requested".to_owned(), Some(status)))
+                self.status().map(|status| ("shutdown requested".to_owned(), Some(status), None))
             }
         };
         match result {
-            Ok((message, status)) => {
-                AdminResponse { version: PROTOCOL_VERSION, ok: true, message, status }
+            Ok((message, status, snapshot)) => {
+                AdminResponse { version: PROTOCOL_VERSION, ok: true, message, status, snapshot }
             }
             Err(error) => reject(&error.to_string()),
         }
@@ -504,12 +777,13 @@ impl Provider {
 
     pub fn status(&self) -> Result<ProviderStatus, ProviderError> {
         let meta = load_meta(&self.connection)?;
-        let raw: (i64, i64, i64, i64, i64, i64, i64) = self.connection.query_row(
+        let raw: (i64, i64, i64, i64, i64, i64, i64, i64) = self.connection.query_row(
             "SELECT
                    (SELECT count(*) FROM descriptors),
                    (SELECT count(*) FROM objects),
                    (SELECT count(*) FROM paths),
                    (SELECT count(*) FROM locks),
+                   (SELECT count(*) FROM effects),
                    completed_requests, bytes_read, bytes_written
                  FROM meta WHERE singleton = 1",
             [],
@@ -522,6 +796,7 @@ impl Provider {
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
                 ))
             },
         )?;
@@ -530,6 +805,7 @@ impl Provider {
             objects,
             paths,
             locks,
+            effects,
             completed_requests,
             bytes_read,
             bytes_written,
@@ -541,15 +817,20 @@ impl Provider {
             nonnegative(raw.4)?,
             nonnegative(raw.5)?,
             nonnegative(raw.6)?,
+            nonnegative(raw.7)?,
         );
         Ok(ProviderStatus {
             session: meta.session,
             mode: meta.mode,
             authority_epoch: meta.authority_epoch,
+            barrier: meta.barrier,
+            barrier_remaining: meta.barrier_remaining,
+            barrier_effect: meta.barrier_effect,
             open_descriptors,
             objects,
             paths,
             locks,
+            effects,
             completed_requests,
             bytes_read,
             bytes_written,
@@ -576,9 +857,116 @@ impl Provider {
         Ok(constant_time_eq(&expected, actual.as_slice()))
     }
 
-    fn freeze(&mut self, handoff: [u8; 16], destination_epoch: u64) -> Result<(), ProviderError> {
-        if handoff == [0; 16] {
-            return Err(ProviderError::Invalid("zero handoff identity"));
+    fn barrier_arm(
+        &mut self,
+        token: BarrierToken,
+        predicate: &HostcallPredicate,
+    ) -> Result<(), ProviderError> {
+        validate_barrier_predicate(token, predicate)?;
+        let predicate_bytes = postcard::to_allocvec(predicate).map_err(|_| ProviderError::Codec)?;
+        let transaction =
+            self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let meta = load_meta(&transaction)?;
+        if meta.mode == ProviderMode::Active
+            && meta.barrier == BarrierPhase::Armed
+            && meta.barrier_token == Some(token)
+            && meta.barrier_predicate.as_deref() == Some(predicate_bytes.as_slice())
+        {
+            return transaction.commit().map_err(Into::into);
+        }
+        if meta.mode != ProviderMode::Active || meta.barrier != BarrierPhase::Open {
+            return Err(ProviderError::Invalid("barrier arm rejected"));
+        }
+        let incomplete: i64 = transaction.query_row(
+            "SELECT count(*) FROM requests WHERE completed = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        if incomplete != 0 {
+            return Err(ProviderError::Busy);
+        }
+        transaction.execute(
+            "UPDATE meta SET barrier_phase = 1, barrier_token = ?1,
+             barrier_predicate = ?2, barrier_remaining = ?3, barrier_effect = NULL,
+             completed_barrier = NULL, completed_barrier_effect = NULL WHERE singleton = 1",
+            params![token.0.as_slice(), predicate_bytes, sql_i64(predicate.occurrence)?],
+        )?;
+        transaction.commit()?;
+        self.sync()
+    }
+
+    fn barrier_release(
+        &mut self,
+        token: BarrierToken,
+        action: BarrierReleaseAction,
+    ) -> Result<(), ProviderError> {
+        if token.is_zero() {
+            return Err(ProviderError::Invalid("zero barrier token"));
+        }
+        let transaction =
+            self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let meta = load_meta(&transaction)?;
+        match action {
+            BarrierReleaseAction::Continue
+                if meta.mode == ProviderMode::Active
+                    && meta.barrier == BarrierPhase::Open
+                    && meta.completed_barrier == Some(token) =>
+            {
+                return transaction.commit().map_err(Into::into);
+            }
+            BarrierReleaseAction::Checkpoint
+                if meta.mode == ProviderMode::Active
+                    && meta.barrier == BarrierPhase::CheckpointReleased
+                    && meta.barrier_token == Some(token) =>
+            {
+                return transaction.commit().map_err(Into::into);
+            }
+            _ => {}
+        }
+        if meta.mode != ProviderMode::Active
+            || meta.barrier != BarrierPhase::Held
+            || meta.barrier_token != Some(token)
+        {
+            return Err(ProviderError::Invalid("barrier release rejected"));
+        }
+        let incomplete: i64 = transaction.query_row(
+            "SELECT count(*) FROM requests WHERE completed = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        if incomplete != 0 {
+            return Err(ProviderError::Busy);
+        }
+        match action {
+            BarrierReleaseAction::Continue => {
+                transaction.execute(
+                    "UPDATE meta SET barrier_phase = 0, barrier_token = NULL,
+                     barrier_predicate = NULL, barrier_remaining = NULL,
+                     completed_barrier = ?1, completed_barrier_effect = barrier_effect,
+                     barrier_effect = NULL WHERE singleton = 1",
+                    params![token.0.as_slice()],
+                )?;
+            }
+            BarrierReleaseAction::Checkpoint => {
+                transaction.execute(
+                    "UPDATE meta SET barrier_phase = 4, barrier_predicate = NULL,
+                     barrier_remaining = NULL WHERE singleton = 1",
+                    [],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        self.sync()
+    }
+
+    fn freeze(
+        &mut self,
+        barrier: BarrierToken,
+        handoff: [u8; 16],
+        destination_epoch: u64,
+    ) -> Result<(), ProviderError> {
+        if handoff == [0; 16] || barrier.is_zero() {
+            return Err(ProviderError::Invalid("zero handoff or barrier identity"));
         }
         let transaction =
             self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -586,10 +974,14 @@ impl Provider {
         if meta.mode == ProviderMode::Frozen
             && meta.handoff == Some(handoff)
             && meta.destination_epoch == Some(destination_epoch)
+            && meta.barrier == BarrierPhase::CheckpointReleased
+            && meta.barrier_token == Some(barrier)
         {
             return transaction.commit().map_err(Into::into);
         }
         if meta.mode != ProviderMode::Active
+            || meta.barrier != BarrierPhase::CheckpointReleased
+            || meta.barrier_token != Some(barrier)
             || destination_epoch
                 != meta
                     .authority_epoch
@@ -616,6 +1008,7 @@ impl Provider {
             && meta.authority_epoch == authority_epoch
             && meta.handoff.is_none()
             && meta.completed_handoff == Some(handoff)
+            && meta.barrier == BarrierPhase::Open
         {
             return transaction.commit().map_err(Into::into);
         }
@@ -627,7 +1020,10 @@ impl Provider {
         }
         transaction.execute(
             "UPDATE meta SET mode = 0, handoff = NULL, destination_epoch = NULL,
-             completed_handoff = ?1
+             completed_handoff = ?1, completed_barrier = barrier_token,
+             completed_barrier_effect = barrier_effect,
+             barrier_phase = 0, barrier_token = NULL, barrier_predicate = NULL,
+             barrier_remaining = NULL, barrier_effect = NULL
              WHERE singleton = 1",
             params![handoff.as_slice()],
         )?;
@@ -664,6 +1060,7 @@ impl Provider {
             && meta.authority_epoch == authority_epoch
             && meta.handoff.is_none()
             && meta.completed_handoff == Some(handoff)
+            && meta.barrier == BarrierPhase::Open
         {
             return transaction.commit().map_err(Into::into);
         }
@@ -675,7 +1072,11 @@ impl Provider {
         }
         transaction.execute(
             "UPDATE meta SET mode = 0, authority_epoch = ?1, handoff = NULL,
-             destination_epoch = NULL, completed_handoff = ?2 WHERE singleton = 1",
+             destination_epoch = NULL, completed_handoff = ?2,
+             completed_barrier = barrier_token, completed_barrier_effect = barrier_effect,
+             barrier_phase = 0, barrier_token = NULL,
+             barrier_predicate = NULL, barrier_remaining = NULL, barrier_effect = NULL
+             WHERE singleton = 1",
             params![sql_i64(authority_epoch)?, handoff.as_slice()],
         )?;
         transaction.commit()?;
@@ -693,30 +1094,57 @@ impl Provider {
         if bundle.exists() {
             return self.verify_existing_bundle(bundle, meta.session, handoff, destination_epoch);
         }
-        fs::create_dir(bundle)?;
-        fs::set_permissions(bundle, fs::Permissions::from_mode(0o700))?;
+        ensure_private_parent(bundle)
+            .map_err(|_| ProviderError::Invalid("private capsule parent required"))?;
         checkpoint_truncate(&self.connection)
             .map_err(|_| ProviderError::Integrity("checkpoint failed"))?;
         self.sync()?;
-        let state_path = bundle.join("state.sqlite");
-        copy_new(self.database_guard.path(), &state_path)?;
-        let state_bytes = fs::read(&state_path)?;
-        let manifest = BundleManifest {
-            schema: BUNDLE_SCHEMA.to_owned(),
-            session_hex: hex(meta.session.0),
-            source_epoch: meta.authority_epoch,
-            destination_epoch,
-            handoff_hex: hex(handoff),
-            state_file: "state.sqlite".to_owned(),
-            state_size: u64::try_from(state_bytes.len())
-                .map_err(|_| ProviderError::Integrity("state size overflow"))?,
-            state_sha256: hex(Sha256::digest(&state_bytes)),
-        };
-        let manifest_bytes =
-            serde_json::to_vec_pretty(&manifest).map_err(|_| ProviderError::Codec)?;
-        write_new_synced(&bundle.join("manifest.json"), &manifest_bytes)?;
-        sync_directory(bundle)?;
-        Ok(())
+        let parent = bundle
+            .parent()
+            .filter(|value| !value.as_os_str().is_empty())
+            .ok_or(ProviderError::Invalid("capsule path has no parent"))?;
+        let temporary = parent.join(format!(
+            ".visa-capsule-{}-{}-{}.tmp",
+            &hex(handoff)[..16],
+            std::process::id(),
+            now_ns()?
+        ));
+        let result = (|| {
+            fs::create_dir(&temporary)?;
+            fs::set_permissions(&temporary, fs::Permissions::from_mode(0o700))?;
+            let state_path = temporary.join("state.sqlite");
+            copy_new(self.database_guard.path(), &state_path)?;
+            let state_bytes = fs::read(&state_path)?;
+            let manifest = BundleManifest {
+                schema: BUNDLE_SCHEMA.to_owned(),
+                session_hex: hex(meta.session.0),
+                source_epoch: meta.authority_epoch,
+                destination_epoch,
+                handoff_hex: hex(handoff),
+                state_file: "state.sqlite".to_owned(),
+                state_size: u64::try_from(state_bytes.len())
+                    .map_err(|_| ProviderError::Integrity("state size overflow"))?,
+                state_sha256: hex(Sha256::digest(&state_bytes)),
+            };
+            let manifest_bytes =
+                serde_json::to_vec_pretty(&manifest).map_err(|_| ProviderError::Codec)?;
+            write_new_synced(&temporary.join("manifest.json"), &manifest_bytes)?;
+            sync_directory(&temporary)?;
+            renameat_with(CWD, &temporary, CWD, bundle, RenameFlags::NOREPLACE).map_err(
+                |error| {
+                    if error == rustix::io::Errno::EXIST {
+                        ProviderError::AlreadyExists
+                    } else {
+                        ProviderError::Io(std::io::Error::from_raw_os_error(error.raw_os_error()))
+                    }
+                },
+            )?;
+            sync_directory(parent)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&temporary);
+        }
+        result
     }
 
     fn verify_existing_bundle(
@@ -756,12 +1184,466 @@ impl Provider {
         write_new_synced(host_path, &bytes)
     }
 
+    pub fn snapshot_namespace(
+        &mut self,
+        output: &Path,
+    ) -> Result<NamespaceSnapshotReceipt, ProviderError> {
+        if output.exists() {
+            return Err(ProviderError::AlreadyExists);
+        }
+        ensure_private_parent(output)
+            .map_err(|_| ProviderError::Invalid("private snapshot parent required"))?;
+        let transaction =
+            self.connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let meta = load_meta(&transaction)?;
+        if meta.barrier != BarrierPhase::CheckpointReleased
+            || !matches!(meta.mode, ProviderMode::Active | ProviderMode::Frozen)
+        {
+            return Err(ProviderError::Invalid(
+                "namespace snapshot requires a checkpoint-released barrier",
+            ));
+        }
+        let (effect_frontier, effects) = effect_frontier(&transaction)?;
+
+        let raw_objects = {
+            let mut statement = transaction.prepare(
+                "SELECT object_id, kind, size, symlink_target, mode, uid, gid,
+                 accessed_ns, modified_ns, changed_ns FROM objects ORDER BY object_id",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<Vec<u8>>>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                        row.get::<_, i64>(8)?,
+                        row.get::<_, i64>(9)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut objects = Vec::with_capacity(raw_objects.len());
+        for (id, kind, size, symlink_target, mode, uid, gid, atime, mtime, ctime) in raw_objects {
+            let object = ObjectId(
+                id.try_into().map_err(|_| ProviderError::Integrity("snapshot object identity"))?,
+            );
+            let kind =
+                u8::try_from(kind).map_err(|_| ProviderError::Integrity("snapshot object kind"))?;
+            let size = nonnegative(size)?;
+            let bytes = if kind == FILE_TYPE_REGULAR {
+                read_object_range(
+                    &transaction,
+                    object,
+                    0,
+                    usize::try_from(size)
+                        .map_err(|_| ProviderError::Invalid("snapshot object is too large"))?,
+                )?
+            } else {
+                Vec::new()
+            };
+            objects.push(NamespaceObject {
+                object,
+                kind,
+                size,
+                symlink_target,
+                mode: u32::try_from(mode).map_err(|_| ProviderError::Integrity("snapshot mode"))?,
+                uid: u32::try_from(uid).map_err(|_| ProviderError::Integrity("snapshot uid"))?,
+                gid: u32::try_from(gid).map_err(|_| ProviderError::Integrity("snapshot gid"))?,
+                accessed_ns: nonnegative(atime)?,
+                modified_ns: nonnegative(mtime)?,
+                changed_ns: nonnegative(ctime)?,
+                bytes,
+            });
+        }
+
+        let paths = {
+            let mut statement = transaction
+                .prepare("SELECT path, object_id FROM paths ORDER BY path, object_id")?;
+            let raw = statement
+                .query_map([], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            raw.into_iter()
+                .map(|(path, object)| {
+                    Ok(NamespacePath {
+                        path,
+                        object: ObjectId(object.try_into().map_err(|_| {
+                            ProviderError::Integrity("snapshot path object identity")
+                        })?),
+                    })
+                })
+                .collect::<Result<Vec<_>, ProviderError>>()?
+        };
+
+        let descriptors = {
+            let mut statement = transaction.prepare(
+                "SELECT fd, object_id, directory_path, offset, flags, rights_base,
+                 rights_inheriting, preopen FROM descriptors ORDER BY fd",
+            )?;
+            let raw = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            raw.into_iter()
+                .map(|(fd, object, directory_path, offset, flags, base, inheriting, preopen)| {
+                    Ok(NamespaceDescriptor {
+                        fd: u32::try_from(fd)
+                            .map_err(|_| ProviderError::Integrity("snapshot fd"))?,
+                        object: ObjectId(object.try_into().map_err(|_| {
+                            ProviderError::Integrity("snapshot descriptor object identity")
+                        })?),
+                        directory_path,
+                        offset: nonnegative(offset)?,
+                        flags: u16::try_from(flags)
+                            .map_err(|_| ProviderError::Integrity("snapshot fd flags"))?,
+                        rights_base: sql_to_u64(base),
+                        rights_inheriting: sql_to_u64(inheriting),
+                        preopen: match preopen {
+                            0 => false,
+                            1 => true,
+                            _ => return Err(ProviderError::Integrity("snapshot preopen flag")),
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, ProviderError>>()?
+        };
+
+        let locks = {
+            let mut statement = transaction
+                .prepare("SELECT object_id, owner, level FROM locks ORDER BY object_id, owner")?;
+            let raw = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            raw.into_iter()
+                .map(|(object, owner, level)| {
+                    Ok(NamespaceLock {
+                        object: ObjectId(object.try_into().map_err(|_| {
+                            ProviderError::Integrity("snapshot lock object identity")
+                        })?),
+                        owner: OwnerId(owner.try_into().map_err(|_| {
+                            ProviderError::Integrity("snapshot lock owner identity")
+                        })?),
+                        level: sql_to_lock(level)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, ProviderError>>()?
+        };
+
+        let unlinked_objects = objects
+            .iter()
+            .filter(|object| !paths.iter().any(|path| path.object == object.object))
+            .count();
+        let snapshot = NamespaceSnapshot {
+            version: NAMESPACE_SNAPSHOT_VERSION,
+            session: meta.session,
+            authority_epoch: meta.authority_epoch,
+            mode: meta.mode,
+            barrier: meta.barrier,
+            effect_frontier,
+            effects,
+            objects,
+            paths,
+            descriptors,
+            locks,
+        };
+        transaction.commit()?;
+        let encoded = encode_namespace_snapshot(&snapshot).map_err(|_| ProviderError::Codec)?;
+        let receipt = NamespaceSnapshotReceipt {
+            version: NAMESPACE_SNAPSHOT_VERSION,
+            sha256: Sha256::digest(&encoded).into(),
+            effect_frontier: snapshot.effect_frontier,
+            effects: snapshot.effects,
+            encoded_bytes: u64::try_from(encoded.len())
+                .map_err(|_| ProviderError::Integrity("snapshot size overflow"))?,
+            objects: u64::try_from(snapshot.objects.len())
+                .map_err(|_| ProviderError::Integrity("snapshot object count overflow"))?,
+            paths: u64::try_from(snapshot.paths.len())
+                .map_err(|_| ProviderError::Integrity("snapshot path count overflow"))?,
+            descriptors: u64::try_from(snapshot.descriptors.len())
+                .map_err(|_| ProviderError::Integrity("snapshot descriptor count overflow"))?,
+            locks: u64::try_from(snapshot.locks.len())
+                .map_err(|_| ProviderError::Integrity("snapshot lock count overflow"))?,
+            unlinked_objects: u64::try_from(unlinked_objects)
+                .map_err(|_| ProviderError::Integrity("snapshot unlinked count overflow"))?,
+        };
+        write_atomic_snapshot(output, &encoded)?;
+        Ok(receipt)
+    }
+
     fn sync(&self) -> Result<(), ProviderError> {
         sync_file(self.database_guard.file())
             .map_err(|_| ProviderError::Integrity("database sync failed"))?;
         sync_parent_directory(self.database_guard.path())
             .map_err(|_| ProviderError::Integrity("database parent sync failed"))
     }
+}
+
+fn record_request(
+    transaction: &Transaction<'_>,
+    request: &GuestRequest,
+    request_digest: &[u8],
+    response: &[u8],
+) -> Result<(), rusqlite::Error> {
+    transaction.execute(
+        "INSERT INTO requests(client, sequence, effect_id, request_digest, response)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            request.client.0.as_slice(),
+            request.sequence as i64,
+            request.effect.0.as_slice(),
+            request_digest,
+            response,
+        ],
+    )?;
+    // The synchronous client has acknowledged every older sequence. Durable
+    // effect outcomes remain in `effects`; only the transport replay window is
+    // compacted here.
+    transaction.execute(
+        "DELETE FROM requests WHERE client = ?1 AND sequence < ?2 AND completed = 1",
+        params![request.client.0.as_slice(), request.sequence as i64],
+    )?;
+    Ok(())
+}
+
+fn validate_barrier_predicate(
+    token: BarrierToken,
+    predicate: &HostcallPredicate,
+) -> Result<(), ProviderError> {
+    if token.is_zero() || !predicate.is_well_formed() || predicate.occurrence > i64::MAX as u64 {
+        return Err(ProviderError::Invalid("barrier identity or occurrence"));
+    }
+    if let ResourceSelector::ExactPath(path) = &predicate.resource
+        && (path.is_empty() || normalize_path(&[], path).ok().as_deref() != Some(path.as_slice()))
+    {
+        return Err(ProviderError::Invalid("barrier path is not canonical"));
+    }
+    Ok(())
+}
+
+fn barrier_outcome_for_operation(
+    connection: &Connection,
+    meta: &Meta,
+    operation: &Operation,
+) -> Result<Option<OutcomePredicate>, ProviderError> {
+    if meta.barrier != BarrierPhase::Armed {
+        return Ok(None);
+    }
+    let encoded = meta
+        .barrier_predicate
+        .as_deref()
+        .ok_or(ProviderError::Integrity("armed barrier lacks predicate"))?;
+    let predicate: HostcallPredicate = postcard::from_bytes(encoded)
+        .map_err(|_| ProviderError::Integrity("barrier predicate encoding"))?;
+    validate_barrier_predicate(
+        meta.barrier_token.ok_or(ProviderError::Integrity("armed barrier lacks token"))?,
+        &predicate,
+    )?;
+    if predicate.kind != HostcallKind::Any && operation_kind(operation) != Some(predicate.kind) {
+        return Ok(None);
+    }
+    let resource_matches = match &predicate.resource {
+        ResourceSelector::Any => true,
+        ResourceSelector::Fd(expected) => operation_fds(operation).contains(expected),
+        ResourceSelector::ExactPath(expected) => {
+            operation_paths(connection, operation)?.iter().any(|path| path == expected)
+        }
+    };
+    Ok(resource_matches.then_some(predicate.outcome))
+}
+
+fn advance_barrier_after_response(
+    transaction: &Transaction<'_>,
+    meta: &Meta,
+    outcome: Option<OutcomePredicate>,
+    errno_value: u16,
+    effect: EffectId,
+) -> rusqlite::Result<usize> {
+    let Some(outcome) = outcome else {
+        return Ok(0);
+    };
+    let outcome_matches = match outcome {
+        OutcomePredicate::Any => true,
+        OutcomePredicate::Success => errno_value == errno::SUCCESS,
+        OutcomePredicate::Errno(expected) => errno_value == expected,
+    };
+    if !outcome_matches {
+        return Ok(0);
+    }
+    let remaining = meta.barrier_remaining.ok_or(rusqlite::Error::InvalidQuery)?;
+    if remaining > 1 {
+        transaction.execute(
+            "UPDATE meta SET barrier_remaining = barrier_remaining - 1
+             WHERE singleton = 1 AND barrier_phase = 1 AND barrier_remaining = ?1",
+            params![remaining as i64],
+        )
+    } else {
+        transaction.execute(
+            "UPDATE meta SET barrier_phase = 2, barrier_remaining = NULL, barrier_effect = ?1
+             WHERE singleton = 1 AND barrier_phase = 1 AND barrier_remaining = 1",
+            params![effect.0.as_slice()],
+        )
+    }
+}
+
+fn operation_kind(operation: &Operation) -> Option<HostcallKind> {
+    match operation {
+        Operation::FdClose { .. } => Some(HostcallKind::FdClose),
+        Operation::FdDataSync { .. } => Some(HostcallKind::FdDataSync),
+        Operation::FdPread { .. } => Some(HostcallKind::FdPread),
+        Operation::FdPwrite { .. } => Some(HostcallKind::FdPwrite),
+        Operation::FdRead { .. } => Some(HostcallKind::FdRead),
+        Operation::FdSync { .. } => Some(HostcallKind::FdSync),
+        Operation::FdWrite { .. } => Some(HostcallKind::FdWrite),
+        Operation::PathCreateDirectory { .. } => Some(HostcallKind::PathCreateDirectory),
+        Operation::PathOpen { .. } => Some(HostcallKind::PathOpen),
+        Operation::PathRemoveDirectory { .. } => Some(HostcallKind::PathRemoveDirectory),
+        Operation::PathRename { .. } => Some(HostcallKind::PathRename),
+        Operation::PathUnlinkFile { .. } => Some(HostcallKind::PathUnlinkFile),
+        Operation::VfsLock { .. } => Some(HostcallKind::VfsLock),
+        Operation::VfsUnlock { .. } => Some(HostcallKind::VfsUnlock),
+        _ => None,
+    }
+}
+
+fn operation_fds(operation: &Operation) -> Vec<u32> {
+    match operation {
+        Operation::FdAdvise { fd, .. }
+        | Operation::FdAllocate { fd, .. }
+        | Operation::FdClose { fd }
+        | Operation::FdDataSync { fd }
+        | Operation::FdStatGet { fd }
+        | Operation::FdStatSetFlags { fd, .. }
+        | Operation::FdStatSetRights { fd, .. }
+        | Operation::FdFileStatGet { fd }
+        | Operation::FdFileStatSetSize { fd, .. }
+        | Operation::FdFileStatSetTimes { fd, .. }
+        | Operation::FdPread { fd, .. }
+        | Operation::FdPwrite { fd, .. }
+        | Operation::FdPrestatGet { fd }
+        | Operation::FdPrestatDirName { fd }
+        | Operation::FdRead { fd, .. }
+        | Operation::FdReadDir { fd, .. }
+        | Operation::FdSeek { fd, .. }
+        | Operation::FdSync { fd }
+        | Operation::FdTell { fd }
+        | Operation::FdWrite { fd, .. }
+        | Operation::VfsLock { fd, .. }
+        | Operation::VfsUnlock { fd, .. }
+        | Operation::VfsCheckReserved { fd } => vec![*fd],
+        Operation::FdRenumber { from, to } => vec![*from, *to],
+        Operation::PathCreateDirectory { dir_fd, .. }
+        | Operation::PathFileStatGet { dir_fd, .. }
+        | Operation::PathFileStatSetTimes { dir_fd, .. }
+        | Operation::PathOpen { dir_fd, .. }
+        | Operation::PathReadLink { dir_fd, .. }
+        | Operation::PathRemoveDirectory { dir_fd, .. }
+        | Operation::PathSymlink { dir_fd, .. }
+        | Operation::PathUnlinkFile { dir_fd, .. }
+        | Operation::PathChmod { dir_fd, .. }
+        | Operation::PathChown { dir_fd, .. } => vec![*dir_fd],
+        Operation::PathLink { old_dir_fd, new_dir_fd, .. }
+        | Operation::PathRename { old_dir_fd, new_dir_fd, .. } => {
+            vec![*old_dir_fd, *new_dir_fd]
+        }
+    }
+}
+
+fn operation_paths(
+    connection: &Connection,
+    operation: &Operation,
+) -> Result<Vec<Vec<u8>>, ProviderError> {
+    let requested = |dir_fd, path: &[u8]| -> Result<Vec<u8>, ProviderError> {
+        let descriptor = descriptor(connection, dir_fd)?
+            .ok_or(ProviderError::Invalid("barrier path directory fd is missing"))?;
+        normalize_path(&descriptor.directory_path, path)
+            .map_err(|_| ProviderError::Invalid("barrier operation path escaped root"))
+    };
+    let fd_paths = |fd| -> Result<Vec<Vec<u8>>, ProviderError> {
+        let Some(descriptor) = descriptor(connection, fd)? else {
+            return Ok(Vec::new());
+        };
+        let mut statement =
+            connection.prepare("SELECT path FROM paths WHERE object_id = ?1 ORDER BY path")?;
+        Ok(statement
+            .query_map(params![descriptor.object.0.as_slice()], |row| row.get(0))?
+            .collect::<Result<Vec<Vec<u8>>, _>>()?)
+    };
+    match operation {
+        Operation::PathCreateDirectory { dir_fd, path }
+        | Operation::PathFileStatGet { dir_fd, path, .. }
+        | Operation::PathFileStatSetTimes { dir_fd, path, .. }
+        | Operation::PathOpen { dir_fd, path, .. }
+        | Operation::PathReadLink { dir_fd, path, .. }
+        | Operation::PathRemoveDirectory { dir_fd, path }
+        | Operation::PathUnlinkFile { dir_fd, path }
+        | Operation::PathChmod { dir_fd, path, .. }
+        | Operation::PathChown { dir_fd, path, .. } => Ok(vec![requested(*dir_fd, path)?]),
+        Operation::PathSymlink { dir_fd, new_path, .. } => Ok(vec![requested(*dir_fd, new_path)?]),
+        Operation::PathLink { old_dir_fd, old_path, new_dir_fd, new_path, .. }
+        | Operation::PathRename { old_dir_fd, old_path, new_dir_fd, new_path } => {
+            Ok(vec![requested(*old_dir_fd, old_path)?, requested(*new_dir_fd, new_path)?])
+        }
+        _ => {
+            let mut paths = Vec::new();
+            for fd in operation_fds(operation) {
+                paths.extend(fd_paths(fd)?);
+            }
+            paths.sort();
+            paths.dedup();
+            Ok(paths)
+        }
+    }
+}
+
+fn effect_frontier(connection: &Connection) -> Result<([u8; 32], u64), ProviderError> {
+    let mut statement = connection.prepare(
+        "SELECT effect_id, owner, operation_digest, response, first_authority_epoch
+         FROM effects ORDER BY effect_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, Vec<u8>>(0)?,
+            row.get::<_, Vec<u8>>(1)?,
+            row.get::<_, Vec<u8>>(2)?,
+            row.get::<_, Vec<u8>>(3)?,
+            row.get::<_, i64>(4)?,
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"vISA/WASI/effect-frontier/v1\0");
+    let mut count = 0_u64;
+    for row in rows {
+        let (effect, owner, operation, response, epoch) = row?;
+        for field in [&effect, &owner, &operation, &response] {
+            hasher.update((field.len() as u64).to_be_bytes());
+            hasher.update(field);
+        }
+        hasher.update(nonnegative(epoch)?.to_be_bytes());
+        count = count
+            .checked_add(1)
+            .ok_or(ProviderError::Integrity("effect frontier count overflow"))?;
+    }
+    Ok((hasher.finalize().into(), count))
 }
 
 fn operation_errno(error: &ProviderError) -> u16 {
@@ -823,7 +1705,7 @@ pub fn create_provider(config: &CreateConfig) -> Result<(), ProviderError> {
             "INSERT INTO meta(singleton, schema_version, session, capability_digest,
              guest_capability_digest, mode, authority_epoch, handoff, destination_epoch,
              next_object, next_fd)
-             VALUES (1, 2, ?1, ?2, ?3, 0, ?4, NULL, NULL, 1, 4)",
+             VALUES (1, 5, ?1, ?2, ?3, 0, ?4, NULL, NULL, 1, 4)",
             params![
                 config.session.0.as_slice(),
                 Sha256::digest(config.capability.0).as_slice(),
@@ -2435,15 +3317,44 @@ fn allocate_fd(transaction: &Transaction<'_>) -> Result<u32, ProviderError> {
 }
 
 fn load_meta(connection: &Connection) -> Result<Meta, ProviderError> {
-    let (session, mode, authority_epoch, handoff, destination_epoch, completed_handoff): RawMeta =
-        connection.query_row(
-            "SELECT session, mode, authority_epoch, handoff, destination_epoch, completed_handoff
+    let (
+        session,
+        mode,
+        authority_epoch,
+        handoff,
+        destination_epoch,
+        completed_handoff,
+        barrier,
+        barrier_token,
+        barrier_predicate,
+        barrier_remaining,
+        barrier_effect,
+        completed_barrier,
+        completed_barrier_effect,
+    ): RawMeta = connection.query_row(
+        "SELECT session, mode, authority_epoch, handoff, destination_epoch, completed_handoff,
+             barrier_phase, barrier_token, barrier_predicate, barrier_remaining, barrier_effect,
+             completed_barrier, completed_barrier_effect
          FROM meta WHERE singleton = 1",
-            [],
-            |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
-            },
-        )?;
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
+                row.get(12)?,
+            ))
+        },
+    )?;
     Ok(Meta {
         session: SessionId(
             session.try_into().map_err(|_| ProviderError::Integrity("session length"))?,
@@ -2457,6 +3368,41 @@ fn load_meta(connection: &Connection) -> Result<Meta, ProviderError> {
         completed_handoff: completed_handoff
             .map(|value| {
                 value.try_into().map_err(|_| ProviderError::Integrity("completed handoff length"))
+            })
+            .transpose()?,
+        barrier: sql_to_barrier(barrier)?,
+        barrier_token: barrier_token
+            .map(|value| {
+                value
+                    .try_into()
+                    .map(BarrierToken)
+                    .map_err(|_| ProviderError::Integrity("barrier token length"))
+            })
+            .transpose()?,
+        barrier_predicate,
+        barrier_remaining: barrier_remaining.map(nonnegative).transpose()?,
+        barrier_effect: barrier_effect
+            .map(|value| {
+                value
+                    .try_into()
+                    .map(EffectId)
+                    .map_err(|_| ProviderError::Integrity("barrier effect length"))
+            })
+            .transpose()?,
+        completed_barrier: completed_barrier
+            .map(|value| {
+                value
+                    .try_into()
+                    .map(BarrierToken)
+                    .map_err(|_| ProviderError::Integrity("completed barrier length"))
+            })
+            .transpose()?,
+        completed_barrier_effect: completed_barrier_effect
+            .map(|value| {
+                value
+                    .try_into()
+                    .map(EffectId)
+                    .map_err(|_| ProviderError::Integrity("completed barrier effect length"))
             })
             .transpose()?,
     })
@@ -2565,10 +3511,97 @@ fn audit_connection(connection: &Connection) -> Result<(), ProviderError> {
             meta.handoff.is_some()
                 && meta.destination_epoch == meta.authority_epoch.checked_add(1)
                 && meta.completed_handoff.is_none()
+                && meta.barrier == BarrierPhase::CheckpointReleased
         }
     };
     if !transition_consistent {
         return Err(ProviderError::Integrity("mode and handoff binding mismatch"));
+    }
+    let barrier_consistent = match meta.barrier {
+        BarrierPhase::Open => {
+            meta.barrier_token.is_none()
+                && meta.barrier_predicate.is_none()
+                && meta.barrier_remaining.is_none()
+                && meta.barrier_effect.is_none()
+        }
+        BarrierPhase::Armed => {
+            meta.barrier_token.is_some_and(|token| !token.is_zero())
+                && meta.barrier_predicate.is_some()
+                && meta.barrier_remaining.is_some()
+                && meta.barrier_effect.is_none()
+        }
+        BarrierPhase::Triggered | BarrierPhase::Held => {
+            meta.barrier_token.is_some_and(|token| !token.is_zero())
+                && meta.barrier_predicate.is_some()
+                && meta.barrier_remaining.is_none()
+                && meta.barrier_effect.is_some_and(|effect| !effect.is_zero())
+        }
+        BarrierPhase::CheckpointReleased => {
+            meta.barrier_token.is_some_and(|token| !token.is_zero())
+                && meta.barrier_predicate.is_none()
+                && meta.barrier_remaining.is_none()
+                && meta.barrier_effect.is_some_and(|effect| !effect.is_zero())
+        }
+    } && match (meta.completed_barrier, meta.completed_barrier_effect) {
+        (None, None) => true,
+        (Some(token), Some(effect)) => !token.is_zero() && !effect.is_zero(),
+        _ => false,
+    };
+    if !barrier_consistent {
+        return Err(ProviderError::Integrity("barrier binding mismatch"));
+    }
+    if let (Some(token), Some(encoded)) = (meta.barrier_token, meta.barrier_predicate.as_deref()) {
+        let predicate: HostcallPredicate = postcard::from_bytes(encoded)
+            .map_err(|_| ProviderError::Integrity("barrier predicate encoding"))?;
+        validate_barrier_predicate(token, &predicate)
+            .map_err(|_| ProviderError::Integrity("barrier predicate fields"))?;
+    }
+    if let Some(effect) = meta.barrier_effect {
+        let effect_rows: i64 = connection.query_row(
+            "SELECT count(*) FROM effects WHERE effect_id = ?1",
+            params![effect.0.as_slice()],
+            |row| row.get(0),
+        )?;
+        if effect_rows != 1 {
+            return Err(ProviderError::Integrity("barrier target effect is missing"));
+        }
+        let completed_deliveries: i64 = connection.query_row(
+            "SELECT count(*) FROM requests WHERE effect_id = ?1 AND completed = 1",
+            params![effect.0.as_slice()],
+            |row| row.get(0),
+        )?;
+        match meta.barrier {
+            BarrierPhase::Triggered if completed_deliveries != 0 => {
+                return Err(ProviderError::Integrity(
+                    "triggered barrier already has a completed target delivery",
+                ));
+            }
+            BarrierPhase::Held | BarrierPhase::CheckpointReleased if completed_deliveries == 0 => {
+                return Err(ProviderError::Integrity(
+                    "held barrier lacks a completed target delivery",
+                ));
+            }
+            _ => {}
+        }
+    }
+    if let Some(effect) = meta.completed_barrier_effect {
+        let completed_deliveries: i64 = connection.query_row(
+            "SELECT count(*) FROM requests WHERE effect_id = ?1 AND completed = 1",
+            params![effect.0.as_slice()],
+            |row| row.get(0),
+        )?;
+        if completed_deliveries == 0 {
+            return Err(ProviderError::Integrity(
+                "completed barrier lacks a completed target delivery",
+            ));
+        }
+    }
+    if meta.barrier == BarrierPhase::CheckpointReleased {
+        audit_zero(
+            connection,
+            "SELECT count(*) FROM requests WHERE completed = 0",
+            "held barrier has incomplete response deliveries",
+        )?;
     }
     audit_zero(
         connection,
@@ -2701,6 +3734,40 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), ProviderError> {
     Ok(())
 }
 
+fn write_atomic_snapshot(path: &Path, bytes: &[u8]) -> Result<(), ProviderError> {
+    let parent = path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .ok_or(ProviderError::Invalid("snapshot path has no parent"))?;
+    let digest = Sha256::digest(bytes);
+    let temporary = parent.join(format!(
+        ".visa-namespace-{}-{}-{}.tmp",
+        &hex(digest)[..16],
+        std::process::id(),
+        now_ns()?
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        match fs::hard_link(&temporary, path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(ProviderError::AlreadyExists);
+            }
+            Err(error) => return Err(ProviderError::Io(error)),
+        }
+        sync_directory(parent)?;
+        fs::remove_file(&temporary)?;
+        sync_directory(parent)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 fn copy_new(source: &Path, destination: &Path) -> Result<(), ProviderError> {
     let bytes = fs::read(source)?;
     write_new_synced(destination, &bytes)
@@ -2768,6 +3835,17 @@ fn sql_to_mode(value: i64) -> Result<ProviderMode, ProviderError> {
         2 => Ok(ProviderMode::Prepared),
         3 => Ok(ProviderMode::Fenced),
         _ => Err(ProviderError::Integrity("provider mode")),
+    }
+}
+
+fn sql_to_barrier(value: i64) -> Result<BarrierPhase, ProviderError> {
+    match value {
+        0 => Ok(BarrierPhase::Open),
+        1 => Ok(BarrierPhase::Armed),
+        2 => Ok(BarrierPhase::Triggered),
+        3 => Ok(BarrierPhase::Held),
+        4 => Ok(BarrierPhase::CheckpointReleased),
+        _ => Err(ProviderError::Integrity("barrier phase")),
     }
 }
 

@@ -10,4 +10,5 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 postcard.workspace = true
+sha2.workspace = true
 visa_wasi_protocol = { path = "../visa_wasi_protocol" }
