@@ -62,7 +62,7 @@ PY
 )
 reuse_wanco=false
 if [[ -f $wanco_receipt ]]; then
-    read -r candidate_image candidate_revision candidate_patch_set < <(
+    read -r candidate_schema candidate_image candidate_revision candidate_patch_set < <(
         python3 - "$wanco_receipt" <<'PY'
 import json
 import sys
@@ -70,13 +70,15 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as source:
     receipt = json.load(source)
 print(
+    receipt.get("schema", ""),
     receipt.get("image_tag", ""),
     receipt.get("revision", ""),
     receipt.get("patch_set_sha256", ""),
 )
 PY
     )
-    if [[ -n $candidate_image &&
+    if [[ $candidate_schema == visa-wanco-carrier-build-receipt-v5 &&
+        -n $candidate_image &&
         $candidate_revision == "$expected_wanco_revision" &&
         $candidate_patch_set == "$expected_patch_set" ]] &&
         docker image inspect "$candidate_image" >/dev/null 2>&1

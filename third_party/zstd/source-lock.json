@@ -25,7 +25,7 @@
     "source_patches": [],
     "build_recipe": {
       "path": "scripts/build-stock-zstd.sh",
-      "sha256": "a858f00646fc09a45156aa5558d6d2402d9ffa23569fae3ab943951420b01fd5"
+      "sha256": "74271979c223098cf0071d408017b741c8d3b69509a381ebddd55847bed791d0"
     },
     "compatibility_object": {
       "path": "third_party/zstd/abi/visa_zstd_posix_compat.c",
@@ -163,16 +163,16 @@
   "carrier_build": {
     "wanco_source_lock": {
       "path": "third_party/wanco/source-lock.json",
-      "sha256": "e8871f5a4ea198a19fbb51f32e77aa3aa80c73f4fb6381411b64cb2eb683c92c"
+      "sha256": "51ccb0eb6a8c932ed5b7cfe03f9a0a9a3a773e5266c8224ac4054c01df451ae2"
     },
     "wanco_revision": "3c2e400dda5ce51d78333223f6fcbde08e6b198a",
     "wanco_compiler_sha256": "5f0bb587942e03da9c1aa969d48afa74e38f43bf21b696ebf1a669adfd7a4c0c",
     "wanco_runtime_sha256": "8ee54ff43e53f196edfb0d73a18b464a596ae62a761c90e10063d10260d8c067",
     "optimization": "-O1",
-    "qualification": "wanco-v4-typed-restore-o1-carrier-qualified",
+    "qualification": "wanco-v5-typed-restore-raw-v4-o1-carrier-qualified",
     "o1_status": {
       "status": "qualified",
-      "qualification_basis": "exact-callsite-typed-stackmap-twelve-cell-post-import-active-data-and-lz4-validation"
+      "qualification_basis": "exact-callsite-typed-stackmap-twelve-cell-post-import-active-data-lz4-and-retained-raw-validation"
     }
   }
 }

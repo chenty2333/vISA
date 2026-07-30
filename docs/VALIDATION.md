@@ -568,9 +568,26 @@ input. It additionally requires compressed bytes to be identical to the
 uninterrupted control. Five negative cells accompany each cut: carrier-only
 restore into an empty provider, compute-checkpoint tamper, provider-capsule
 tamper, commit/fence proof pairing tamper, and destination guest-capability
-spoof. The formal lane retains one compact canonical receipt plus the zstd and
-Wanco build receipts; a standalone validator requires a clean exact Git SHA,
-the exact 1/2/10 control-positive-negative inventory, and all cross-bindings.
+spoof.
+
+The v6 formal lane retains the canonical receipt, one deduplicated `.zst` blob
+shared only after all three positive outputs compare byte-identically, the
+positive application stdout/stderr streams and exit statuses, three raw
+native-zstd oracle reports, bounded raw stderr plus a verdict-free process
+observation for each of the ten negative cells, and the zstd/Wanco build
+receipts. It does not retain the regenerable 24 MiB input, decoded duplicates,
+checkpoints, provider capsules, or unrelated runner/provider logs. Every raw
+reference is receipt-relative and content-bound.
+The standalone validator rejects path escape, symlink and hardlink inputs,
+applies per-file and aggregate read bounds, requires the verifier-selected
+native zstd binary to match the recorded identity and version, regenerates the
+canonical input, independently decompresses the shared blob for every cell,
+parses the raw reports, and compares every migrated identity with the
+uninterrupted control. For each fault it independently recomputes the process
+exit-status binding, stderr digest, diagnostic tail, and detector signature
+from the retained observation and raw bytes. It also requires a clean exact Git
+SHA and the exact 1/2/10 control-positive-negative inventory. Inline runner
+summaries alone are not sufficient for acceptance.
 
 This is a correctness and falsification result, not a performance experiment.
 It does not claim arbitrary applications or WASI resources, another carrier,
@@ -603,9 +620,19 @@ The gate also runs one uninterrupted stock transaction followed by a complete
 ordered cursor readback. Every migrated cut reaches the same application-level
 readback: the active-cursor cell completes its split source/destination cursor,
 while the other seven use a fresh post-handoff read client. Native oracle report
-v2 emits a domain-separated logical-content projection. The standalone receipt
-validator independently combines that projection with raw ACK and cursor
-observations, then requires every cell to equal the control on logical contents,
+v2 emits a domain-separated logical-content projection. Matrix receipt v7
+retains, for the control and every cut, each role-ordered application segment's
+stdout, stderr, and exit status, the reconstructed client transcript, canonical
+expected-ACK input, verdict-free namespace snapshot, and original oracle
+report. The standalone validator securely reads those receipt-relative files,
+requires zero exits, applies a closed grammar to Wanco checkpoint/restore
+diagnostics while requiring ordinary segments to be quiet, reconstructs the
+transcript from the individual stdout streams, and reparses ACK, row, and
+cursor terminals without consuming runner verdicts. The active-cursor prefix
+comes directly from the retained `source` segment. The validator then reruns
+the exact bound native oracle over private copies of every retained snapshot
+and requires the raw application projection, reproduced oracle projection,
+receipt summary, and uninterrupted control to agree on logical contents,
 invariants, acknowledgements, and final cursor-visible rows.
 
 The same gate proves `fd_sync`/`fd_datasync` and response replay across provider
@@ -623,10 +650,18 @@ state. This
 is a process-crash result only: power failure, torn sectors, lying `fsync`,
 device write reordering, WAL mode, arbitrary applications, cross-host or
 cross-ISA execution, and production scheduling remain explicit nonclaims.
-Canonical CI retains the compact matrix receipt, the independently validated
-twelve-case typed-corpus receipt, and input build receipts; its
-large checkpoint and provider working directories are reproducible scratch
-state rather than archival artifacts.
+Canonical CI retains the compact matrix receipt, input build receipts, and the
+complete compact twelve-case typed-corpus v4 bundle. That bundle includes the
+raw stdout/stderr used for semantic reconstruction, each compressed checkpoint,
+and all post-import witness files; it excludes LLVM, executables, and other
+regenerable build scratch. Its manifest carries only canonical relative
+path/digest/size references, not observed values or verdicts. The independent
+validator securely rereads the retained bytes and rederives output continuity,
+frame and typed-stack counts, exact stackmap records, and the nonce-gated
+hostcall-entry/signal/container/release chain. The SQLite validator repeats that
+derivation from the copy inside the final SQLite artifact and requires it to
+equal the embedded qualification. Large provider and compiler working
+directories remain reproducible scratch rather than archival artifacts.
 
 ### Stage 3A cross-host regular-file supporting cell
 

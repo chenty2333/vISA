@@ -1,5 +1,5 @@
 {
-  "schema": "visa-wanco-carrier-source-lock-v2",
+  "schema": "visa-wanco-carrier-source-lock-v3",
   "upstream": {
     "repository": "https://github.com/tamaroning/wanco.git",
     "revision": "3c2e400dda5ce51d78333223f6fcbde08e6b198a",
@@ -64,6 +64,55 @@
       "purpose": "Disable sibling and tail calls in checkpoint-enabled guest functions so every exact active callsite retains its corresponding native guest frame."
     }
   ],
+  "qualification": {
+    "schema": "visa-wanco-typed-checkpoint-corpus-v4",
+    "case_count": 12,
+    "profiles": [
+      "direct",
+      "indirect",
+      "data-segment",
+      "post-import-root"
+    ],
+    "optimizations": [
+      0,
+      1,
+      2
+    ],
+    "runner": {
+      "path": "third_party/wanco/corpus/run-typed-checkpoint-corpus.sh",
+      "sha256": "0dbe566ab40c231754fad5de99b9999fc1b4e2836f31f51cbd9f3ed31dc46968"
+    },
+    "validator": {
+      "path": "scripts/wanco_typed_corpus.py",
+      "sha256": "163c675146b2624cb7d095e91e844007451c5fee55a15e43e9ab8cd637c01b58"
+    },
+    "artifact_reader": {
+      "path": "scripts/receipt_artifacts.py",
+      "sha256": "105ba05e94e8a70622d6c8ce8dd93747edfb6133007169341751e92f8994aa08"
+    },
+    "inputs": [
+      {
+        "path": "third_party/wanco/corpus/typed-stackmap.wat",
+        "sha256": "3d1b296262c9ec6cf7c99ac22c418c89bb200a76a910ec71f0a0593fcbb5d872"
+      },
+      {
+        "path": "third_party/wanco/corpus/typed-stackmap-indirect.wat",
+        "sha256": "63d81b55a0196c5dabc272ea2a7454af2c18c1212b8f436799b0ad9b8ee2a415"
+      },
+      {
+        "path": "third_party/wanco/corpus/data-segment-restore.c",
+        "sha256": "0bb7dcda8576538d85041c79628b541e2b97dff94eb288857d1b0a7fb10eab42"
+      },
+      {
+        "path": "third_party/wanco/corpus/post-import-root.wat",
+        "sha256": "20d0e1f6d9adb19665d31ca30e8263380054a6d2723fd001a73d3c7c6aea1c3c"
+      },
+      {
+        "path": "third_party/wanco/corpus/post-import-root-host.cc",
+        "sha256": "2cdc696a6eecbcdbe4b9553bdbc2f645b969bd0c46f023f179193865a68cc89f"
+      }
+    ]
+  },
   "build": {
     "platform": "linux/amd64",
     "base": "debian:bookworm-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e",
@@ -74,7 +123,7 @@
     "excluded_source_subtree": "benchmark/",
     "build_recipe": {
       "path": "scripts/build-wanco-carrier.sh",
-      "sha256": "f4adcf089b75b959cab9d162a613ff577d9456dc3e874bc6f3b467b6535b8903"
+      "sha256": "45d5694344773a9abde37f153ea045cac591e54b71bd26c249d4fc2c950d1de9"
     },
     "patched_files": {
       "Dockerfile": "6a34966874c5ee0c64253dcc547ff75a45af1fb4f65080aac95c24950eb77b47",

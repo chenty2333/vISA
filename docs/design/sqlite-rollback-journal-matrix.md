@@ -170,23 +170,43 @@ operation ID.
 
 ## Evidence validity
 
-A valid `visa-stock-sqlite-rollback-journal-matrix-v5` receipt contains one
+A valid `visa-stock-sqlite-rollback-journal-matrix-v7` receipt contains one
 uninterrupted control and exactly eight cells in canonical order. Each cell
 binds its plan entry, exact barrier
 effect, nonempty compute checkpoint, four-state handoff, namespace snapshot,
-raw stdout and parsed ACK/cursor terminals, stdout-derived expected-ACK input,
+raw per-segment stdout/stderr/exit status and parsed ACK/cursor terminals,
+stdout-derived expected-ACK input,
 an accepted independent-oracle report, and an independently reconstructed
-control-equivalence projection. The
+control-equivalence projection. The control and every cell retain
+receipt-relative copies of each role-ordered application run, the reconstructed
+raw client transcript, canonical expected-ACK input, verdict-free namespace
+snapshot, and original native-oracle report. The active-cursor prefix is
+rederived from the retained `source` run rather than a second runner-produced
+copy. The standalone validator opens those files without following symlinks,
+verifies their exact hashes, sizes, zero exit statuses, quiet ordinary segments,
+and closed Wanco checkpoint/restore diagnostic grammar, reconstructs the
+transcript from the individual stdout streams, reparses the application
+terminals, and reruns the bound oracle binary over private copies of the
+retained snapshot and ACK input. It therefore does not accept runner-generated
+summaries in place of the raw observations. The
 top-level input chain also binds the SQLite and Wanco source locks and build
 receipts, stock Wasm and AOT, provider, migration binder and migration driver
 binaries, oracle binary,
-the stock Wasm import trace, exact dirty-worktree projection, the complete
+the stock Wasm import trace, an exact clean-tree and full-HEAD projection, the complete
 twelve-case O0/O1/O2 typed-restore qualification, provider
 kill/reopen qualification, and source-abort reconciliation qualification. The
-typed-corpus validator independently checks exact case inventory, frame and
-typed-value observations, exact-stackmap record counts, checkpoint markers,
-wrong-target exclusion, and checkpoint-prefix plus restore-suffix equality to
-the uninterrupted control. Its canonical bytes are digest-bound as an
+typed-corpus v4 manifest contains no observed values or verdict. It references
+the retained control/checkpoint/restore stdout, checkpoint/restore stderr,
+checkpoint, locked build receipt, and post-import witness files through exact
+relative paths, SHA-256, and size. The validator safely rereads those raw bytes
+and independently reconstructs exact case inventory, frame and typed-value
+observations, exact-stackmap record counts, checkpoint markers, wrong-target
+exclusion, and checkpoint-prefix plus restore-suffix equality to the
+uninterrupted control. For each post-import O0/O1/O2 cell it also reparses the
+nonce-bound entered, signal-target, release-gate, host-observed, and container
+identity files against the fixed causal order; this replaces the former
+timing-only checkpoint window. The complete raw bundle is copied into the final
+SQLite artifact, and its canonical manifest bytes are digest-bound as an
 execution input rather than inferred from a build capability flag.
 The validator independently reconstructs both terminal authority documents from
 their compact fields, independently reconstructs both adapter-binding receipts
@@ -203,5 +223,5 @@ A receipt is published only after the real stock binary, typed Wanco restore,
 same-request lost-response retry and drain rejection, all eight handoffs, all
 nine oracle runs (one control plus eight migrated cells), provider kill/reopen
 qualification, and source-compute abort reconciliation complete. The `plan`
-subcommand remains explicitly non-evidence; the real runner's compact v5
+subcommand remains explicitly non-evidence; the real runner's compact v7
 receipt is the validation input.

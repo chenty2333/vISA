@@ -36,10 +36,24 @@ Run:
 python3 scripts/check-sqlite-source.py
 python3 scripts/test-check-sqlite-source.py
 scripts/build-stock-sqlite.sh
+
+# Full clean-SHA application lane: control, eight cuts, raw retention, and
+# independent replay validation.
+VISA_SYSTEM_EVIDENCE_PARENT=/absolute/new/artifact-root \
+  scripts/ci-gate.sh system-stock-sqlite
 ```
 
 The resulting `receipt.json` binds the official archive, Wasm, Wanco IR and
 executable, bridge, toolchain images, actual import surface, and smoke-workload
 result. The large intermediate IR is represented by hash and size but is not
-retained. This is process-crash and migration test infrastructure. It is not a
-claim about power loss, torn sectors, device caches, or write reordering.
+retained. The formal matrix retains each role-ordered application segment's
+stdout, stderr, and exit status, the reconstructed client transcript,
+expected-acknowledgement inputs, namespace snapshots, native-oracle reports,
+and the complete raw Wanco typed-restore corpus needed for independent replay;
+provider databases, application checkpoints, and compiler scratch remain
+disposable. The v7 validator requires a clean exact repository SHA, securely
+reads every retained reference, validates the closed Wanco
+checkpoint/restore diagnostic grammar, reconstructs and reparses the stock
+application output, and reruns the bound SQLite oracle. This is process-crash
+and migration test infrastructure. It is not a claim about power loss, torn
+sectors, device caches, or write reordering.

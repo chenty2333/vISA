@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Run the stock-zstd transparent Wanco/vISA migration matrix.
 
-Large application inputs, Wanco checkpoints, provider capsules, decompressed
-outputs, and process logs live only in a private temporary directory.  The sole
-published result is a compact canonical JSON receipt.
+The canonical input, Wanco checkpoints, provider capsules, decoded outputs, and
+unrelated diagnostic logs remain private temporary data. After all positive
+outputs compare byte-identically, the formal artifact retains one shared
+compressed blob, application streams, native-zstd oracle reports, and bounded
+verdict-free raw observations for every negative cell so the standalone
+validator can recompute the claimed evidence.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import subprocess
@@ -23,9 +27,17 @@ import time
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
+from receipt_artifacts import ArtifactError, publish_reference
 
-SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v3"
+
+SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v6"
+ORACLE_REPORT_SCHEMA = "visa-stock-zstd-external-oracle-report-v1"
+FAULT_PROCESS_OBSERVATION_SCHEMA = (
+    "visa-stock-zstd-fault-process-observation-v1"
+)
 DEFAULT_INPUT_MIB = 24
+MAX_FAULT_STDERR_BYTES = 1024 * 1024
+MAX_FAULT_PROCESS_OBSERVATION_BYTES = 64 * 1024
 # Stock zstd writes its output through Preview1 fd_write.  These are exact
 # hostcall occurrences, not byte-count approximations.
 DEFAULT_CUT_WRITE_OCCURRENCES = (8, 64)
@@ -54,6 +66,10 @@ def sha256_file(path: Path) -> str:
 
 def file_identity(path: Path) -> dict[str, object]:
     return {"sha256": sha256_file(path), "size": path.stat().st_size}
+
+
+def bytes_identity(payload: bytes) -> dict[str, object]:
+    return {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}
 
 
 def run(
@@ -636,20 +652,42 @@ def run_aot(
 
 
 def external_oracle(
-    zstd: str, compressed: Path, original: Path, decoded: Path, cwd: Path
-) -> dict[str, object]:
-    run([zstd, "-q", "-d", "-f", compressed, "-o", decoded], cwd=cwd)
+    zstd: str,
+    compressed: Path,
+    original: Path,
+    decoded: Path,
+    cwd: Path,
+    cell: str,
+) -> tuple[dict[str, object], Path]:
+    completed = run(
+        [zstd, "-q", "-d", "-f", compressed, "-o", decoded],
+        cwd=cwd,
+    )
     original_identity = file_identity(original)
     decoded_identity = file_identity(decoded)
     if decoded_identity != original_identity:
         raise MatrixFailure(
             "external stock-zstd oracle observed decompressed bytes different from input"
         )
-    return {
+    oracle = {
         "input": original_identity,
         "decoded": decoded_identity,
         "compressed": file_identity(compressed),
     }
+    report = {
+        "schema": ORACLE_REPORT_SCHEMA,
+        "cell": cell,
+        "command": {
+            "operation": "stock-zstd-decompress",
+            "exit_status": completed.returncode,
+            "stdout": bytes_identity(completed.stdout),
+            "stderr": bytes_identity(completed.stderr),
+        },
+        **oracle,
+    }
+    report_path = cwd / "oracle-report.json"
+    report_path.write_bytes(canonical_bytes(report) + b"\n")
+    return oracle, report_path
 
 
 def materialize_and_check(
@@ -659,9 +697,10 @@ def materialize_and_check(
     decoded: Path,
     zstd: str,
     cwd: Path,
-) -> dict[str, object]:
+    cell: str,
+) -> tuple[dict[str, object], Path]:
     provider.control("materialize", "output.zst", output)
-    return external_oracle(zstd, output, input_path, decoded, cwd)
+    return external_oracle(zstd, output, input_path, decoded, cwd, cell)
 
 
 def read_status(completed: subprocess.CompletedProcess[bytes]) -> dict[str, object]:
@@ -690,7 +729,7 @@ def run_control(
     runtime: DockerAot,
     input_path: Path,
     zstd: str,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], dict[str, object]]:
     case = root / "control"
     ensure_private_directory(case)
     session = stable_id("control-session")
@@ -713,7 +752,7 @@ def run_control(
     with Provider(
         host_binary, database, socket, admin_capability, case
     ) as provider:
-        run_aot(
+        completed = run_aot(
             runtime,
             case,
             case,
@@ -723,13 +762,14 @@ def run_control(
             "control",
             check=True,
         )
-        oracle = materialize_and_check(
+        oracle, oracle_report = materialize_and_check(
             provider,
             case / "control-output.zst",
             input_path,
             case / "control-decoded.bin",
             zstd,
             case,
+            "uninterrupted-control",
         )
         status = read_status(provider.control("status"))
         require_status(
@@ -738,12 +778,26 @@ def run_control(
             epoch=1,
             label="uninterrupted control",
         )
-    return {
-        "cell": "uninterrupted-control",
-        "topology": "single-process-no-checkpoint",
-        "provider_status": status,
-        "oracle": oracle,
-    }
+    return (
+        {
+            "cell": "uninterrupted-control",
+            "topology": "single-process-no-checkpoint",
+            "provider_status": status,
+            "oracle": oracle,
+        },
+        {
+            "compressed_output": case / "control-output.zst",
+            "application_runs": (
+                (
+                    "control",
+                    case / "control.stdout",
+                    case / "control.stderr",
+                    completed.returncode,
+                ),
+            ),
+            "oracle_report": oracle_report,
+        },
+    )
 
 
 def write_intent(
@@ -812,8 +866,9 @@ def expect_rejection(
     *,
     detector: str,
     expected_stderr_any: Sequence[str],
+    evidence_root: Path | None = None,
 ) -> dict[str, object]:
-    if completed.returncode == 0:
+    if completed.returncode <= 0:
         raise MatrixFailure(f"{label} was unexpectedly accepted")
     if not expected_stderr_any:
         raise MatrixFailure(f"{label} has no expected detector signature")
@@ -822,13 +877,36 @@ def expect_rejection(
         raise MatrixFailure(
             f"{label} failed outside the expected detector class {detector}"
         )
-    return {
+    result: dict[str, object] = {
         "fault": label,
         "detector": detector,
         "exit_status": completed.returncode,
         "stderr_sha256": hashlib.sha256(completed.stderr).hexdigest(),
         "stderr_tail": stderr_text[-320:],
     }
+    if evidence_root is not None:
+        if re.fullmatch(r"cut-[12]-[a-z0-9-]+", label) is None:
+            raise MatrixFailure(f"fault evidence label is not canonical: {label}")
+        ensure_private_directory(evidence_root)
+        stderr_path = evidence_root / f"{label}.stderr"
+        process_path = evidence_root / f"{label}.process.json"
+        with stderr_path.open("xb") as stream:
+            stream.write(completed.stderr)
+            stream.flush()
+            os.fsync(stream.fileno())
+        process_observation = {
+            "schema": FAULT_PROCESS_OBSERVATION_SCHEMA,
+            "fault": label,
+            "exit_status": completed.returncode,
+            "stderr": bytes_identity(completed.stderr),
+        }
+        with process_path.open("xb") as stream:
+            stream.write(canonical_bytes(process_observation) + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        result["_raw_stderr_path"] = stderr_path
+        result["_raw_process_observation_path"] = process_path
+    return result
 
 
 def bind_command(
@@ -859,10 +937,11 @@ def run_migrated_cell(
     build_configuration_sha256: str,
     runtime_sha256: str,
     control: dict[str, object],
-) -> tuple[dict[str, object], list[dict[str, object]]]:
+) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
     label = f"cut-{index + 1}"
     case = root / label
     ensure_private_directory(case)
+    fault_evidence_root = case / "fault-evidence"
     source = case / "source"
     ensure_private_directory(source)
     binding_root = case / "binding"
@@ -1014,6 +1093,7 @@ def run_migrated_cell(
                 "Read error",
                 "Permission denied",
             ),
+            evidence_root=fault_evidence_root,
         )
         carrier_only_fault.update(
             {
@@ -1098,6 +1178,7 @@ def run_migrated_cell(
                     expected_stderr_any=(
                         "migration integrity failure: bound file content differs",
                     ),
+                    evidence_root=fault_evidence_root,
                 ),
                 "scope": "manifest-verification-path",
             }
@@ -1126,6 +1207,7 @@ def run_migrated_cell(
                     expected_stderr_any=(
                         "provider integrity failure: capsule state digest",
                     ),
+                    evidence_root=fault_evidence_root,
                 ),
                 "scope": "provider-restore-path",
             }
@@ -1253,6 +1335,7 @@ def run_migrated_cell(
                         expected_stderr_any=(
                             "canonical proof rejected: source fence proof binding differs",
                         ),
+                        evidence_root=fault_evidence_root,
                     ),
                     "scope": "canonical-proof-verification-path",
                 }
@@ -1340,6 +1423,7 @@ def run_migrated_cell(
                             "Read error",
                             "Bad file descriptor",
                         ),
+                        evidence_root=fault_evidence_root,
                     ),
                     "scope": "end-to-end",
                     "provider_state_unchanged": True,
@@ -1365,13 +1449,14 @@ def run_migrated_cell(
             )
             if destination_completed.returncode != 0:
                 raise MatrixFailure("restored destination did not exit cleanly")
-            oracle = materialize_and_check(
+            oracle, oracle_report = materialize_and_check(
                 destination_provider,
                 destination / "migrated-output.zst",
                 input_path,
                 destination / "migrated-decoded.bin",
                 zstd,
                 destination,
+                f"{label}-visa-plus-carrier",
             )
             final_status = read_status(destination_provider.control("status"))
             require_status(
@@ -1411,7 +1496,23 @@ def run_migrated_cell(
         "compressed_bytes_equal_uninterrupted_control": True,
         "oracle": oracle,
     }
-    return cell, faults
+    return (
+        cell,
+        faults,
+        {
+            "compressed_output": destination / "migrated-output.zst",
+            "application_runs": (
+                ("source", source / "aot.stdout", source / "aot.stderr", 0),
+                (
+                    "destination",
+                    destination / "destination.stdout",
+                    destination / "destination.stderr",
+                    destination_completed.returncode,
+                ),
+            ),
+            "oracle_report": oracle_report,
+        },
+    )
 
 
 def verify_build_artifacts(
@@ -1511,9 +1612,9 @@ def validate_execution_input_chain(
         raise MatrixFailure(
             "stock-zstd build receipt does not bind zero upstream source patches"
         )
-    if wanco_source_lock.get("schema") != "visa-wanco-carrier-source-lock-v2":
+    if wanco_source_lock.get("schema") != "visa-wanco-carrier-source-lock-v3":
         raise MatrixFailure("Wanco source-lock schema is unsupported")
-    if wanco_receipt.get("schema") != "visa-wanco-carrier-build-receipt-v4":
+    if wanco_receipt.get("schema") != "visa-wanco-carrier-build-receipt-v5":
         raise MatrixFailure("Wanco build receipt schema is unsupported")
     if (
         wanco_receipt.get("stackmap_binding") != "exact-active-callsite-id"
@@ -1738,6 +1839,115 @@ def publish_receipt(output: Path, receipt: dict[str, object]) -> None:
         os.close(directory)
 
 
+def publish_positive_raw_artifacts(
+    artifact_root: Path,
+    label: str,
+    raw: dict[str, object],
+    *,
+    shared_compressed_output: dict[str, object] | None = None,
+) -> dict[str, object]:
+    compressed = raw.get("compressed_output")
+    report = raw.get("oracle_report")
+    application_runs = raw.get("application_runs")
+    if (
+        not isinstance(compressed, Path)
+        or not isinstance(report, Path)
+        or not isinstance(application_runs, tuple)
+    ):
+        raise MatrixFailure(f"{label} raw artifact set is malformed")
+    prefix = f"raw/{label}"
+    published_runs: list[dict[str, object]] = []
+    for entry in application_runs:
+        if (
+            not isinstance(entry, tuple)
+            or len(entry) != 4
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], Path)
+            or not isinstance(entry[2], Path)
+            or not isinstance(entry[3], int)
+            or isinstance(entry[3], bool)
+        ):
+            raise MatrixFailure(f"{label} application run entry is malformed")
+        role, stdout_path, stderr_path, exit_status = entry
+        published_runs.append(
+            {
+                "role": role,
+                "exit_status": exit_status,
+                "stdout": publish_reference(
+                    stdout_path,
+                    artifact_root,
+                    f"{prefix}/{role}.stdout",
+                ),
+                "stderr": publish_reference(
+                    stderr_path,
+                    artifact_root,
+                    f"{prefix}/{role}.stderr",
+                ),
+            }
+        )
+    if shared_compressed_output is None:
+        compressed_reference = publish_reference(
+            compressed,
+            artifact_root,
+            "raw/positive-output.zst",
+        )
+    else:
+        if file_identity(compressed) != {
+            "sha256": shared_compressed_output.get("sha256"),
+            "size": shared_compressed_output.get("size"),
+        }:
+            raise MatrixFailure(
+                f"{label} compressed output differs from the retained shared output"
+            )
+        compressed_reference = dict(shared_compressed_output)
+    return {
+        "application_runs": published_runs,
+        "compressed_output": compressed_reference,
+        "oracle_report": publish_reference(
+            report,
+            artifact_root,
+            f"{prefix}/oracle-report.json",
+        ),
+    }
+
+
+def publish_fault_raw_artifacts(
+    artifact_root: Path,
+    fault: dict[str, object],
+) -> dict[str, object]:
+    published = dict(fault)
+    stderr_path = published.pop("_raw_stderr_path", None)
+    process_path = published.pop("_raw_process_observation_path", None)
+    name = published.get("fault")
+    if (
+        not isinstance(stderr_path, Path)
+        or not isinstance(process_path, Path)
+        or not isinstance(name, str)
+    ):
+        raise MatrixFailure("fault raw artifact set is malformed")
+    match = re.fullmatch(r"(cut-[12])-([a-z0-9-]+)", name)
+    if match is None:
+        raise MatrixFailure(f"fault identity is not canonical: {name!r}")
+    if stderr_path.stat().st_size > MAX_FAULT_STDERR_BYTES:
+        raise MatrixFailure(f"fault stderr exceeds its bounded retention limit: {name}")
+    if process_path.stat().st_size > MAX_FAULT_PROCESS_OBSERVATION_BYTES:
+        raise MatrixFailure(
+            f"fault process observation exceeds its bounded retention limit: {name}"
+        )
+    prefix = f"raw/faults/{match.group(1)}/{match.group(2)}"
+    published["raw_stderr"] = publish_reference(
+        stderr_path,
+        artifact_root,
+        f"{prefix}.stderr",
+    )
+    published["raw_process_observation"] = publish_reference(
+        process_path,
+        artifact_root,
+        f"{prefix}.process.json",
+    )
+    return published
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1760,9 +1970,22 @@ def parse_args() -> argparse.Namespace:
         default=list(DEFAULT_CUT_WRITE_OCCURRENCES),
     )
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--allow-dirty-snapshot", action="store_true")
     parser.add_argument("--keep-work", type=Path)
     return parser.parse_args()
+
+
+def validate_formal_workload_arguments(
+    input_mib: int, cut_write_occurrences: Sequence[int]
+) -> None:
+    if input_mib != DEFAULT_INPUT_MIB:
+        raise MatrixFailure(
+            f"formal stock-zstd evidence requires exactly {DEFAULT_INPUT_MIB} MiB"
+        )
+    if tuple(cut_write_occurrences) != tuple(DEFAULT_CUT_WRITE_OCCURRENCES):
+        raise MatrixFailure(
+            "formal stock-zstd evidence requires the exact ordered cuts "
+            + ",".join(str(value) for value in DEFAULT_CUT_WRITE_OCCURRENCES)
+        )
 
 
 @contextlib.contextmanager
@@ -1789,25 +2012,29 @@ def main() -> int:
             cwd=Path.cwd(),
         ).stdout.decode().strip()
     )
-    source_snapshot = repository_snapshot(repository)
-    if not source_snapshot["clean"] and not arguments.allow_dirty_snapshot:
-        raise MatrixFailure(
-            "repository is dirty; commit the implementation or pass "
-            "--allow-dirty-snapshot for an explicitly development-only receipt"
-        )
-    if arguments.input_mib < 12 or arguments.input_mib > 1024:
-        raise MatrixFailure("--input-mib must be from 12 through 1024")
+    repository_revision = run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repository,
+    ).stdout.decode().strip()
     if (
-        len(arguments.cut_write_occurrence) < 2
-        or len(set(arguments.cut_write_occurrence))
-        != len(arguments.cut_write_occurrence)
-        or any(value <= 0 for value in arguments.cut_write_occurrence)
+        len(repository_revision) != 40
+        or any(character not in "0123456789abcdef" for character in repository_revision)
     ):
-        raise MatrixFailure(
-            "--cut-write-occurrence requires at least two unique positive occurrences"
-        )
+        raise MatrixFailure("repository HEAD is not an exact lowercase Git SHA")
+    source_snapshot = repository_snapshot(repository)
+    if not source_snapshot["clean"]:
+        raise MatrixFailure("repository must be clean before the formal matrix runs")
+    validate_formal_workload_arguments(
+        arguments.input_mib, arguments.cut_write_occurrence
+    )
     artifact_root = (repository / arguments.artifact_root).resolve()
     output = (repository / arguments.output).resolve()
+    if output.exists() or output.is_symlink():
+        raise MatrixFailure(f"refusing to replace an existing matrix receipt: {output}")
+    if (output.parent / "raw").exists() or (output.parent / "raw").is_symlink():
+        raise MatrixFailure(
+            f"refusing an existing raw artifact root: {output.parent / 'raw'}"
+        )
     if not arguments.skip_build:
         run(
             [repository / "scripts" / "build-stock-zstd.sh"],
@@ -1860,13 +2087,16 @@ def main() -> int:
         write_deterministic_input(
             input_path, arguments.input_mib * 1024 * 1024
         )
-        control = run_control(work, host_binary, runtime, input_path, zstd)
+        control, control_raw = run_control(
+            work, host_binary, runtime, input_path, zstd
+        )
         migrated_cells: list[dict[str, object]] = []
+        migrated_raw: list[dict[str, object]] = []
         fault_cells: list[dict[str, object]] = []
         for index, write_occurrence in enumerate(
             arguments.cut_write_occurrence
         ):
-            cell, faults = run_migrated_cell(
+            cell, faults, raw = run_migrated_cell(
                 work,
                 index,
                 write_occurrence,
@@ -1883,6 +2113,7 @@ def main() -> int:
                 control,
             )
             migrated_cells.append(cell)
+            migrated_raw.append(raw)
             fault_cells.extend(faults)
         if len(fault_cells) != len(arguments.cut_write_occurrence) * 5:
             raise MatrixFailure(
@@ -1930,11 +2161,56 @@ def main() -> int:
                 ).hexdigest(),
             }
         ]
+        final_revision = run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=repository,
+        ).stdout.decode().strip()
+        final_snapshot = repository_snapshot(repository)
+        if final_revision != repository_revision:
+            raise MatrixFailure("repository HEAD changed while the matrix was running")
+        if final_snapshot != source_snapshot or not final_snapshot["clean"]:
+            raise MatrixFailure(
+                "repository source snapshot changed while the matrix was running"
+            )
+
+        control["raw_artifacts"] = publish_positive_raw_artifacts(
+            output.parent,
+            "control",
+            control_raw,
+        )
+        shared_compressed_output = control["raw_artifacts"]["compressed_output"]
+        if not isinstance(shared_compressed_output, dict):
+            raise MatrixFailure("control omitted its shared compressed output")
+        for index, (cell, raw) in enumerate(
+            zip(migrated_cells, migrated_raw, strict=True),
+            start=1,
+        ):
+            cell["raw_artifacts"] = publish_positive_raw_artifacts(
+                output.parent,
+                f"cut-{index}",
+                raw,
+                shared_compressed_output=shared_compressed_output,
+            )
+        fault_cells = [
+            publish_fault_raw_artifacts(output.parent, fault)
+            for fault in fault_cells
+        ]
+        sealed_revision = run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=repository,
+        ).stdout.decode().strip()
+        sealed_snapshot = repository_snapshot(repository)
+        if (
+            sealed_revision != repository_revision
+            or sealed_snapshot != source_snapshot
+            or not sealed_snapshot["clean"]
+        ):
+            raise MatrixFailure(
+                "repository changed while raw matrix artifacts were being sealed"
+            )
         receipt = {
             "schema": SCHEMA,
-            "repository_revision": run(
-                ["git", "rev-parse", "HEAD"], cwd=repository
-            ).stdout.decode().strip(),
+            "repository_revision": repository_revision,
             "repository_source_snapshot": source_snapshot,
             "source_lock_sha256": execution_input_binding[
                 "stock_zstd_source_lock_sha256"
@@ -1964,7 +2240,8 @@ def main() -> int:
             "migrated_cells": migrated_cells,
             "fault_cells": fault_cells,
             "contract_checks": contract_checks,
-            "large_artifacts_retained": arguments.keep_work is not None,
+            "raw_oracle_artifacts_retained": True,
+            "raw_fault_artifacts_retained": True,
         }
         publish_receipt(output, receipt)
     print(f"stock-zstd transparent migration matrix: {output}")
@@ -1974,6 +2251,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (MatrixFailure, OSError, subprocess.TimeoutExpired) as error:
+    except (ArtifactError, MatrixFailure, OSError, subprocess.TimeoutExpired) as error:
         print(f"stock-zstd migration matrix failed: {error}", file=sys.stderr)
         raise SystemExit(1)

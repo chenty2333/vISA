@@ -57,9 +57,13 @@ python3 scripts/check-zstd-source.py
 python3 scripts/test-check-zstd-source.py
 scripts/build-stock-zstd.sh
 scripts/run-stock-zstd-migration-matrix.py --skip-build
+revision=$(git rev-parse --verify HEAD)
+stock_zstd=$(command -v zstd)
 python3 scripts/stock_zstd_matrix.py validate \
-  target/.ci-artifacts/stock-zstd-migration-matrix/summary.json
-# Or run the complete clean-SHA build, matrix, validation, and compact receipt lane:
+  target/.ci-artifacts/stock-zstd-migration-matrix/summary.json \
+  --expected-revision "$revision" \
+  --stock-zstd "$stock_zstd"
+# Or run the complete clean-SHA build, matrix, and raw-oracle validation lane:
 scripts/run-docker-ci-gate.sh system-stock-zstd
 ```
 
@@ -79,22 +83,30 @@ stack-adjustment fix for that defect and validated exact-length LZ4 checkpoint
 decoding.  This source lock therefore selects only the content-pinned Wanco v2
 `-O1` carrier.  That carrier qualification is not itself an application-level
 migration result: stock zstd is qualified separately by the transparent
-migration matrix. The v3 runner pre-arms exact successful `fd_write`
+migration matrix. The v6 runner pre-arms exact successful `fd_write`
 occurrences on `output.zst`, waits until the durable response has been written
 back into guest memory, releases Wanco to checkpoint, and binds that barrier
 token into the provider freeze. It does not poll byte counters or signal the
 container to choose a cut. The matrix also uses a fresh provider/process,
 external native-zstd byte comparison, and negative cells. The build script
 rejects optimization overrides so an `-O0` diagnostic cannot be mislabeled as
-the qualified matrix input. The matrix v3 runner also resolves the live Wanco
+the qualified matrix input. The matrix v6 runner also resolves the live Wanco
 Docker image ID and cross-checks it through both build receipts and both source
 locks before it is allowed to state that artifact bindings were verified.
 
 The formal `system-stock-zstd` lane uses the canonical 24 MiB input and exact
-successful output `fd_write` occurrences 8 and 64. It retains only the compact
-matrix receipt and the stock-zstd/Wanco build receipts. The standalone validator
-does not import the runner and requires a clean exact repository revision, one
-uninterrupted control, two fresh-provider/fresh-process migrations, native-zstd
-decompression plus compressed-byte identity, and all ten typed negative cells.
-The lane records correctness and falsification evidence; it does not collect or
-publish latency, downtime, throughput, or overhead measurements.
+successful output `fd_write` occurrences 8 and 64. After the three positive
+compressed outputs compare byte-identically, it retains one shared
+content-bound `.zst` blob, application stdout/stderr and exit status, raw oracle
+reports, bounded stderr plus a verdict-free process observation for all ten
+faults, the matrix receipt, and the stock-zstd/Wanco build receipts. It omits
+the regenerable input, decoded duplicates, checkpoints, provider capsules, and
+unrelated runner/provider logs. The
+standalone validator does not import the runner: it securely reads the
+receipt-relative raw artifacts, regenerates the input, checks the
+verifier-selected stock-zstd identity, independently decompresses the shared
+blob for each cell, checks every raw report, recomputes each negative cell's
+exit-status binding, stderr digest/tail, and detector signature, and also checks
+the clean exact revision and fault inventory. The lane records correctness and
+falsification evidence; it does not collect or publish latency, downtime,
+throughput, or overhead measurements.

@@ -42,7 +42,8 @@ zstd 1.5.7 CLI, then validates one uninterrupted control, two exact post-hostcal
 streaming cuts, and five negative cells per cut with the native-zstd oracle. This
 tier also requires a native x86-64 Docker host.
 system-stock-sqlite rebuilds that locked carrier, runs the twelve-cell typed
-checkpoint corpus, builds unmodified stock SQLite for WASI, and validates all
+checkpoint corpus including the nonce-gated post-import signal witness, builds
+unmodified stock SQLite for WASI, and validates all
 eight rollback-journal cuts against one uninterrupted control, plus process
 recovery and source-abort replay. This tier also requires a native x86-64 Docker
 host.
@@ -285,6 +286,8 @@ gate_wanco_carrier_source_lock() {
 }
 
 gate_stock_zstd_source_lock() {
+    run_gate "system contract: Wanco process diagnostic grammar tests" \
+        python3 scripts/test-wanco-process-diagnostics.py
     run_gate "source lock: unmodified stock zstd and transparent carrier inputs" \
         python3 scripts/check-zstd-source.py
     run_gate "source lock: stock zstd checker mutation tests" \
@@ -296,6 +299,8 @@ gate_stock_zstd_source_lock() {
 }
 
 gate_stock_sqlite_source_lock() {
+    run_gate "system contract: retained receipt artifact safety tests" \
+        python3 scripts/test-receipt-artifacts.py
     run_gate "source lock: unmodified stock SQLite and transparent carrier inputs" \
         python3 scripts/check-sqlite-source.py
     run_gate "source lock: stock SQLite checker mutation tests" \
@@ -759,6 +764,7 @@ gate_system_stock_zstd() {
     local build_root
     local repository_revision
     local scratch_root
+    local stock_zstd
     local system_parent
 
     system_parent="$(system_evidence_parent)"
@@ -783,6 +789,11 @@ gate_system_stock_zstd() {
             "$repository_revision" "$GITHUB_SHA" >&2
         return 1
     fi
+    stock_zstd=$(command -v zstd)
+    if [[ -z "$stock_zstd" ]]; then
+        printf 'stock zstd verifier executable is unavailable\n' >&2
+        return 1
+    fi
 
     scratch_root=$(mktemp -d /tmp/visa-stock-zstd-system.XXXXXXXX)
     build_root="$scratch_root/build"
@@ -798,7 +809,8 @@ gate_system_stock_zstd() {
             --skip-build
     run_gate "system-stock-zstd: independent clean exact-SHA receipt validation" \
         python3 scripts/stock_zstd_matrix.py validate "$system_bundle_path" \
-            --expected-revision "$repository_revision"
+            --expected-revision "$repository_revision" \
+            --stock-zstd "$stock_zstd"
 
     install -m 0644 "$build_root/receipt.json" \
         "$system_artifact_root/stock-zstd-build-receipt.json"
@@ -824,9 +836,21 @@ gate_system_stock_sqlite() {
     local build_root
     local corpus_root
     local matrix_work_root
+    local repository_revision
     local scratch_root
     local system_parent
 
+    repository_revision=$(git rev-parse --verify HEAD)
+    if [[ ! "$repository_revision" =~ ^[0-9a-f]{40}$ ]]; then
+        printf 'system-stock-sqlite requires a full repository SHA, found %s\n' \
+            "$repository_revision" >&2
+        return 1
+    fi
+    if [[ -n "${GITHUB_SHA:-}" && "$repository_revision" != "$GITHUB_SHA" ]]; then
+        printf 'system-stock-sqlite HEAD %s differs from GITHUB_SHA %s\n' \
+            "$repository_revision" "$GITHUB_SHA" >&2
+        return 1
+    fi
     system_parent="$(system_evidence_parent)"
     system_artifact_kind="stock SQLite rollback-journal migration"
     system_artifact_root="$system_parent/stock-sqlite"
@@ -859,11 +883,15 @@ gate_system_stock_sqlite() {
             --output "$system_bundle_path" \
             --work-root "$matrix_work_root"
     run_gate "system-stock-sqlite: independent matrix receipt validation" \
-        python3 scripts/sqlite_rollback_matrix.py validate "$system_bundle_path"
-    run_gate "system-stock-sqlite: clean exact-SHA receipt binding" \
+        python3 scripts/sqlite_rollback_matrix.py validate "$system_bundle_path" \
+            --expected-revision "$repository_revision" \
+            --oracle-binary target/debug/visa-sqlite-oracle
+    run_gate "system-stock-sqlite: retained Wanco raw corpus validation" \
+        python3 scripts/wanco_typed_corpus.py validate \
+            "$system_artifact_root/wanco-typed-corpus/receipt.json"
+    run_gate "system-stock-sqlite: matrix inventory assertions" \
         python3 - "$system_bundle_path" <<'PY'
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -887,17 +915,12 @@ assert all(
 )
 assert receipt["source_abort_reconciliation_qualification"]["accepted"] is True
 assert receipt["process_recovery_qualification"]["exit_status"] == 0
-if github_sha := os.environ.get("GITHUB_SHA"):
-    assert receipt["repository_revision"] == github_sha
 PY
 
     install -m 0644 "$build_root/receipt.json" \
         "$system_artifact_root/stock-sqlite-build-receipt.json"
     install -m 0644 target/.ci-cache/wanco-carrier/build-receipt.json \
         "$system_artifact_root/wanco-build-receipt.json"
-    install -m 0644 "$corpus_root/receipt.json" \
-        "$system_artifact_root/wanco-typed-corpus-receipt.json"
-
     case "$scratch_root" in
         /tmp/visa-stock-sqlite-system.*)
             find "$scratch_root" -xdev -depth -delete

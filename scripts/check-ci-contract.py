@@ -831,6 +831,24 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
     )
 
     gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+    wanco_build = (ROOT / "scripts/build-wanco-carrier.sh").read_text(
+        encoding="utf-8"
+    )
+    typed_corpus = (ROOT / "scripts/wanco_typed_corpus.py").read_text(
+        encoding="utf-8"
+    )
+    zstd_runner = (
+        ROOT / "scripts/run-stock-zstd-migration-matrix.py"
+    ).read_text(encoding="utf-8")
+    zstd_validator = (ROOT / "scripts/stock_zstd_matrix.py").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '"schema": "visa-wanco-carrier-build-receipt-v5"' in wanco_build
+        and 'SCHEMA = "visa-wanco-typed-checkpoint-corpus-v4"' in typed_corpus
+        and "nonce-gated-hostcall-v1" in typed_corpus,
+        "Wanco build and raw typed-corpus schemas must retain the post-import witness",
+    )
     require(
         "gate_system_wanco_carrier()" in gate
         and "scripts/run-wanco-carrier-matrix.sh" in gate
@@ -838,19 +856,37 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
         "Wanco carrier host tier is not wired to the real matrix runner",
     )
     require(
+        "python3 scripts/test-wanco-process-diagnostics.py" in gate,
+        "application evidence gates must exercise the Wanco stderr grammar",
+    )
+    require(
         "gate_system_stock_zstd()" in gate
         and "scripts/run-stock-zstd-migration-matrix.py" in gate
         and "scripts/stock_zstd_matrix.py validate" in gate
         and "--expected-revision" in gate
+        and "--stock-zstd" in gate
         and "system-stock-zstd) gate_system_stock_zstd ;;" in gate,
         "stock zstd host tier is not wired to the real independently validated matrix runner",
+    )
+    require(
+        'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v6"'
+        in zstd_runner
+        and 'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v6"'
+        in zstd_validator
+        and "publish_fault_raw_artifacts" in zstd_runner
+        and "raw_fault_artifacts_retained" in zstd_validator
+        and "FAULT_PROCESS_OBSERVATION_SCHEMA" in zstd_validator,
+        "stock zstd v6 must retain and independently rederive raw fault evidence",
     )
     require(
         "gate_system_stock_sqlite()" in gate
         and "scripts/run-stock-sqlite-rollback-matrix.py" in gate
         and "scripts/wanco_typed_corpus.py validate" in gate
         and "--typed-corpus-receipt" in gate
+        and "wanco-typed-corpus/receipt.json" in gate
         and "scripts/sqlite_rollback_matrix.py validate" in gate
+        and "--expected-revision" in gate
+        and "--oracle-binary" in gate
         and "system-stock-sqlite) gate_system_stock_sqlite ;;" in gate,
         "stock SQLite host tier is not wired to the real validated matrix runner",
     )

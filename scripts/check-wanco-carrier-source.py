@@ -60,10 +60,10 @@ def main() -> int:
 
     lock = require_keys(
         json.loads(LOCK.read_text(encoding="utf-8")),
-        {"schema", "upstream", "patches", "build"},
+        {"schema", "upstream", "patches", "qualification", "build"},
         "source lock",
     )
-    if lock["schema"] != "visa-wanco-carrier-source-lock-v2":
+    if lock["schema"] != "visa-wanco-carrier-source-lock-v3":
         fail("unknown source-lock schema")
     upstream = require_keys(
         lock["upstream"],
@@ -87,6 +87,74 @@ def main() -> int:
     for field in ("license_sha256", "cargo_lock_sha256"):
         if not isinstance(upstream[field], str) or HEX64.fullmatch(upstream[field]) is None:
             fail(f"upstream.{field} is not a lowercase SHA-256")
+    qualification = require_keys(
+        lock["qualification"],
+        {
+            "schema",
+            "case_count",
+            "profiles",
+            "optimizations",
+            "runner",
+            "validator",
+            "artifact_reader",
+            "inputs",
+        },
+        "qualification",
+    )
+    if (
+        qualification["schema"] != "visa-wanco-typed-checkpoint-corpus-v4"
+        or qualification["case_count"] != 12
+        or qualification["profiles"]
+        != ["direct", "indirect", "data-segment", "post-import-root"]
+        or qualification["optimizations"] != [0, 1, 2]
+    ):
+        fail("typed-restore qualification inventory changed")
+    qualification_paths = {
+        "runner": "third_party/wanco/corpus/run-typed-checkpoint-corpus.sh",
+        "validator": "scripts/wanco_typed_corpus.py",
+        "artifact_reader": "scripts/receipt_artifacts.py",
+    }
+    for field, expected_path in qualification_paths.items():
+        entry = require_keys(
+            qualification[field], {"path", "sha256"}, f"qualification.{field}"
+        )
+        if entry["path"] != expected_path:
+            fail(f"qualification.{field} path changed")
+        path = ROOT / expected_path
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or not isinstance(entry["sha256"], str)
+            or HEX64.fullmatch(entry["sha256"]) is None
+            or sha256(path) != entry["sha256"]
+        ):
+            fail(f"qualification.{field} digest mismatch")
+    expected_inputs = [
+        "third_party/wanco/corpus/typed-stackmap.wat",
+        "third_party/wanco/corpus/typed-stackmap-indirect.wat",
+        "third_party/wanco/corpus/data-segment-restore.c",
+        "third_party/wanco/corpus/post-import-root.wat",
+        "third_party/wanco/corpus/post-import-root-host.cc",
+    ]
+    inputs = qualification["inputs"]
+    if not isinstance(inputs, list) or len(inputs) != len(expected_inputs):
+        fail("typed-restore qualification input inventory changed")
+    for index, (raw_entry, expected_path) in enumerate(
+        zip(inputs, expected_inputs, strict=True)
+    ):
+        entry = require_keys(
+            raw_entry, {"path", "sha256"}, f"qualification.inputs[{index}]"
+        )
+        path = ROOT / expected_path
+        if (
+            entry["path"] != expected_path
+            or not path.is_file()
+            or path.is_symlink()
+            or not isinstance(entry["sha256"], str)
+            or HEX64.fullmatch(entry["sha256"]) is None
+            or sha256(path) != entry["sha256"]
+        ):
+            fail(f"qualification input mismatch: {expected_path}")
     build = require_keys(
         lock["build"],
         {

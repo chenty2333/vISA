@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import inspect
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,6 +23,21 @@ SPEC.loader.exec_module(MATRIX)
 
 
 class RunnerTests(unittest.TestCase):
+    def test_formal_workload_rejects_custom_input_and_cut_sets(self) -> None:
+        MATRIX.validate_formal_workload_arguments(
+            MATRIX.DEFAULT_INPUT_MIB,
+            MATRIX.DEFAULT_CUT_WRITE_OCCURRENCES,
+        )
+        for input_mib, cuts in (
+            (12, MATRIX.DEFAULT_CUT_WRITE_OCCURRENCES),
+            (MATRIX.DEFAULT_INPUT_MIB, (8, 32, 64)),
+            (MATRIX.DEFAULT_INPUT_MIB, (64, 8)),
+        ):
+            with self.subTest(input_mib=input_mib, cuts=cuts), self.assertRaises(
+                MATRIX.MatrixFailure
+            ):
+                MATRIX.validate_formal_workload_arguments(input_mib, cuts)
+
     @staticmethod
     def receipt_chain_fixture() -> dict[str, object]:
         source_lock_sha256 = "1" * 64
@@ -76,11 +92,11 @@ class RunnerTests(unittest.TestCase):
             },
         }
         wanco_source_lock = {
-            "schema": "visa-wanco-carrier-source-lock-v2",
+            "schema": "visa-wanco-carrier-source-lock-v3",
             "upstream": {"revision": revision},
         }
         wanco_receipt = {
-            "schema": "visa-wanco-carrier-build-receipt-v4",
+            "schema": "visa-wanco-carrier-build-receipt-v5",
             "revision": revision,
             "wanco_binary_sha256": compiler_sha256,
             "runtime_staticlib_sha256": runtime_sha256,
@@ -168,6 +184,55 @@ class RunnerTests(unittest.TestCase):
                 expected_stderr_any=("expected",),
             )
 
+    def test_fault_raw_evidence_is_verdict_free_and_published_exactly(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["fixture"],
+            1,
+            stdout=b"ignored output",
+            stderr=b"migration integrity failure: bound file content differs\n",
+        )
+        with tempfile.TemporaryDirectory(prefix="stock-zstd-fault-raw-") as raw:
+            root = Path(raw)
+            evidence = root / "scratch"
+            artifact = root / "artifact"
+            artifact.mkdir()
+            fault = MATRIX.expect_rejection(
+                completed,
+                "cut-1-compute-checkpoint-tamper",
+                detector="migration-manifest-bound-file-digest",
+                expected_stderr_any=(
+                    "migration integrity failure: bound file content differs",
+                ),
+                evidence_root=evidence,
+            )
+            fault["scope"] = "manifest-verification-path"
+            published = MATRIX.publish_fault_raw_artifacts(artifact, fault)
+            self.assertNotIn("_raw_stderr_path", published)
+            self.assertNotIn("_raw_process_observation_path", published)
+            self.assertEqual(
+                published["raw_stderr"]["path"],
+                "raw/faults/cut-1/compute-checkpoint-tamper.stderr",
+            )
+            self.assertEqual(
+                published["raw_process_observation"]["path"],
+                "raw/faults/cut-1/compute-checkpoint-tamper.process.json",
+            )
+            retained_stderr = artifact / published["raw_stderr"]["path"]
+            self.assertEqual(retained_stderr.read_bytes(), completed.stderr)
+            process = json.loads(
+                (
+                    artifact
+                    / published["raw_process_observation"]["path"]
+                ).read_bytes()
+            )
+            self.assertEqual(
+                process["schema"], MATRIX.FAULT_PROCESS_OBSERVATION_SCHEMA
+            )
+            self.assertEqual(process["exit_status"], 1)
+            self.assertEqual(process["stderr"], MATRIX.bytes_identity(completed.stderr))
+            self.assertNotIn("detector", process)
+            self.assertNotIn("verdict", process)
+
     def test_execution_input_chain_accepts_only_exact_cross_bindings(self) -> None:
         fixture = self.receipt_chain_fixture()
         binding = MATRIX.validate_execution_input_chain(**fixture)
@@ -210,6 +275,150 @@ class RunnerTests(unittest.TestCase):
                 )
         self.assertNotIn(secret, str(raised.exception))
         self.assertIn("sh", str(raised.exception))
+
+    def test_raw_oracle_report_is_canonical_and_cell_bound(self) -> None:
+        zstd = shutil.which("zstd")
+        if zstd is None:
+            self.skipTest("stock zstd is unavailable")
+        with tempfile.TemporaryDirectory(prefix="stock-zstd-runner-test-") as raw:
+            root = Path(raw)
+            original = root / "input.bin"
+            compressed = root / "output.zst"
+            decoded = root / "decoded.bin"
+            original.write_bytes((b"raw-oracle-fixture-" * 8192) + b"done")
+            subprocess.run(
+                [zstd, "-q", "-f", original, "-o", compressed],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            oracle, report_path = MATRIX.external_oracle(
+                zstd,
+                compressed,
+                original,
+                decoded,
+                root,
+                "fixture-control",
+            )
+            payload = report_path.read_bytes()
+            report = json.loads(payload)
+            self.assertEqual(
+                payload, MATRIX.canonical_bytes(report) + b"\n"
+            )
+            self.assertEqual(report["schema"], MATRIX.ORACLE_REPORT_SCHEMA)
+            self.assertEqual(report["cell"], "fixture-control")
+            self.assertEqual(report["compressed"], oracle["compressed"])
+            self.assertEqual(report["decoded"], oracle["input"])
+            self.assertEqual(report["command"]["stdout"], MATRIX.bytes_identity(b""))
+            self.assertEqual(report["command"]["stderr"], MATRIX.bytes_identity(b""))
+
+    def test_raw_artifact_publication_copies_and_uses_exact_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="stock-zstd-runner-test-") as raw:
+            root = Path(raw)
+            source = root / "source"
+            artifact_root = root / "artifact"
+            source.mkdir()
+            artifact_root.mkdir()
+            compressed = source / "output.zst"
+            stdout = source / "application.stdout"
+            stderr = source / "application.stderr"
+            report = source / "oracle-report.json"
+            compressed.write_bytes(b"compressed fixture")
+            stdout.write_bytes(b"")
+            stderr.write_bytes(b"")
+            report.write_bytes(b'{"fixture":true}\n')
+            published = MATRIX.publish_positive_raw_artifacts(
+                artifact_root,
+                "control",
+                {
+                    "application_runs": (("control", stdout, stderr, 0),),
+                    "compressed_output": compressed,
+                    "oracle_report": report,
+                },
+            )
+            self.assertEqual(
+                published["compressed_output"]["path"],
+                "raw/positive-output.zst",
+            )
+            self.assertEqual(
+                published["oracle_report"]["path"],
+                "raw/control/oracle-report.json",
+            )
+            self.assertEqual(
+                published["application_runs"][0]["stdout"]["path"],
+                "raw/control/control.stdout",
+            )
+            self.assertEqual(
+                published["application_runs"][0]["stderr"]["path"],
+                "raw/control/control.stderr",
+            )
+            self.assertEqual(
+                published["application_runs"][0]["exit_status"],
+                0,
+            )
+            retained = artifact_root / "raw/positive-output.zst"
+            self.assertEqual(retained.read_bytes(), compressed.read_bytes())
+            self.assertNotEqual(retained.stat().st_ino, compressed.stat().st_ino)
+            self.assertEqual(retained.stat().st_nlink, 1)
+
+            migrated_stdout = source / "migrated.stdout"
+            migrated_report = source / "migrated-oracle-report.json"
+            migrated_stdout.write_bytes(b"")
+            migrated_report.write_bytes(b'{"fixture":"migrated"}\n')
+            migrated = MATRIX.publish_positive_raw_artifacts(
+                artifact_root,
+                "cut-1",
+                {
+                    "application_runs": (
+                        ("source", migrated_stdout, stderr, 0),
+                        ("destination", migrated_stdout, stderr, 0),
+                    ),
+                    "compressed_output": compressed,
+                    "oracle_report": migrated_report,
+                },
+                shared_compressed_output=published["compressed_output"],
+            )
+            self.assertEqual(
+                migrated["compressed_output"],
+                published["compressed_output"],
+            )
+            self.assertFalse(
+                (artifact_root / "raw/cut-1/output.zst").exists()
+            )
+
+            compressed.write_bytes(b"different compressed fixture")
+            with self.assertRaisesRegex(
+                MATRIX.MatrixFailure,
+                r"differs from the retained shared output",
+            ):
+                MATRIX.publish_positive_raw_artifacts(
+                    artifact_root,
+                    "cut-2",
+                    {
+                        "application_runs": (),
+                        "compressed_output": compressed,
+                        "oracle_report": migrated_report,
+                    },
+                    shared_compressed_output=published["compressed_output"],
+                )
+            self.assertEqual(
+                list((artifact_root / "raw").glob("*.zst")),
+                [retained],
+            )
+
+    def test_v6_formal_runner_has_no_dirty_snapshot_escape(self) -> None:
+        self.assertEqual(
+            MATRIX.SCHEMA,
+            "visa-stock-zstd-transparent-migration-matrix-v6",
+        )
+        parser_source = inspect.getsource(MATRIX.parse_args)
+        main_source = inspect.getsource(MATRIX.main)
+        self.assertNotIn("allow-dirty-snapshot", parser_source)
+        self.assertIn("repository must be clean", main_source)
+        self.assertIn("final_snapshot != source_snapshot", main_source)
+        self.assertIn("final_revision != repository_revision", main_source)
+        self.assertIn("sealed_snapshot != source_snapshot", main_source)
+        self.assertIn("sealed_revision != repository_revision", main_source)
 
 
 if __name__ == "__main__":

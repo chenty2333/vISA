@@ -4,7 +4,7 @@ Status: implementation complete; a canonical result is earned only by the
 clean exact-SHA `system-wanco-carrier` lane at the integrated revision. A dirty
 development build or smoke run is a non-claim check.
 
-Last reviewed: 2026-07-29.
+Last reviewed: 2026-07-30.
 
 ## Question and boundary
 
@@ -42,12 +42,32 @@ cross-ISA behavior. The native Wasmtime `Hx->Hx`, `Hx->Ha`, `Ha->Hx`, and
 
 `third_party/wanco/source-lock.json` pins official Wanco upstream revision
 `3c2e400dda5ce51d78333223f6fcbde08e6b198a` and tree
-`a84f6f0d15de11b24a7b9566874c4cae3c53474e`. Its retained patches are build-only
-Debian/LLVM fixes; they do not modify Wanco compiler or checkpoint semantics.
-`scripts/check-wanco-carrier-source.py` verifies the source lock, patch order,
-patch digests, and patched Dockerfile before the carrier image can be used.
+`a84f6f0d15de11b24a7b9566874c4cae3c53474e`. Three retained patches pin or repair
+the Debian/LLVM build; six explicitly modify compiler/runtime checkpoint
+correctness: exact typed callsites, bounded LZ4 decoding, restored data segments,
+per-frame callee-saved registers, post-import checkpoint points, and preserved
+guest frames. The source-locked result is therefore a qualified Wanco derivative,
+not an unmodified-upstream claim. `scripts/check-wanco-carrier-source.py`
+verifies the source lock, ordered patch set, digests, and complete patched-file
+inventory before the carrier image can be used. Its build receipt schema is v5.
 
-The locked image compiles both WAT workloads with Wanco checkpoint support.
+The locked image compiles the two regular-file carrier workloads with Wanco
+checkpoint support. Separately, the carrier qualification compiles four focused
+profiles at O0/O1/O2: direct and indirect typed stacks, active data-segment
+restore, and a nonce-gated post-import signal window. The latter retains a
+causal witness proving that `SIGUSR1` was dispatched after hostcall entry and
+before hostcall release; fresh-process capture then occurs at the exact
+post-import callsite.
+
+The typed-restore qualification is a retained-raw-evidence result, not an
+inline capability assertion. Its v4 manifest contains canonical relative
+references to every stdout/stderr stream used by the checker, each checkpoint,
+all five post-import witness files, and the locked Wanco build receipt. The
+standalone checker safely rereads those bytes and derives output continuity,
+frame depth, typed value-stack depth, exact stackmap-record count, and witness
+causality anew. A manifest without its raw corpus, or with a missing, aliased,
+symlinked, hardlinked, or changed file, is rejected. The stock-SQLite artifact
+retains this complete compact bundle alongside its own application evidence.
 `crates/runtime/visa_wanco_carrier/guest/visa_ha_endpoint.cc` is a thin host
 import: it sends typed `OPEN`, `READ`, `WRITE`, and `APPEND` requests over a Unix
 socket and records the exact response events. It never opens the subject file,

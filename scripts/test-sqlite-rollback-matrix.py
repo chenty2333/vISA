@@ -24,8 +24,51 @@ sys.modules[SPEC.name] = MATRIX
 SPEC.loader.exec_module(MATRIX)
 
 
+CHECKPOINT_STDERR = (
+    b"[info] Checkpoint started\n"
+    b"[debug] Found exact stackmap record for func_19, wasm_op=-1, "
+    b"native_return_pc_offset=0x2a\n"
+    b"[info] Compressing memory\n"
+    b"[info] Compression ratio: 0.275372\n"
+    b"[info] Compression time: 1 ms\n"
+    b"[info] Snapshot has been saved to checkpoint.pb\n"
+    b"[info] Checkpoint time has been saved to chkpt-time.txt\n"
+)
+RESTORE_STDERR = (
+    b"[info] Decompressing memory: 5 pages (327680 bytes)\n"
+    b"[info] Checkpoint has been loaded\n"
+    b"[info] - call stack: 21 frames\n"
+    b"[info] - value stack: 0 values\n"
+    b"[info] Restore time has been saved to restore-time.txt\n"
+)
+
+
 def identity(seed: int) -> dict[str, object]:
     return {"sha256": f"{seed:064x}", "size": seed}
+
+
+def retained(seed: int, path: str) -> dict[str, object]:
+    return {"path": path, **identity(seed)}
+
+
+def retained_application_runs(
+    seed: int, path_label: str, roles: tuple[str, ...]
+) -> list[dict[str, object]]:
+    return [
+        {
+            "role": role,
+            "exit_status": 0,
+            "stdout": retained(
+                seed + index * 2,
+                f"observations/{path_label}/runs/{role}.stdout",
+            ),
+            "stderr": retained(
+                seed + index * 2 + 1,
+                f"observations/{path_label}/runs/{role}.stderr",
+            ),
+        }
+        for index, role in enumerate(roles)
+    ]
 
 
 def canonical_identity(value: object) -> dict[str, object]:
@@ -107,11 +150,35 @@ def equivalence_projection() -> dict[str, object]:
     }
 
 
-def typed_corpus_receipt(build_receipt: dict[str, object]) -> dict[str, object]:
+def typed_corpus_qualification(build_receipt: dict[str, object]) -> dict[str, object]:
     cases: list[dict[str, object]] = []
     for index, spec in enumerate(MATRIX.TYPED_CORPUS.CASE_SPECS, start=1):
-        prefix = [spec.marker - 1, spec.marker]
-        suffix = [spec.marker + 1]
+        if spec.profile == MATRIX.TYPED_CORPUS.POST_IMPORT_PROFILE:
+            control = [
+                MATRIX.TYPED_CORPUS.POST_IMPORT_ENTRY_MARKER,
+                MATRIX.TYPED_CORPUS.POST_IMPORT_CHECKPOINT_MARKER,
+                1004,
+            ]
+            prefix = [
+                MATRIX.TYPED_CORPUS.POST_IMPORT_ENTRY_MARKER,
+                MATRIX.TYPED_CORPUS.POST_IMPORT_CHECKPOINT_MARKER,
+            ]
+            suffix = [1004]
+            nonce = f"{index:064x}"
+            container_id = f"{index + 100:064x}"
+            witness: dict[str, object] | None = {
+                "schema": MATRIX.TYPED_CORPUS.POST_IMPORT_WITNESS_SCHEMA,
+                "protocol": "nonce-gated-hostcall-v1",
+                "signal": "SIGUSR1",
+                "nonce": nonce,
+                "container_id": container_id,
+                "causal_order": list(MATRIX.TYPED_CORPUS.POST_IMPORT_CAUSAL_ORDER),
+            }
+        else:
+            prefix = [spec.marker - 1, spec.marker]
+            suffix = [spec.marker + 1]
+            control = prefix + suffix
+            witness = None
         cases.append(
             {
                 "case_id": spec.case_id,
@@ -123,19 +190,15 @@ def typed_corpus_receipt(build_receipt: dict[str, object]) -> dict[str, object]:
                 "expected_typed_stack_values": spec.typed_stack_values,
                 "observed_typed_stack_values": spec.typed_stack_values,
                 "exact_stackmap_records": spec.frames,
-                "control_values": prefix + suffix,
+                "control_values": control,
                 "checkpoint_prefix_values": prefix,
                 "restored_suffix_values": suffix,
-                "control_stdout": MATRIX.TYPED_CORPUS.values_identity(prefix + suffix),
-                "checkpoint_stdout": MATRIX.TYPED_CORPUS.values_identity(prefix),
-                "restore_stdout": MATRIX.TYPED_CORPUS.values_identity(suffix),
-                "checkpoint_stderr": identity(index * 20 + 4),
-                "restore_stderr": identity(index * 20 + 5),
-                "checkpoint": identity(index * 20 + 6),
+                "post_import_signal_witness": witness,
             }
         )
     return {
-        "schema": MATRIX.TYPED_CORPUS.SCHEMA,
+        "schema": MATRIX.TYPED_CORPUS.QUALIFICATION_SCHEMA,
+        "manifest": identity(19),
         "image_tag": "visa-wanco-carrier:locked",
         "image_id": "sha256:" + "ab" * 32,
         "wanco_build_receipt": build_receipt,
@@ -212,13 +275,13 @@ def complete_receipt() -> dict[str, object]:
     plan = MATRIX.build_plan()
     acknowledgement = identity(4)
     wanco_build_receipt = identity(13)
-    typed_corpus = typed_corpus_receipt(wanco_build_receipt)
+    typed_corpus = typed_corpus_qualification(wanco_build_receipt)
     execution_inputs = {
         "sqlite_source_lock": identity(10),
         "sqlite_build_receipt": identity(11),
         "wanco_source_lock": identity(12),
         "wanco_build_receipt": wanco_build_receipt,
-        "wanco_typed_restore_corpus": canonical_identity(typed_corpus),
+        "wanco_typed_restore_corpus": identity(19),
         "stock_sqlite_wasm": identity(14),
         "stock_sqlite_aot": identity(1),
         "stock_sqlite_import_trace": identity(17),
@@ -276,6 +339,31 @@ def complete_receipt() -> dict[str, object]:
                 index + 700,
                 prefix_rows=2 if spec.cell_id == "active-read-cursor" else 0,
             ),
+            "retained_raw_evidence": {
+                "application_runs": retained_application_runs(
+                    index + 1100,
+                    spec.cell_id,
+                    (
+                        ("transaction-setup", "source", "destination")
+                        if spec.cell_id == "active-read-cursor"
+                        else ("source", "destination", "readback")
+                    ),
+                ),
+                "client_stdout": retained(
+                    index + 700, f"observations/{spec.cell_id}/raw-client.stdout"
+                ),
+                "expected_acknowledgements": retained(
+                    4, f"observations/{spec.cell_id}/expected-acks.json"
+                ),
+                "namespace_snapshot": retained(
+                    index + 200,
+                    f"observations/{spec.cell_id}/namespace.snapshot",
+                ),
+                "oracle_report": retained(
+                    index + 600,
+                    f"observations/{spec.cell_id}/oracle-report.json",
+                ),
+            },
             "equivalence_projection": equivalence_projection(),
         }
         if spec.continuation_witness is not None:
@@ -386,11 +474,13 @@ def complete_receipt() -> dict[str, object]:
         "schema": MATRIX.MATRIX_SCHEMA,
         "repository_revision": "ab" * 20,
         "repository_source_snapshot": {
-            "clean": False,
-            "status_sha256": "cd" * 32,
-            "tracked_patch_sha256": "ce" * 32,
-            "untracked_file_count": 3,
-            "untracked_manifest_sha256": "cf" * 32,
+            "clean": True,
+            "status_sha256": hashlib.sha256(b"").hexdigest(),
+            "tracked_patch_sha256": hashlib.sha256(b"").hexdigest(),
+            "untracked_file_count": 0,
+            "untracked_manifest_sha256": hashlib.sha256(
+                MATRIX.canonical_bytes([])
+            ).hexdigest(),
         },
         "execution_inputs": execution_inputs,
         "plan": plan,
@@ -414,6 +504,25 @@ def complete_receipt() -> dict[str, object]:
             },
             "expected_acknowledgements": acknowledgement,
             "raw_client_observation": raw_observation(595),
+            "retained_raw_evidence": {
+                "application_runs": retained_application_runs(
+                    1200,
+                    "uninterrupted-control",
+                    ("transaction", "cursor"),
+                ),
+                "client_stdout": retained(
+                    595, "observations/uninterrupted-control/raw-client.stdout"
+                ),
+                "expected_acknowledgements": retained(
+                    4, "observations/uninterrupted-control/expected-acks.json"
+                ),
+                "namespace_snapshot": retained(
+                    580, "observations/uninterrupted-control/namespace.snapshot"
+                ),
+                "oracle_report": retained(
+                    590, "observations/uninterrupted-control/oracle-report.json"
+                ),
+            },
             "equivalence_projection": equivalence_projection(),
         },
         "cells": cells,
@@ -480,6 +589,304 @@ def complete_receipt() -> dict[str, object]:
             "device_write_reordering": False,
         },
     }
+
+
+def materialize_typed_corpus(
+    root: Path,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    source = root / "typed-source"
+    source.mkdir()
+    build = {
+        "schema": "visa-wanco-carrier-build-receipt-v5",
+        "image_tag": "visa-wanco-carrier:locked",
+        "image_id": "sha256:" + "ab" * 32,
+        "stackmap_binding": "exact-active-callsite-id",
+        "stackmap_layout": "typed-locals-and-value-stack-v2",
+        "indirect_call_operands_retained": True,
+        "active_data_segments_preserved_on_restore": True,
+        "per_frame_callee_saved_registers": True,
+        "post_import_checkpoint_points": True,
+        "guest_tail_calls_disabled": True,
+    }
+    build_path = source / "wanco-build.json"
+    build_path.write_text(json.dumps(build, indent=2, sort_keys=True) + "\n")
+    for index, spec in enumerate(MATRIX.TYPED_CORPUS.CASE_SPECS, start=1):
+        case = source / "results" / spec.case_id
+        case.mkdir(parents=True)
+        if spec.profile == MATRIX.TYPED_CORPUS.POST_IMPORT_PROFILE:
+            control = [
+                MATRIX.TYPED_CORPUS.POST_IMPORT_ENTRY_MARKER,
+                MATRIX.TYPED_CORPUS.POST_IMPORT_CHECKPOINT_MARKER,
+                1004,
+            ]
+            prefix = control[:2]
+            suffix = control[2:]
+        else:
+            prefix = [spec.marker - 1, spec.marker]
+            suffix = [spec.marker + 1]
+            control = prefix + suffix
+        for name, values in (
+            ("control.stdout", control),
+            ("checkpoint.stdout", prefix),
+            ("restore.stdout", suffix),
+        ):
+            (case / name).write_text(
+                "".join(f"{value}\n" for value in values), encoding="ascii"
+            )
+        (case / "checkpoint.stderr").write_text(
+            "[debug] Found exact stackmap record\n" * spec.frames,
+            encoding="utf-8",
+        )
+        (case / "restore.stderr").write_text(
+            f"[info] - call stack: {spec.frames} frames\n"
+            f"[info] - value stack: {spec.typed_stack_values} values\n",
+            encoding="utf-8",
+        )
+        (case / "checkpoint.pb").write_bytes(b"checkpoint:" + spec.case_id.encode())
+        if spec.profile == MATRIX.TYPED_CORPUS.POST_IMPORT_PROFILE:
+            nonce = f"{index:064x}"
+            container_id = f"{index + 100:064x}"
+            (case / "import-entered.txt").write_text(f"entered {nonce}\n")
+            (case / "signal-dispatched.txt").write_text(
+                f"signal-dispatched {nonce}\n"
+            )
+            (case / "import-release-observed.txt").write_text(
+                f"release-observed {nonce}\n"
+            )
+            (case / "container.id").write_text(f"{container_id}\n")
+            (case / "signal.stdout").write_text(f"{container_id}\n")
+    manifest, qualification = MATRIX.TYPED_CORPUS.build_bundle(
+        source_root=source,
+        artifact_root=root / "wanco-typed-corpus",
+        image_tag=build["image_tag"],
+        image_id=build["image_id"],
+        wanco_build_receipt=build_path,
+    )
+    manifest_raw = MATRIX.TYPED_CORPUS.canonical_bytes(manifest) + b"\n"
+    return (
+        {
+            "sha256": hashlib.sha256(manifest_raw).hexdigest(),
+            "size": len(manifest_raw),
+        },
+        MATRIX.file_identity(build_path),
+        qualification,
+    )
+
+
+def materialize_retained_receipt(
+    root: Path,
+) -> tuple[Path, Path, dict[str, object]]:
+    receipt = complete_receipt()
+    typed_identity, build_identity, typed_qualification = materialize_typed_corpus(
+        root
+    )
+    receipt["execution_inputs"]["wanco_build_receipt"] = build_identity
+    receipt["execution_inputs"]["wanco_typed_restore_corpus"] = typed_identity
+    receipt["typed_restore_corpus_qualification"] = typed_qualification
+    rows = [(1, 999), (2, 999), (3, 1000), (4, 1001), (5, 1001)]
+    row_lines = [f"VISA_ROW|{account}|{balance}" for account, balance in rows]
+    stdout_bytes = (
+        "\n".join(
+            ["delete", "VISA_ACK|tx-000001", *row_lines, "VISA_CURSOR_DONE|5"]
+        )
+        + "\n"
+    ).encode()
+    source_cursor_bytes = ("\n".join(row_lines[:2]) + "\n").encode()
+    expected_bytes = (
+        MATRIX.canonical_bytes(
+            {
+                "schema_version": "visa-sqlite-expected-acks-v1",
+                "initial_total_balance": 512000,
+                "acknowledged_txids": ["tx-000001"],
+            }
+        )
+        + b"\n"
+    )
+    projection = oracle_projection()
+    projection["logical_contents"]["accounts_sha256"] = (
+        MATRIX._account_rows_sha256(rows)
+    )
+    report = {
+        "schema_version": MATRIX.ORACLE_REPORT_SCHEMA,
+        "accepted": True,
+        "snapshot": {"fixture": True},
+        "namespace": {"fixture": True},
+        "sqlite": {"fixture": True},
+        "semantic_projection": projection,
+        "findings": [],
+    }
+    report_bytes = json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
+    oracle_path = root / "fixture-sqlite-oracle"
+    oracle_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        f"sys.stdout.buffer.write({report_bytes!r})\n",
+        encoding="utf-8",
+    )
+    oracle_path.chmod(0o700)
+    oracle_identity = MATRIX.file_identity(oracle_path)
+    receipt["execution_inputs"]["visa_sqlite_oracle"] = oracle_identity
+    expected_identity = {
+        "sha256": hashlib.sha256(expected_bytes).hexdigest(),
+        "size": len(expected_bytes),
+    }
+    receipt["workload"]["expected_acknowledgements"] = expected_identity
+
+    def write_reference(relative: str, payload: bytes) -> dict[str, object]:
+        path = root.joinpath(*relative.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        return {
+            "path": relative,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size": len(payload),
+        }
+
+    records = [
+        ("uninterrupted-control", receipt["uninterrupted_control"], False),
+        *[
+            (spec.cell_id, cell, spec.cell_id == "active-read-cursor")
+            for spec, cell in zip(MATRIX.CUT_SPECS, receipt["cells"], strict=True)
+        ],
+    ]
+    for label, record, source_cursor_required in records:
+        transaction_bytes = b"delete\nVISA_ACK|tx-000001\n"
+        cursor_bytes = ("\n".join([*row_lines, "VISA_CURSOR_DONE|5"]) + "\n").encode()
+        if label == "uninterrupted-control":
+            run_payloads = (
+                ("transaction", transaction_bytes),
+                ("cursor", cursor_bytes),
+            )
+        elif source_cursor_required:
+            run_payloads = (
+                ("transaction-setup", transaction_bytes),
+                ("source", source_cursor_bytes),
+                (
+                    "destination",
+                    (
+                        "\n".join([*row_lines[2:], "VISA_CURSOR_DONE|5"]) + "\n"
+                    ).encode(),
+                ),
+            )
+        else:
+            run_payloads = (
+                ("source", b"delete\n"),
+                ("destination", b"VISA_ACK|tx-000001\n"),
+                ("readback", cursor_bytes),
+            )
+        if b"".join(payload for _, payload in run_payloads) != stdout_bytes:
+            raise AssertionError("application run fixture does not reconstruct stdout")
+        application_runs = []
+        for role, payload in run_payloads:
+            stderr_payload = (
+                CHECKPOINT_STDERR
+                if role == "source"
+                else RESTORE_STDERR if role == "destination" else b""
+            )
+            application_runs.append(
+                {
+                    "role": role,
+                    "exit_status": 0,
+                    "stdout": write_reference(
+                        f"observations/{label}/runs/{role}.stdout", payload
+                    ),
+                    "stderr": write_reference(
+                        f"observations/{label}/runs/{role}.stderr", stderr_payload
+                    ),
+                }
+            )
+        stdout = write_reference(
+            f"observations/{label}/raw-client.stdout", stdout_bytes
+        )
+        expected = write_reference(
+            f"observations/{label}/expected-acks.json", expected_bytes
+        )
+        snapshot_bytes = ("namespace:" + label).encode()
+        snapshot = write_reference(
+            f"observations/{label}/namespace.snapshot", snapshot_bytes
+        )
+        oracle_report = write_reference(
+            f"observations/{label}/oracle-report.json", report_bytes
+        )
+        observation = {
+            "stdout": {
+                "sha256": stdout["sha256"],
+                "size": stdout["size"],
+            },
+            **MATRIX._parse_client_stdout_bytes(
+                stdout_bytes,
+                receipt["workload"],
+                label=label,
+                source_cursor_payload=(
+                    source_cursor_bytes if source_cursor_required else None
+                ),
+            ),
+        }
+        record["raw_client_observation"] = observation
+        record["expected_acknowledgements"] = copy.deepcopy(expected_identity)
+        record["namespace_snapshot"]["artifact"] = {
+            "sha256": snapshot["sha256"],
+            "size": snapshot["size"],
+        }
+        record["external_oracle"] = {
+            "program": copy.deepcopy(oracle_identity),
+            "report": {
+                "sha256": oracle_report["sha256"],
+                "size": oracle_report["size"],
+            },
+            "report_schema": MATRIX.ORACLE_REPORT_SCHEMA,
+            "semantic_projection": copy.deepcopy(projection),
+            "exit_status": 0,
+            "accepted": True,
+        }
+        record["retained_raw_evidence"] = {
+            "application_runs": application_runs,
+            "client_stdout": stdout,
+            "expected_acknowledgements": expected,
+            "namespace_snapshot": snapshot,
+            "oracle_report": oracle_report,
+        }
+        record["equivalence_projection"] = MATRIX._derive_equivalence_projection(
+            record["external_oracle"]["semantic_projection"],
+            observation,
+            label,
+        )
+        if "external_anchor" in record:
+            record["external_anchor"]["observation"] = copy.deepcopy(
+                observation["stdout"]
+            )
+            if source_cursor_required:
+                record["external_anchor"]["observed_prefix_rows"] = 2
+    receipt_path = root / "receipt.json"
+    receipt_path.write_bytes(MATRIX.canonical_bytes(receipt) + b"\n")
+    return receipt_path, oracle_path, receipt
+
+
+def reseal_raw_file(
+    receipt: dict[str, object],
+    root: Path,
+    *,
+    cell_index: int,
+    role: str,
+    payload: bytes,
+) -> None:
+    cell = receipt["cells"][cell_index]
+    reference = cell["retained_raw_evidence"][role]
+    path = root.joinpath(*reference["path"].split("/"))
+    path.write_bytes(payload)
+    identity_value = {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size": len(payload),
+    }
+    reference.update(identity_value)
+    if role == "client_stdout":
+        cell["raw_client_observation"]["stdout"] = copy.deepcopy(identity_value)
+        if "external_anchor" in cell:
+            cell["external_anchor"]["observation"] = copy.deepcopy(identity_value)
+    elif role == "oracle_report":
+        cell["external_oracle"]["report"] = copy.deepcopy(identity_value)
+    receipt_path = root / "receipt.json"
+    receipt_path.write_bytes(MATRIX.canonical_bytes(receipt) + b"\n")
 
 
 def rebind_committed_probe_to_a_different_handoff(receipt: dict[str, object]) -> None:
@@ -590,6 +997,27 @@ class MatrixContractTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(MATRIX.MatrixFailure):
                 MATRIX.build_plan(path)
 
+    def test_formal_receipt_rejects_a_coherently_relocated_database_path(self) -> None:
+        receipt = complete_receipt()
+        plan = MATRIX.build_plan("other/forged.db")
+        receipt["plan"] = plan
+        receipt["plan_sha256"] = MATRIX.canonical_sha256(plan)
+        for cell, plan_cell in zip(receipt["cells"], plan["cells"], strict=True):
+            cell["plan_entry_sha256"] = MATRIX.canonical_sha256(plan_cell)
+            cell["barrier"]["predicate"] = copy.deepcopy(plan_cell["predicate"])
+            cell["barrier"]["armed"]["barrier_remaining"] = plan_cell["predicate"][
+                "occurrence"
+            ]
+            if "continuation_witness" in cell:
+                cell["continuation_witness"]["predicate"] = copy.deepcopy(
+                    plan_cell["continuation_witness"]
+                )
+                cell["continuation_witness"]["armed"]["barrier_remaining"] = plan_cell[
+                    "continuation_witness"
+                ]["occurrence"]
+        with self.assertRaisesRegex(MATRIX.MatrixFailure, "canonical cut plan"):
+            MATRIX.validate_matrix_receipt(receipt, "ab" * 20)
+
     def test_controller_arms_before_wait_and_releases_only_after_held(self) -> None:
         predicate = MATRIX.build_plan()["cells"][2]["predicate"]
         effect = "11" * 16
@@ -676,12 +1104,218 @@ class MatrixContractTests(unittest.TestCase):
             controller.await_target("held")
 
     def test_complete_receipt_validates(self) -> None:
-        MATRIX.validate_matrix_receipt(complete_receipt())
+        MATRIX.validate_matrix_receipt(complete_receipt(), "ab" * 20)
+
+    def test_retained_raw_evidence_is_recomputed_by_the_cli_path(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sqlite-retained-test-") as raw:
+            root = Path(raw)
+            receipt_path, oracle_path, _ = materialize_retained_receipt(root)
+            MATRIX.load_and_validate(
+                receipt_path,
+                expected_revision="ab" * 20,
+                oracle_binary=oracle_path,
+            )
+
+    def test_cli_requires_the_retained_typed_corpus_raw_bytes(self) -> None:
+        for scenario in ("missing", "tampered"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory(
+                prefix="sqlite-typed-corpus-"
+            ) as raw:
+                root = Path(raw)
+                receipt_path, oracle_path, receipt = materialize_retained_receipt(root)
+                typed_manifest = json.loads(
+                    (root / "wanco-typed-corpus" / "receipt.json").read_text()
+                )
+                reference = typed_manifest["cases"][0]["artifacts"]["control_stdout"]
+                retained = (root / "wanco-typed-corpus").joinpath(
+                    *reference["path"].split("/")
+                )
+                if scenario == "missing":
+                    retained.unlink()
+                else:
+                    retained.write_bytes(b"forged\n")
+                with self.assertRaises(MATRIX.MatrixFailure):
+                    MATRIX.load_and_validate(
+                        receipt_path,
+                        expected_revision=receipt["repository_revision"],
+                        oracle_binary=oracle_path,
+                    )
+
+    def test_cli_rejects_forged_application_execution_records(self) -> None:
+        for scenario in ("exit", "stderr", "detached-stdout"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory(
+                prefix="sqlite-application-run-mutation-"
+            ) as raw:
+                root = Path(raw)
+                receipt_path, oracle_path, receipt = materialize_retained_receipt(
+                    root
+                )
+                run = receipt["cells"][0]["retained_raw_evidence"][
+                    "application_runs"
+                ][0]
+                if scenario == "exit":
+                    run["exit_status"] = 9
+                else:
+                    stream = "stderr" if scenario == "stderr" else "stdout"
+                    reference = run[stream]
+                    path = root.joinpath(*reference["path"].split("/"))
+                    payload = b"\xff" if scenario == "stderr" else b"delete\nforged\n"
+                    path.write_bytes(payload)
+                    reference.update(
+                        {
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                            "size": len(payload),
+                        }
+                    )
+                receipt_path.write_bytes(MATRIX.canonical_bytes(receipt) + b"\n")
+                with self.assertRaises(MATRIX.MatrixFailure):
+                    MATRIX.load_and_validate(
+                        receipt_path,
+                        expected_revision="ab" * 20,
+                        oracle_binary=oracle_path,
+                    )
+
+    def test_cli_rejects_rebinding_a_cell_to_control_raw_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sqlite-retained-rebind-") as raw:
+            root = Path(raw)
+            receipt_path, oracle_path, receipt = materialize_retained_receipt(root)
+            control = receipt["uninterrupted_control"]
+            cell = receipt["cells"][0]
+            cell["retained_raw_evidence"] = copy.deepcopy(
+                control["retained_raw_evidence"]
+            )
+            cell["namespace_snapshot"]["artifact"] = copy.deepcopy(
+                control["namespace_snapshot"]["artifact"]
+            )
+            cell["external_oracle"]["report"] = copy.deepcopy(
+                control["external_oracle"]["report"]
+            )
+            cell["expected_acknowledgements"] = copy.deepcopy(
+                control["expected_acknowledgements"]
+            )
+            cell["raw_client_observation"]["stdout"] = copy.deepcopy(
+                control["raw_client_observation"]["stdout"]
+            )
+            receipt_path.write_bytes(MATRIX.canonical_bytes(receipt) + b"\n")
+            with self.assertRaisesRegex(MATRIX.MatrixFailure, "canonical cell path"):
+                MATRIX.load_and_validate(
+                    receipt_path,
+                    expected_revision="ab" * 20,
+                    oracle_binary=oracle_path,
+                )
+
+    def test_missing_tampered_and_forged_raw_evidence_is_rejected(self) -> None:
+        scenarios = (
+            "missing",
+            "row",
+            "ack",
+            "terminal",
+            "unexpected-line",
+            "oracle",
+            "symlink",
+        )
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory(
+                prefix="sqlite-retained-mutation-"
+            ) as raw:
+                root = Path(raw)
+                receipt_path, oracle_path, receipt = materialize_retained_receipt(
+                    root
+                )
+                reference = receipt["cells"][0]["retained_raw_evidence"][
+                    "client_stdout"
+                ]
+                stdout_path = root.joinpath(*reference["path"].split("/"))
+                stdout = stdout_path.read_bytes()
+                if scenario == "missing":
+                    stdout_path.unlink()
+                elif scenario == "row":
+                    reseal_raw_file(
+                        receipt,
+                        root,
+                        cell_index=0,
+                        role="client_stdout",
+                        payload=stdout.replace(b"VISA_ROW|1|999", b"VISA_ROW|1|998"),
+                    )
+                elif scenario == "ack":
+                    reseal_raw_file(
+                        receipt,
+                        root,
+                        cell_index=0,
+                        role="client_stdout",
+                        payload=stdout.replace(b"VISA_ACK|tx-000001\n", b""),
+                    )
+                elif scenario == "terminal":
+                    reseal_raw_file(
+                        receipt,
+                        root,
+                        cell_index=0,
+                        role="client_stdout",
+                        payload=stdout.replace(
+                            b"VISA_CURSOR_DONE|5", b"VISA_CURSOR_DONE|4"
+                        ),
+                    )
+                elif scenario == "unexpected-line":
+                    reseal_raw_file(
+                        receipt,
+                        root,
+                        cell_index=0,
+                        role="client_stdout",
+                        payload=stdout + b"UNEXPECTED APPLICATION ERROR\n",
+                    )
+                elif scenario == "oracle":
+                    report_reference = receipt["cells"][0][
+                        "retained_raw_evidence"
+                    ]["oracle_report"]
+                    report_path = root.joinpath(*report_reference["path"].split("/"))
+                    report = json.loads(report_path.read_bytes())
+                    report["accepted"] = False
+                    reseal_raw_file(
+                        receipt,
+                        root,
+                        cell_index=0,
+                        role="oracle_report",
+                        payload=json.dumps(report, sort_keys=True).encode() + b"\n",
+                    )
+                else:
+                    target = root / "symlink-target"
+                    target.write_bytes(stdout)
+                    stdout_path.unlink()
+                    stdout_path.symlink_to(target)
+                with self.assertRaises(MATRIX.MatrixFailure):
+                    MATRIX.load_and_validate(
+                        receipt_path,
+                        expected_revision="ab" * 20,
+                        oracle_binary=oracle_path,
+                    )
 
     def test_receipt_rejects_semantic_gaps_and_overclaims(self) -> None:
         mutations = {
             "missing-uninterrupted-control": lambda receipt: receipt.pop(
                 "uninterrupted_control"
+            ),
+            "dirty-source-snapshot": lambda receipt: receipt[
+                "repository_source_snapshot"
+            ].__setitem__("clean", False),
+            "nonempty-source-status": lambda receipt: receipt[
+                "repository_source_snapshot"
+            ].__setitem__("status_sha256", "cd" * 32),
+            "untracked-source-files": lambda receipt: receipt[
+                "repository_source_snapshot"
+            ].__setitem__("untracked_file_count", 1),
+            "raw-client-reference-drift": lambda receipt: receipt["cells"][0][
+                "retained_raw_evidence"
+            ]["client_stdout"].__setitem__("sha256", "d3" * 32),
+            "raw-reference-path-escape": lambda receipt: receipt["cells"][0][
+                "retained_raw_evidence"
+            ]["client_stdout"].__setitem__("path", "../raw-client.stdout"),
+            "cell-raw-reference-rebound-to-control": lambda receipt: receipt["cells"][
+                0
+            ].__setitem__(
+                "retained_raw_evidence",
+                copy.deepcopy(
+                    receipt["uninterrupted_control"]["retained_raw_evidence"]
+                ),
             ),
             "control-oracle-logical-mutation": lambda receipt: receipt[
                 "uninterrupted_control"
@@ -809,7 +1443,11 @@ class MatrixContractTests(unittest.TestCase):
                 receipt = complete_receipt()
                 mutate(receipt)
                 with self.assertRaises(MATRIX.MatrixFailure):
-                    MATRIX.validate_matrix_receipt(receipt)
+                    MATRIX.validate_matrix_receipt(receipt, "ab" * 20)
+
+    def test_exact_revision_is_required_when_bound(self) -> None:
+        with self.assertRaisesRegex(MATRIX.MatrixFailure, "expected exact SHA"):
+            MATRIX.validate_matrix_receipt(complete_receipt(), "cd" * 20)
 
     def test_plan_cli_emits_canonical_non_evidence_artifact(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sqlite-cut-plan-test-") as raw:

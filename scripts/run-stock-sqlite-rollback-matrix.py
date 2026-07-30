@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
+import receipt_artifacts as ARTIFACTS
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 CONTRACT_PATH = SCRIPT_ROOT / "sqlite_rollback_matrix.py"
@@ -60,7 +61,7 @@ SOURCE_RETAINED_PROOF_SCHEMA = "visa-canonical-source-retained-proof-v1"
 SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1"
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
-CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v1"
+CONTROL_SCHEMA = CONTRACT.CONTROL_SCHEMA
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 
 
@@ -181,6 +182,75 @@ def publish(path: Path, value: object) -> None:
     finally:
         with contextlib.suppress(FileNotFoundError):
             temporary.unlink()
+
+
+def retain_raw_evidence(
+    record: dict[str, object],
+    *,
+    artifact_root: Path,
+    label: str,
+) -> None:
+    raw_paths = record.pop("_raw_paths", None)
+    if not isinstance(raw_paths, dict) or set(raw_paths) != {
+        "application_runs",
+        "client_stdout",
+        "expected_acknowledgements",
+        "namespace_snapshot",
+        "oracle_report",
+    }:
+        raise MatrixFailure(f"{label} omitted its raw evidence paths")
+    references: dict[str, object] = {}
+    application_runs = raw_paths["application_runs"]
+    if not isinstance(application_runs, tuple):
+        raise MatrixFailure(f"{label} application run inventory is invalid")
+    published_runs: list[dict[str, object]] = []
+    for entry in application_runs:
+        if (
+            not isinstance(entry, tuple)
+            or len(entry) != 4
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], Path)
+            or not isinstance(entry[2], Path)
+            or not isinstance(entry[3], int)
+            or isinstance(entry[3], bool)
+        ):
+            raise MatrixFailure(f"{label} application run entry is invalid")
+        role, stdout_path, stderr_path, exit_status = entry
+        prefix = f"observations/{label}/runs/{role}"
+        try:
+            published_runs.append(
+                {
+                    "role": role,
+                    "exit_status": exit_status,
+                    "stdout": ARTIFACTS.publish_reference(
+                        stdout_path, artifact_root, prefix + ".stdout"
+                    ),
+                    "stderr": ARTIFACTS.publish_reference(
+                        stderr_path, artifact_root, prefix + ".stderr"
+                    ),
+                }
+            )
+        except ARTIFACTS.ArtifactError as error:
+            raise MatrixFailure(str(error)) from error
+    references["application_runs"] = published_runs
+    filenames = {
+        "client_stdout": "raw-client.stdout",
+        "expected_acknowledgements": "expected-acks.json",
+        "namespace_snapshot": "namespace.snapshot",
+        "oracle_report": "oracle-report.json",
+    }
+    for name, filename in filenames.items():
+        source = raw_paths[name]
+        if not isinstance(source, Path):
+            raise MatrixFailure(f"{label} raw evidence path {name} is invalid")
+        relative = f"observations/{label}/{filename}"
+        try:
+            references[name] = ARTIFACTS.publish_reference(
+                source, artifact_root, relative
+            )
+        except ARTIFACTS.ArtifactError as error:
+            raise MatrixFailure(str(error)) from error
+    record["retained_raw_evidence"] = references
 
 
 class ShortSocketRoot:
@@ -384,6 +454,15 @@ class AotProcess:
             self.stdout.close()
         with contextlib.suppress(Exception):
             self.stderr.close()
+
+
+def completed_application_run(
+    role: str, process: AotProcess
+) -> tuple[str, Path, Path, int]:
+    status = process.process.returncode
+    if not role or status is None or status != 0:
+        raise MatrixFailure(f"{role or 'unnamed'} application segment did not complete cleanly")
+    return role, process.stdout_path, process.stderr_path, status
 
 
 class DockerAot:
@@ -939,6 +1018,16 @@ def strict_stdout_observation(
         lines = transcript.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError as error:
         raise MatrixFailure("stock SQLite stdout is not UTF-8") from error
+    if any(
+        line != "delete"
+        and not line.startswith(("VISA_ACK|", "VISA_ROW|", "VISA_CURSOR_DONE|"))
+        for line in lines
+    ):
+        raise MatrixFailure("stock SQLite emitted an unexpected stdout line")
+    if [line for line in lines if line == "delete"] != ["delete"]:
+        raise MatrixFailure(
+            "stock SQLite did not emit one exact DELETE journal-mode result"
+        )
     ack_lines = [line for line in lines if line.startswith("VISA_ACK|")]
     txids: list[str] = []
     for line in ack_lines:
@@ -976,6 +1065,10 @@ def strict_stdout_observation(
             raise MatrixFailure("cursor output is not one exact ordered result")
         if source_cursor_stdout is not None:
             source_lines = source_cursor_stdout.read_text(encoding="utf-8").splitlines()
+            if any(not line.startswith("VISA_ROW|") for line in source_lines):
+                raise MatrixFailure(
+                    "source cursor stdout contains a non-row output line"
+                )
             prefix_rows = sum(line.startswith("VISA_ROW|") for line in source_lines)
             if not 0 < prefix_rows < CURSOR_ROWS:
                 raise MatrixFailure(
@@ -1089,14 +1182,19 @@ def verify_execution_inputs(
     source_lock = read_json(sqlite_source_lock_path, "stock SQLite source lock")
     wanco_source_lock = read_json(wanco_source_lock_path, "Wanco source lock")
     wanco_receipt = read_json(wanco_build_receipt_path, "Wanco build receipt")
-    typed_corpus = read_json(typed_corpus_receipt_path, "Wanco typed corpus receipt")
+    try:
+        typed_corpus, typed_qualification = CONTRACT.TYPED_CORPUS.load_and_validate(
+            typed_corpus_receipt_path
+        )
+    except CONTRACT.TYPED_CORPUS.CorpusFailure as error:
+        raise MatrixFailure(f"Wanco typed corpus evidence is invalid: {error}") from error
     if build_receipt.get("schema") != "visa-stock-sqlite-build-receipt-v1":
         raise MatrixFailure("unsupported stock SQLite build receipt schema")
     if source_lock.get("schema") != "visa-stock-sqlite-source-lock-v1":
         raise MatrixFailure("unsupported stock SQLite source lock schema")
-    if wanco_source_lock.get("schema") != "visa-wanco-carrier-source-lock-v2":
+    if wanco_source_lock.get("schema") != "visa-wanco-carrier-source-lock-v3":
         raise MatrixFailure("unsupported Wanco source lock schema")
-    if wanco_receipt.get("schema") != "visa-wanco-carrier-build-receipt-v4":
+    if wanco_receipt.get("schema") != "visa-wanco-carrier-build-receipt-v5":
         raise MatrixFailure("unsupported Wanco build receipt schema")
     if (
         wanco_receipt.get("stackmap_binding") != "exact-active-callsite-id"
@@ -1109,12 +1207,8 @@ def verify_execution_inputs(
         or wanco_receipt.get("guest_tail_calls_disabled") is not True
     ):
         raise MatrixFailure("Wanco build lacks the qualified typed-restore contract")
-    try:
-        CONTRACT.TYPED_CORPUS.validate_receipt(typed_corpus)
-    except CONTRACT.TYPED_CORPUS.CorpusFailure as error:
-        raise MatrixFailure(f"Wanco typed corpus receipt is invalid: {error}") from error
     if (
-        typed_corpus["wanco_build_receipt"]
+        typed_qualification["wanco_build_receipt"]
         != CONTRACT.file_identity(wanco_build_receipt_path)
         or typed_corpus["image_tag"] != wanco_receipt.get("image_tag")
         or typed_corpus["image_id"] != wanco_receipt.get("image_id")
@@ -1226,7 +1320,7 @@ def verify_execution_inputs(
         DockerAot(docker, image, aot),
         inputs,
         workload_paths,
-        typed_corpus,
+        typed_qualification,
     )
 
 
@@ -2022,6 +2116,7 @@ def run_sqlite_oracle(
         "semantic_projection": semantic_projection,
         "exit_status": completed.returncode,
         "accepted": True,
+        "_report_path": report_path,
     }
 
 
@@ -2113,6 +2208,10 @@ def run_uninterrupted_control(
             source_cursor_stdout=None,
             expect_cursor=True,
         )
+        application_runs = (
+            completed_application_run("transaction", transaction),
+            completed_application_run("cursor", cursor),
+        )
         expected_path = case / "expected-acks.json"
         expected_identity = write_expected_acks(expected_path, txids)
         namespace = snapshot_namespace(
@@ -2130,12 +2229,14 @@ def run_uninterrupted_control(
             ),
             cell_id="uninterrupted-control",
         )
+        snapshot_path = namespace.pop("path")
         external_oracle = run_sqlite_oracle(
             oracle_binary=oracle_binary,
-            snapshot=namespace.pop("path"),
+            snapshot=snapshot_path,
             expected_acks=expected_path,
             cwd=execution,
         )
+        oracle_report_path = external_oracle.pop("_report_path")
     return {
         "schema": CONTROL_SCHEMA,
         "execution": "single-provider-uninterrupted-transaction-and-readback",
@@ -2146,6 +2247,13 @@ def run_uninterrupted_control(
         "equivalence_projection": build_equivalence_projection(
             external_oracle, observation
         ),
+        "_raw_paths": {
+            "application_runs": application_runs,
+            "client_stdout": case / "raw-client.stdout",
+            "expected_acknowledgements": expected_path,
+            "namespace_snapshot": snapshot_path,
+            "oracle_report": oracle_report_path,
+        },
     }
 
 
@@ -2203,7 +2311,7 @@ def run_matrix_cell(
         imports=imports,
         cwd=source,
     )
-    setup_stdout: Path | None = None
+    setup_process: AotProcess | None = None
     delivery_fault: dict[str, object] | None = None
     with Provider(
         host_binary,
@@ -2241,7 +2349,7 @@ def run_matrix_cell(
                 label="transaction-setup",
                 script_path=TRANSACTION_GUEST_PATH,
             )
-            setup_stdout = setup.stdout_path
+            setup_process = setup
         source_environment = guest_environment(
             source_socket,
             session=session,
@@ -2393,10 +2501,15 @@ def run_matrix_cell(
                 continuation=plan_entry.get("continuation_witness"),
                 cell_id=cell_id,
             )
-            components = [source_process.stdout_path, destination_process.stdout_path]
+            application_runs: list[tuple[str, Path, Path, int]] = [
+                completed_application_run("source", source_process),
+                completed_application_run("destination", destination_process),
+            ]
             source_cursor_stdout: Path | None = None
-            if setup_stdout is not None:
-                components.insert(0, setup_stdout)
+            if setup_process is not None:
+                application_runs.insert(
+                    0, completed_application_run("transaction-setup", setup_process)
+                )
                 source_cursor_stdout = source_process.stdout_path
             else:
                 readback = run_script(
@@ -2414,7 +2527,10 @@ def run_matrix_cell(
                     label="post-handoff-readback",
                     script_path=CURSOR_GUEST_PATH,
                 )
-                components.append(readback.stdout_path)
+                application_runs.append(
+                    completed_application_run("readback", readback)
+                )
+            components = [entry[1] for entry in application_runs]
             observation, txids = strict_stdout_observation(
                 transcript=case / "raw-client.stdout",
                 components=components,
@@ -2438,12 +2554,14 @@ def run_matrix_cell(
                 ),
                 cell_id=cell_id,
             )
+            snapshot_path = namespace.pop("path")
             external_oracle = run_sqlite_oracle(
                 oracle_binary=oracle_binary,
-                snapshot=namespace.pop("path"),
+                snapshot=snapshot_path,
                 expected_acks=expected_path,
                 cwd=destination,
             )
+            oracle_report_path = external_oracle.pop("_report_path")
 
     cell: dict[str, object] = {
         "schema": CONTRACT.CELL_SCHEMA,
@@ -2466,6 +2584,13 @@ def run_matrix_cell(
         "equivalence_projection": build_equivalence_projection(
             external_oracle, observation
         ),
+        "_raw_paths": {
+            "application_runs": tuple(application_runs),
+            "client_stdout": case / "raw-client.stdout",
+            "expected_acknowledgements": expected_path,
+            "namespace_snapshot": snapshot_path,
+            "oracle_report": oracle_report_path,
+        },
     }
     if continuation_witness is not None:
         cell["continuation_witness"] = continuation_witness
@@ -3300,7 +3425,7 @@ def run_matrix(
         raise MatrixFailure(f"refusing to replace an existing matrix receipt: {output}")
     if not arguments.skip_runtime_build:
         build_runtime_binaries(repository)
-    build_receipt, runtime, inputs, workload_paths, typed_corpus = verify_execution_inputs(
+    build_receipt, runtime, inputs, workload_paths, typed_qualification = verify_execution_inputs(
         repository=repository,
         artifact_root=artifact_root,
         sqlite_source_lock_path=sqlite_source_lock,
@@ -3318,6 +3443,13 @@ def run_matrix(
     if len(revision) != 40:
         raise MatrixFailure("repository HEAD is not a full Git object identity")
     source_snapshot = repository_snapshot(repository)
+    if source_snapshot["clean"] is not True:
+        raise MatrixFailure("repository must be clean before a formal SQLite matrix run")
+    retained_root = output.parent / "observations"
+    if retained_root.exists() or retained_root.is_symlink():
+        raise MatrixFailure(
+            f"refusing to reuse an existing retained-observation root: {retained_root}"
+        )
     default_work = output.parent / "evidence"
     work_root = absolute_from(repository, arguments.work_root).resolve() if arguments.work_root else default_work
     if work_root.exists():
@@ -3432,6 +3564,36 @@ def run_matrix(
         raise MatrixFailure("cells derived different expected ACK inputs from raw stdout")
     if uninterrupted_control["expected_acknowledgements"] != expected_ack_identity:
         raise MatrixFailure("uninterrupted control derived a different expected ACK input")
+    retain_raw_evidence(
+        uninterrupted_control,
+        artifact_root=output.parent,
+        label="uninterrupted-control",
+    )
+    for cell in cells:
+        cell_id = cell["cell_id"]
+        if not isinstance(cell_id, str):
+            raise MatrixFailure("matrix cell omitted its canonical identity")
+        retain_raw_evidence(
+            cell,
+            artifact_root=output.parent,
+            label=cell_id,
+        )
+    try:
+        _, retained_typed_qualification = CONTRACT.TYPED_CORPUS.retain_bundle(
+            typed_corpus_receipt, output.parent / "wanco-typed-corpus"
+        )
+    except CONTRACT.TYPED_CORPUS.CorpusFailure as error:
+        raise MatrixFailure(f"cannot retain Wanco typed corpus evidence: {error}") from error
+    if retained_typed_qualification != typed_qualification:
+        raise MatrixFailure("retained Wanco typed corpus qualification changed")
+    final_revision = run(
+        ["git", "rev-parse", "HEAD"], cwd=repository
+    ).stdout.decode().strip()
+    final_snapshot = repository_snapshot(repository)
+    if final_revision != revision or final_snapshot != source_snapshot:
+        raise MatrixFailure(
+            "repository revision or clean source snapshot changed during the matrix run"
+        )
     receipt = {
         "schema": CONTRACT.MATRIX_SCHEMA,
         "repository_revision": revision,
@@ -3450,7 +3612,7 @@ def run_matrix(
         },
         "uninterrupted_control": uninterrupted_control,
         "cells": cells,
-        "typed_restore_corpus_qualification": typed_corpus,
+        "typed_restore_corpus_qualification": typed_qualification,
         "process_recovery_qualification": process_recovery,
         "source_abort_reconciliation_qualification": source_abort,
         "durability_scope": {
@@ -3460,12 +3622,17 @@ def run_matrix(
             "device_write_reordering": False,
         },
     }
-    CONTRACT.validate_receipt(receipt)
+    CONTRACT.validate_receipt(receipt, revision)
+    CONTRACT.validate_retained_evidence(receipt, output.parent, oracle_binary)
     publish(output, receipt)
     raw = output.read_bytes()
     if raw != canonical_bytes(receipt) + b"\n":
         raise MatrixFailure("published matrix receipt is not canonical")
-    CONTRACT.validate_receipt(json.loads(raw))
+    CONTRACT.load_and_validate(
+        output,
+        expected_revision=revision,
+        oracle_binary=oracle_binary,
+    )
     return output
 
 

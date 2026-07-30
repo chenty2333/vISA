@@ -38,7 +38,7 @@
     "source_patches": [],
     "build_recipe": {
       "path": "scripts/build-stock-sqlite.sh",
-      "sha256": "29e64007e48e8dd19a1c4f3dd5bf5d31fb1792192eb516335ef664d8107586b4"
+      "sha256": "acdaba00b0232c1d495520f6613e5cdb08fc7e060cb6b15977294cdea5cd8cc6"
     },
     "compatibility_source": {
       "path": "third_party/sqlite/abi/visa_sqlite_wasi_compat.c",

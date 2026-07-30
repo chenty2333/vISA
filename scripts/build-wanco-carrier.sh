@@ -88,7 +88,7 @@ from pathlib import Path
     *patch_paths,
 ) = sys.argv[1:]
 receipt = {
-    "schema": "visa-wanco-carrier-build-receipt-v4",
+    "schema": "visa-wanco-carrier-build-receipt-v5",
     "revision": revision,
     "patch_set_sha256": patch_set_sha,
     "patches": patch_paths,

@@ -12,6 +12,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import struct
 import subprocess
 import tempfile
 import time
@@ -20,12 +22,14 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Protocol
 
 import wanco_typed_corpus as TYPED_CORPUS
+import receipt_artifacts as ARTIFACTS
+import wanco_process_diagnostics as WANCO_DIAGNOSTICS
 
 
 PLAN_SCHEMA = "visa-stock-sqlite-rollback-journal-plan-v1"
-CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v2"
-MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v5"
-CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v1"
+CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v4"
+MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v7"
+CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v3"
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
@@ -35,6 +39,12 @@ SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1
 DEFAULT_DATABASE_PATH = "workload/accounts.db"
 DEFAULT_TIMEOUT_SECONDS = 120.0
 POLL_INTERVAL_SECONDS = 0.02
+SHA1_RE = re.compile(r"[0-9a-f]{40}")
+MAX_SQLITE_STDOUT_BYTES = 4 * 1024 * 1024
+MAX_SQLITE_STDERR_BYTES = 1024 * 1024
+MAX_SQLITE_JSON_BYTES = 2 * 1024 * 1024
+MAX_SQLITE_SNAPSHOT_BYTES = 64 * 1024 * 1024
+MAX_SQLITE_RETAINED_BYTES = 128 * 1024 * 1024
 
 
 class MatrixFailure(RuntimeError):
@@ -593,6 +603,104 @@ def _validate_file_identity(value: object, label: str) -> None:
         raise MatrixFailure(f"{label} size must be positive")
 
 
+def _artifact_identity(reference: object, label: str) -> dict[str, object]:
+    try:
+        validated = ARTIFACTS.validate_reference(reference, label)
+    except ARTIFACTS.ArtifactError as error:
+        raise MatrixFailure(str(error)) from error
+    if validated["size"] <= 0:
+        raise MatrixFailure(f"{label} size must be positive")
+    return {"sha256": validated["sha256"], "size": validated["size"]}
+
+
+def _validate_raw_evidence_references(
+    value: object,
+    *,
+    label: str,
+    path_label: str,
+    source_cursor_required: bool,
+) -> Mapping[str, object]:
+    fields = {
+        "application_runs",
+        "client_stdout",
+        "expected_acknowledgements",
+        "namespace_snapshot",
+        "oracle_report",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise MatrixFailure(f"{label} retained raw evidence has the wrong fields")
+    expected_paths = {
+        "client_stdout": f"observations/{path_label}/raw-client.stdout",
+        "expected_acknowledgements": f"observations/{path_label}/expected-acks.json",
+        "namespace_snapshot": f"observations/{path_label}/namespace.snapshot",
+        "oracle_report": f"observations/{path_label}/oracle-report.json",
+    }
+    for name in (
+        "client_stdout",
+        "expected_acknowledgements",
+        "namespace_snapshot",
+        "oracle_report",
+    ):
+        reference = value[name]
+        _artifact_identity(reference, f"{label} retained {name}")
+        assert isinstance(reference, dict)
+        if reference["path"] != expected_paths[name]:
+            raise MatrixFailure(
+                f"{label} retained {name} does not use its canonical cell path"
+            )
+    expected_roles = (
+        ("transaction", "cursor")
+        if path_label == "uninterrupted-control"
+        else (
+            ("transaction-setup", "source", "destination")
+            if source_cursor_required
+            else ("source", "destination", "readback")
+        )
+    )
+    runs = value["application_runs"]
+    if not isinstance(runs, list) or len(runs) != len(expected_roles):
+        raise MatrixFailure(f"{label} retained application run inventory differs")
+    for index, (raw_run, expected_role) in enumerate(
+        zip(runs, expected_roles, strict=True)
+    ):
+        if not isinstance(raw_run, dict) or set(raw_run) != {
+            "role",
+            "exit_status",
+            "stdout",
+            "stderr",
+        }:
+            raise MatrixFailure(f"{label} retained application run {index} is malformed")
+        if raw_run["role"] != expected_role:
+            raise MatrixFailure(f"{label} retained application run role/order differs")
+        exit_status = raw_run["exit_status"]
+        if (
+            not isinstance(exit_status, int)
+            or isinstance(exit_status, bool)
+            or exit_status != 0
+        ):
+            raise MatrixFailure(
+                f"{label} retained {expected_role} application exit status must be zero"
+            )
+        for stream in ("stdout", "stderr"):
+            reference = raw_run[stream]
+            try:
+                validated_reference = ARTIFACTS.validate_reference(
+                    reference,
+                    f"{label} retained {expected_role} application {stream}",
+                )
+            except ARTIFACTS.ArtifactError as error:
+                raise MatrixFailure(str(error)) from error
+            expected_path = (
+                f"observations/{path_label}/runs/{expected_role}.{stream}"
+            )
+            if validated_reference["path"] != expected_path:
+                raise MatrixFailure(
+                    f"{label} retained {expected_role} application {stream} "
+                    "does not use its canonical cell path"
+                )
+    return value
+
+
 def _validate_namespace_snapshot(value: object, label: str) -> None:
     if not isinstance(value, dict) or set(value) != {
         "artifact",
@@ -795,6 +903,355 @@ def _derive_equivalence_projection(
     }
 
 
+def _reject_duplicate_json_pairs(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise MatrixFailure(f"retained JSON contains duplicate key {key!r}")
+        value[key] = item
+    return value
+
+
+def _parse_json_bytes(payload: bytes, label: str) -> dict[str, object]:
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_pairs,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise MatrixFailure(f"{label} is not valid UTF-8 JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise MatrixFailure(f"{label} is not a JSON object")
+    return value
+
+
+def _account_rows_sha256(rows: list[tuple[int, int]]) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"visa-sqlite-account-rows-v1\0")
+    digest.update(struct.pack(">Q", len(rows)))
+    for account_id, balance in rows:
+        digest.update(struct.pack(">q", account_id))
+        digest.update(struct.pack(">q", balance))
+    return digest.hexdigest()
+
+
+def _parse_client_stdout_bytes(
+    payload: bytes,
+    workload: Mapping[str, object],
+    *,
+    label: str,
+    source_cursor_payload: bytes | None,
+) -> dict[str, object]:
+    try:
+        lines = payload.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise MatrixFailure(f"{label} raw client stdout is not UTF-8") from error
+    txids: list[str] = []
+    rows: list[tuple[int, int]] = []
+    done_values: list[int] = []
+    journal_modes: list[str] = []
+    for line in lines:
+        if line == "delete":
+            journal_modes.append(line)
+        elif line.startswith("VISA_ACK|"):
+            fields = line.split("|")
+            if len(fields) != 2 or not fields[1]:
+                raise MatrixFailure(f"{label} raw stdout has a malformed ACK terminal")
+            txids.append(fields[1])
+        elif line.startswith("VISA_ROW|"):
+            fields = line.split("|")
+            if len(fields) != 3:
+                raise MatrixFailure(f"{label} raw stdout has a malformed cursor row")
+            try:
+                rows.append((int(fields[1]), int(fields[2])))
+            except ValueError as error:
+                raise MatrixFailure(
+                    f"{label} raw stdout has a nonnumeric cursor row"
+                ) from error
+        elif line.startswith("VISA_CURSOR_DONE|"):
+            fields = line.split("|")
+            if len(fields) != 2:
+                raise MatrixFailure(f"{label} raw stdout has a malformed cursor terminal")
+            try:
+                done_values.append(int(fields[1]))
+            except ValueError as error:
+                raise MatrixFailure(
+                    f"{label} raw stdout has a nonnumeric cursor terminal"
+                ) from error
+        else:
+            raise MatrixFailure(f"{label} raw stdout has an unexpected output line")
+    expected_txids = workload["expected_acknowledgement_txids"]
+    expected_rows = workload["expected_cursor_rows"]
+    if journal_modes != ["delete"]:
+        raise MatrixFailure(
+            f"{label} raw stdout does not contain one exact DELETE journal-mode result"
+        )
+    if txids != expected_txids:
+        raise MatrixFailure(f"{label} raw stdout lacks each expected ACK exactly once")
+    if len(rows) != expected_rows or done_values != [expected_rows]:
+        raise MatrixFailure(f"{label} raw stdout is not one complete cursor result")
+    prefix_rows = 0
+    if source_cursor_payload is not None:
+        try:
+            source_lines = source_cursor_payload.decode("utf-8").splitlines()
+        except UnicodeDecodeError as error:
+            raise MatrixFailure(f"{label} source cursor stdout is not UTF-8") from error
+        source_rows: list[tuple[int, int]] = []
+        for line in source_lines:
+            if line.startswith("VISA_CURSOR_DONE|"):
+                raise MatrixFailure(f"{label} source cursor unexpectedly completed")
+            if not line.startswith("VISA_ROW|"):
+                raise MatrixFailure(
+                    f"{label} source cursor stdout has an unexpected output line"
+                )
+            fields = line.split("|")
+            if len(fields) != 3:
+                raise MatrixFailure(f"{label} source cursor row is malformed")
+            try:
+                source_rows.append((int(fields[1]), int(fields[2])))
+            except ValueError as error:
+                raise MatrixFailure(f"{label} source cursor row is nonnumeric") from error
+        prefix_rows = len(source_rows)
+        if not 0 < prefix_rows < expected_rows or source_rows != rows[:prefix_rows]:
+            raise MatrixFailure(f"{label} source cursor is not a strict result prefix")
+    return {
+        "acknowledged_txids": txids,
+        "ack_terminal_count": len(txids),
+        "cursor_prefix_rows": prefix_rows,
+        "cursor_total_rows": len(rows),
+        "cursor_done_count": len(done_values),
+        "cursor_rows_sha256": _account_rows_sha256(rows),
+    }
+
+
+def _read_retained_reference(
+    artifact_root: Path,
+    reference: object,
+    label: str,
+    *,
+    budget: ARTIFACTS.ReadBudget,
+    max_bytes: int,
+) -> bytes:
+    try:
+        return ARTIFACTS.read_reference(
+            artifact_root,
+            reference,
+            label,
+            budget=budget,
+            max_bytes=max_bytes,
+        )
+    except ARTIFACTS.ArtifactError as error:
+        raise MatrixFailure(str(error)) from error
+
+
+def _recompute_retained_observation(
+    record: Mapping[str, object],
+    *,
+    label: str,
+    workload: Mapping[str, object],
+    execution_inputs: Mapping[str, object],
+    artifact_root: Path,
+    oracle_binary: Path,
+    budget: ARTIFACTS.ReadBudget,
+    source_cursor_required: bool,
+) -> None:
+    retained = record["retained_raw_evidence"]
+    assert isinstance(retained, dict)
+    application_runs = retained["application_runs"]
+    assert isinstance(application_runs, list)
+    joined_stdout = bytearray()
+    source_cursor_bytes = None
+    for raw_run in application_runs:
+        assert isinstance(raw_run, dict)
+        role = raw_run["role"]
+        assert isinstance(role, str)
+        run_stdout = _read_retained_reference(
+            artifact_root,
+            raw_run["stdout"],
+            f"{label} {role} application stdout",
+            budget=budget,
+            max_bytes=MAX_SQLITE_STDOUT_BYTES,
+        )
+        run_stderr = _read_retained_reference(
+            artifact_root,
+            raw_run["stderr"],
+            f"{label} {role} application stderr",
+            budget=budget,
+            max_bytes=MAX_SQLITE_STDERR_BYTES,
+        )
+        try:
+            WANCO_DIAGNOSTICS.validate_application_stderr(
+                role, run_stderr, f"{label} {role} application stderr"
+            )
+        except WANCO_DIAGNOSTICS.DiagnosticFailure as error:
+            raise MatrixFailure(str(error)) from error
+        if joined_stdout and not joined_stdout.endswith(b"\n"):
+            joined_stdout.extend(b"\n")
+        joined_stdout.extend(run_stdout)
+        if source_cursor_required and role == "source":
+            source_cursor_bytes = run_stdout
+    stdout_bytes = _read_retained_reference(
+        artifact_root,
+        retained["client_stdout"],
+        f"{label} client stdout",
+        budget=budget,
+        max_bytes=MAX_SQLITE_STDOUT_BYTES,
+    )
+    expected_bytes = _read_retained_reference(
+        artifact_root,
+        retained["expected_acknowledgements"],
+        f"{label} expected acknowledgements",
+        budget=budget,
+        max_bytes=MAX_SQLITE_JSON_BYTES,
+    )
+    snapshot_bytes = _read_retained_reference(
+        artifact_root,
+        retained["namespace_snapshot"],
+        f"{label} namespace snapshot",
+        budget=budget,
+        max_bytes=MAX_SQLITE_SNAPSHOT_BYTES,
+    )
+    report_bytes = _read_retained_reference(
+        artifact_root,
+        retained["oracle_report"],
+        f"{label} oracle report",
+        budget=budget,
+        max_bytes=MAX_SQLITE_JSON_BYTES,
+    )
+    if bytes(joined_stdout) != stdout_bytes:
+        raise MatrixFailure(
+            f"{label} retained application stdout does not reconstruct the transcript"
+        )
+    if source_cursor_required and source_cursor_bytes is None:
+        raise MatrixFailure(f"{label} retained application runs omit the source cursor")
+
+    expected = _parse_json_bytes(expected_bytes, f"{label} expected acknowledgements")
+    canonical_expected = {
+        "schema_version": "visa-sqlite-expected-acks-v1",
+        "initial_total_balance": workload["initial_total_balance"],
+        "acknowledged_txids": workload["expected_acknowledgement_txids"],
+    }
+    if expected != canonical_expected or expected_bytes != canonical_bytes(expected) + b"\n":
+        raise MatrixFailure(f"{label} retained expected acknowledgements are not canonical")
+
+    derived_observation = _parse_client_stdout_bytes(
+        stdout_bytes,
+        workload,
+        label=label,
+        source_cursor_payload=source_cursor_bytes,
+    )
+    recorded_observation = record["raw_client_observation"]
+    assert isinstance(recorded_observation, dict)
+    recorded_without_identity = {
+        key: value
+        for key, value in recorded_observation.items()
+        if key != "stdout"
+    }
+    if derived_observation != recorded_without_identity:
+        raise MatrixFailure(f"{label} raw stdout summary was not independently derived")
+
+    retained_report = _parse_json_bytes(report_bytes, f"{label} oracle report")
+    if (
+        retained_report.get("schema_version") != ORACLE_REPORT_SCHEMA
+        or retained_report.get("accepted") is not True
+    ):
+        raise MatrixFailure(f"{label} retained independent oracle report did not accept")
+    oracle = oracle_binary.resolve()
+    if oracle.is_symlink() or not oracle.is_file():
+        raise MatrixFailure("SQLite oracle binary is not a regular non-symlink file")
+    if file_identity(oracle) != execution_inputs["visa_sqlite_oracle"]:
+        raise MatrixFailure("SQLite oracle binary differs from the receipt execution input")
+    with tempfile.TemporaryDirectory(prefix="visa-sqlite-oracle-recheck-") as raw:
+        temporary = Path(raw)
+        snapshot_path = temporary / "namespace.snapshot"
+        expected_path = temporary / "expected-acks.json"
+        snapshot_path.write_bytes(snapshot_bytes)
+        expected_path.write_bytes(expected_bytes)
+        completed = subprocess.run(
+            [oracle, snapshot_path, expected_path, DEFAULT_DATABASE_PATH],
+            cwd=temporary,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            check=False,
+        )
+    if completed.returncode != 0:
+        diagnostic = completed.stderr.decode("utf-8", errors="replace")[-1000:]
+        raise MatrixFailure(f"{label} independent oracle recheck rejected: {diagnostic}")
+    recomputed_report = _parse_json_bytes(
+        completed.stdout, f"{label} recomputed oracle report"
+    )
+    if recomputed_report != retained_report:
+        raise MatrixFailure(f"{label} retained oracle report was not independently reproduced")
+    projection = _validate_oracle_projection(
+        retained_report.get("semantic_projection"),
+        workload,
+        f"{label} retained oracle",
+    )
+    external = record["external_oracle"]
+    assert isinstance(external, dict)
+    if projection != external["semantic_projection"]:
+        raise MatrixFailure(f"{label} oracle summary differs from the raw oracle report")
+
+
+def validate_retained_evidence(
+    receipt: Mapping[str, object],
+    artifact_root: Path,
+    oracle_binary: Path,
+) -> None:
+    workload = receipt["workload"]
+    execution_inputs = receipt["execution_inputs"]
+    assert isinstance(workload, dict)
+    assert isinstance(execution_inputs, dict)
+    typed_receipt_path = artifact_root / "wanco-typed-corpus" / "receipt.json"
+    try:
+        typed_manifest, rederived_typed_qualification = (
+            TYPED_CORPUS.load_and_validate(typed_receipt_path)
+        )
+    except TYPED_CORPUS.CorpusFailure as error:
+        raise MatrixFailure(f"retained typed restore corpus is invalid: {error}") from error
+    if rederived_typed_qualification != receipt["typed_restore_corpus_qualification"]:
+        raise MatrixFailure(
+            "typed restore qualification was not reproduced from retained raw bytes"
+        )
+    typed_raw = TYPED_CORPUS.canonical_bytes(typed_manifest) + b"\n"
+    if execution_inputs["wanco_typed_restore_corpus"] != {
+        "sha256": hashlib.sha256(typed_raw).hexdigest(),
+        "size": len(typed_raw),
+    }:
+        raise MatrixFailure("retained typed restore manifest identity is invalid")
+    budget = ARTIFACTS.ReadBudget(MAX_SQLITE_RETAINED_BYTES)
+    control = receipt["uninterrupted_control"]
+    assert isinstance(control, dict)
+    _recompute_retained_observation(
+        control,
+        label="uninterrupted control",
+        workload=workload,
+        execution_inputs=execution_inputs,
+        artifact_root=artifact_root,
+        oracle_binary=oracle_binary,
+        budget=budget,
+        source_cursor_required=False,
+    )
+    cells = receipt["cells"]
+    assert isinstance(cells, list)
+    for cell, spec in zip(cells, CUT_SPECS, strict=True):
+        assert isinstance(cell, dict)
+        _recompute_retained_observation(
+            cell,
+            label=f"cell {spec.cell_id}",
+            workload=workload,
+            execution_inputs=execution_inputs,
+            artifact_root=artifact_root,
+            oracle_binary=oracle_binary,
+            budget=budget,
+            source_cursor_required=spec.cell_id == "active-read-cursor",
+        )
+
+
 def _validate_uninterrupted_control(
     value: object,
     workload: Mapping[str, object],
@@ -807,6 +1264,7 @@ def _validate_uninterrupted_control(
         "external_oracle",
         "expected_acknowledgements",
         "raw_client_observation",
+        "retained_raw_evidence",
         "equivalence_projection",
     }:
         raise MatrixFailure("uninterrupted control has the wrong fields")
@@ -828,6 +1286,25 @@ def _validate_uninterrupted_control(
         label="uninterrupted control",
         migrated_cursor=False,
     )
+    retained = _validate_raw_evidence_references(
+        value["retained_raw_evidence"],
+        label="uninterrupted control",
+        path_label="uninterrupted-control",
+        source_cursor_required=False,
+    )
+    if (
+        _artifact_identity(retained["client_stdout"], "control stdout")
+        != observation["stdout"]
+        or _artifact_identity(
+            retained["expected_acknowledgements"], "control expected acknowledgements"
+        )
+        != value["expected_acknowledgements"]
+        or _artifact_identity(retained["namespace_snapshot"], "control namespace")
+        != value["namespace_snapshot"]["artifact"]
+        or _artifact_identity(retained["oracle_report"], "control oracle report")
+        != value["external_oracle"]["report"]
+    ):
+        raise MatrixFailure("uninterrupted control raw evidence identity binding is invalid")
     derived = _derive_equivalence_projection(
         oracle, observation, "uninterrupted control"
     )
@@ -1125,7 +1602,9 @@ def _validate_handoff(value: object) -> None:
         raise MatrixFailure("destination compute did not use a fresh client")
 
 
-def validate_matrix_receipt(receipt: object) -> None:
+def validate_matrix_receipt(
+    receipt: object, expected_revision: str | None = None
+) -> None:
     if not isinstance(receipt, dict):
         raise MatrixFailure("matrix receipt must be a JSON object")
     required = {
@@ -1145,7 +1624,14 @@ def validate_matrix_receipt(receipt: object) -> None:
     }
     if set(receipt) != required or receipt.get("schema") != MATRIX_SCHEMA:
         raise MatrixFailure("matrix receipt schema or fields are invalid")
-    _require_hex(receipt["repository_revision"], 20, "repository revision")
+    revision = receipt["repository_revision"]
+    if not isinstance(revision, str) or SHA1_RE.fullmatch(revision) is None:
+        raise MatrixFailure("repository revision must be a lowercase 40-hex Git identity")
+    if expected_revision is not None:
+        if SHA1_RE.fullmatch(expected_revision) is None:
+            raise MatrixFailure("expected revision must be a lowercase 40-hex Git identity")
+        if revision != expected_revision:
+            raise MatrixFailure("repository revision differs from the expected exact SHA")
     source_snapshot = receipt["repository_source_snapshot"]
     if not isinstance(source_snapshot, dict) or set(source_snapshot) != {
         "clean",
@@ -1155,8 +1641,8 @@ def validate_matrix_receipt(receipt: object) -> None:
         "untracked_manifest_sha256",
     }:
         raise MatrixFailure("repository source snapshot has the wrong fields")
-    if not isinstance(source_snapshot["clean"], bool):
-        raise MatrixFailure("repository source snapshot clean flag is invalid")
+    if source_snapshot["clean"] is not True:
+        raise MatrixFailure("repository source snapshot clean must be true")
     for name in (
         "status_sha256",
         "tracked_patch_sha256",
@@ -1166,9 +1652,17 @@ def validate_matrix_receipt(receipt: object) -> None:
     if (
         not isinstance(source_snapshot["untracked_file_count"], int)
         or isinstance(source_snapshot["untracked_file_count"], bool)
-        or source_snapshot["untracked_file_count"] < 0
+        or source_snapshot["untracked_file_count"] != 0
     ):
-        raise MatrixFailure("repository untracked file count is invalid")
+        raise MatrixFailure("repository source snapshot must have no untracked files")
+    empty = hashlib.sha256(b"").hexdigest()
+    empty_manifest = hashlib.sha256(canonical_bytes([])).hexdigest()
+    if (
+        source_snapshot["status_sha256"] != empty
+        or source_snapshot["tracked_patch_sha256"] != empty
+        or source_snapshot["untracked_manifest_sha256"] != empty_manifest
+    ):
+        raise MatrixFailure("repository source snapshot does not encode a clean tree")
     execution_inputs = receipt["execution_inputs"]
     expected_inputs = {
         "sqlite_source_lock",
@@ -1190,19 +1684,15 @@ def validate_matrix_receipt(receipt: object) -> None:
         _validate_file_identity(execution_inputs[name], "execution input " + name)
     typed_corpus = receipt["typed_restore_corpus_qualification"]
     try:
-        TYPED_CORPUS.validate_receipt(typed_corpus)
+        TYPED_CORPUS.validate_qualification_structure(typed_corpus)
     except TYPED_CORPUS.CorpusFailure as error:
-        raise MatrixFailure(f"typed restore corpus is invalid: {error}") from error
+        raise MatrixFailure(f"typed restore qualification is invalid: {error}") from error
     if typed_corpus["wanco_build_receipt"] != execution_inputs["wanco_build_receipt"]:
         raise MatrixFailure("typed restore corpus uses a different Wanco build receipt")
-    typed_raw = TYPED_CORPUS.canonical_bytes(typed_corpus) + b"\n"
-    if execution_inputs["wanco_typed_restore_corpus"] != {
-        "sha256": hashlib.sha256(typed_raw).hexdigest(),
-        "size": len(typed_raw),
-    }:
-        raise MatrixFailure("typed restore corpus qualification identity is invalid")
+    if typed_corpus["manifest"] != execution_inputs["wanco_typed_restore_corpus"]:
+        raise MatrixFailure("typed restore corpus manifest identity is invalid")
     plan = receipt["plan"]
-    if not isinstance(plan, dict) or plan != build_plan(str(plan.get("database_path", ""))):
+    if not isinstance(plan, dict) or plan != build_plan(DEFAULT_DATABASE_PATH):
         raise MatrixFailure("matrix receipt does not contain the canonical cut plan")
     if receipt["plan_sha256"] != canonical_sha256(plan):
         raise MatrixFailure("matrix plan digest is invalid")
@@ -1403,6 +1893,7 @@ def _validate_cell(
         "external_oracle",
         "expected_acknowledgements",
         "raw_client_observation",
+        "retained_raw_evidence",
         "equivalence_projection",
     }
     if spec.continuation_witness is not None:
@@ -1438,6 +1929,30 @@ def _validate_cell(
         label=f"cell {spec.cell_id}",
         migrated_cursor=spec.cell_id == "active-read-cursor",
     )
+    retained = _validate_raw_evidence_references(
+        cell["retained_raw_evidence"],
+        label=f"cell {spec.cell_id}",
+        path_label=spec.cell_id,
+        source_cursor_required=spec.cell_id == "active-read-cursor",
+    )
+    if (
+        _artifact_identity(retained["client_stdout"], f"cell {spec.cell_id} stdout")
+        != observation["stdout"]
+        or _artifact_identity(
+            retained["expected_acknowledgements"],
+            f"cell {spec.cell_id} expected acknowledgements",
+        )
+        != cell["expected_acknowledgements"]
+        or _artifact_identity(
+            retained["namespace_snapshot"], f"cell {spec.cell_id} namespace"
+        )
+        != cell["namespace_snapshot"]["artifact"]
+        or _artifact_identity(
+            retained["oracle_report"], f"cell {spec.cell_id} oracle report"
+        )
+        != cell["external_oracle"]["report"]
+    ):
+        raise MatrixFailure(f"cell {spec.cell_id} raw evidence identity binding is invalid")
     derived_projection = _derive_equivalence_projection(
         oracle_projection, observation, f"cell {spec.cell_id}"
     )
@@ -1560,6 +2075,27 @@ def _validate_cell(
 validate_receipt = validate_matrix_receipt
 
 
+def load_and_validate(
+    path: Path,
+    *,
+    expected_revision: str,
+    oracle_binary: Path,
+) -> Mapping[str, object]:
+    absolute = path.absolute()
+    try:
+        raw = ARTIFACTS.read_bounded_file(
+            absolute, "matrix receipt", max_bytes=MAX_SQLITE_JSON_BYTES
+        )
+    except ARTIFACTS.ArtifactError as error:
+        raise MatrixFailure(str(error)) from error
+    receipt = _parse_json_bytes(raw, "matrix receipt")
+    if canonical_bytes(receipt) + b"\n" != raw:
+        raise MatrixFailure("matrix receipt is not canonical newline-terminated JSON")
+    validate_matrix_receipt(receipt, expected_revision)
+    validate_retained_evidence(receipt, absolute.parent, oracle_binary)
+    return receipt
+
+
 def _publish(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = canonical_bytes(value) + b"\n"
@@ -1584,6 +2120,8 @@ def _parse_args() -> argparse.Namespace:
     plan.add_argument("--output", type=Path, required=True)
     validate = commands.add_parser("validate", help="validate a completed matrix receipt")
     validate.add_argument("receipt", type=Path)
+    validate.add_argument("--expected-revision", required=True)
+    validate.add_argument("--oracle-binary", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -1594,11 +2132,11 @@ def main() -> int:
             _publish(arguments.output, build_plan(arguments.database_path))
             print(f"SQLite rollback-journal cut plan: {arguments.output}")
             return 0
-        raw = arguments.receipt.read_bytes()
-        receipt = json.loads(raw)
-        if canonical_bytes(receipt) + b"\n" != raw:
-            raise MatrixFailure("matrix receipt is not canonical newline-terminated JSON")
-        validate_matrix_receipt(receipt)
+        load_and_validate(
+            arguments.receipt,
+            expected_revision=arguments.expected_revision,
+            oracle_binary=arguments.oracle_binary,
+        )
         print(f"SQLite rollback-journal matrix receipt is valid: {arguments.receipt}")
         return 0
     except (MatrixFailure, OSError, json.JSONDecodeError) as error:

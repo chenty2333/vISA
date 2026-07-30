@@ -18,16 +18,18 @@ docker image inspect "$image" >/dev/null
 image_id=$(docker image inspect "$image" --format '{{.Id}}')
 
 if [[ -n ${VISA_WANCO_CORPUS_ROOT:-} ]]; then
-    work_root=$VISA_WANCO_CORPUS_ROOT
-    if [[ -e $work_root ]]; then
-        printf 'refusing to overwrite corpus result root: %s\n' "$work_root" >&2
+    artifact_root=$(realpath -m "$VISA_WANCO_CORPUS_ROOT")
+    if [[ -e $artifact_root ]]; then
+        printf 'refusing to overwrite corpus artifact root: %s\n' \
+            "$artifact_root" >&2
         exit 1
     fi
-    mkdir -p "$work_root"
-    work_root=$(realpath "$work_root")
+    mkdir -p "$(dirname "$artifact_root")"
 else
-    work_root=$(mktemp -d /tmp/visa-wanco-typed-corpus.XXXXXXXX)
+    publication_parent=$(mktemp -d /tmp/visa-wanco-typed-corpus-publish.XXXXXXXX)
+    artifact_root="$publication_parent/corpus"
 fi
+work_root=$(mktemp -d /tmp/visa-wanco-typed-corpus-work.XXXXXXXX)
 
 host_uid=$(id -u)
 host_gid=$(id -g)
@@ -44,6 +46,15 @@ cleanup() {
     for name in "${live_containers[@]:-}"; do
         docker rm --force "$name" >/dev/null 2>&1 || true
     done
+    case "$work_root" in
+        /tmp/visa-wanco-typed-corpus-work.*)
+            find "$work_root" -xdev -depth -delete 2>/dev/null || true
+            ;;
+        *)
+            printf 'refusing unexpected typed-corpus scratch cleanup: %s\n' \
+                "$work_root" >&2
+            ;;
+    esac
 }
 trap cleanup EXIT INT TERM
 
@@ -93,14 +104,18 @@ docker run --rm \
 run_case() {
     local profile=$1
     local opt=$2
-    local marker=$3
+    local checkpoint_marker=$3
     local expected_frames=$4
     local expected_values=$5
+    local ready_marker=${6:-$checkpoint_marker}
     local case_host="$work_root/results/${profile}-O${opt}"
     local case_container="/work/results/${profile}-O${opt}"
     local name="visa-wanco-corpus-${profile}-O${opt}-$$-$RANDOM"
+    local container_id
+    local nonce=""
     local ready=false
     local exit_code
+    local -a witness_environment=()
 
     mkdir -p "$case_host"
     docker run --rm \
@@ -110,18 +125,35 @@ run_case() {
         "$image" "/work/${profile}-O${opt}" \
         >"$case_host/control.stdout" 2>"$case_host/control.stderr"
 
+    if [[ $profile == post-import-root ]]; then
+        nonce=$(
+            printf '%s\n' "$image_id:$profile:O$opt" |
+                sha256sum | cut -d' ' -f1
+        )
+        witness_environment=(
+            --env "VISA_WANCO_IMPORT_WITNESS_NONCE=$nonce"
+        )
+    fi
+
     live_containers+=("$name")
     docker run --detach \
         --name "$name" \
         --user "$host_uid:$host_gid" \
+        "${witness_environment[@]}" \
         --volume "$work_root:/work:Z" \
         --workdir "$case_container" \
         "$image" sh -ec \
         "exec /work/${profile}-O${opt} > checkpoint.stdout 2> checkpoint.stderr" \
         >"$case_host/container.id"
+    container_id=$(tr -d '\n' <"$case_host/container.id")
+    if [[ ! $container_id =~ ^[0-9a-f]{64}$ ]]; then
+        printf 'invalid container identity for %s O%s: %s\n' \
+            "$profile" "$opt" "$container_id" >&2
+        return 1
+    fi
 
     for _ in $(seq 1 300); do
-        if grep -Fxq "$marker" "$case_host/checkpoint.stdout" 2>/dev/null; then
+        if grep -Fxq "$ready_marker" "$case_host/checkpoint.stdout" 2>/dev/null; then
             ready=true
             break
         fi
@@ -134,11 +166,20 @@ run_case() {
     if [[ $ready != true ]]; then
         docker logs "$name" >&2 || true
         printf 'checkpoint marker %s was not reached for %s O%s\n' \
-            "$marker" "$profile" "$opt" >&2
+            "$ready_marker" "$profile" "$opt" >&2
         return 1
     fi
 
-    docker kill --signal USR1 "$name" >"$case_host/signal.stdout"
+    if [[ $profile == post-import-root ]]; then
+        grep -Fxq "entered $nonce" "$case_host/import-entered.txt"
+    fi
+    docker kill --signal USR1 "$container_id" >"$case_host/signal.stdout"
+    if [[ $profile == post-import-root ]]; then
+        printf 'signal-dispatched %s\n' "$nonce" \
+            >"$case_host/signal-dispatched.tmp"
+        mv "$case_host/signal-dispatched.tmp" \
+            "$case_host/signal-dispatched.txt"
+    fi
     exit_code=$(docker wait "$name")
     docker rm "$name" >"$case_host/remove.stdout"
     live_containers=("${live_containers[@]/$name}")
@@ -148,6 +189,14 @@ run_case() {
         return 1
     fi
     test -s "$case_host/checkpoint.pb"
+    grep -Fxq "$checkpoint_marker" "$case_host/checkpoint.stdout"
+    if [[ $profile == post-import-root ]]; then
+        grep -Fxq "$container_id" "$case_host/signal.stdout"
+        grep -Fxq "signal-dispatched $nonce" \
+            "$case_host/signal-dispatched.txt"
+        grep -Fxq "release-observed $nonce" \
+            "$case_host/import-release-observed.txt"
+    fi
 
     docker run --rm \
         --user "$host_uid:$host_gid" \
@@ -182,14 +231,16 @@ for opt in 0 1 2; do
     run_case data-segment "$opt" 903 4 0
 done
 for opt in 0 1 2; do
-    run_case post-import-root "$opt" 1003 1 0
+    run_case post-import-root "$opt" 1005 1 0 1003
 done
 
 python3 "$repo_root/scripts/wanco_typed_corpus.py" build \
-    --root "$work_root" \
+    --source-root "$work_root" \
+    --artifact-root "$artifact_root" \
     --image-tag "$image" \
     --image-id "$image_id" \
-    --wanco-build-receipt "$build_receipt" \
-    --output "$work_root/receipt.json"
+    --wanco-build-receipt "$build_receipt"
 
-printf 'typed checkpoint corpus result root: %s\n' "$work_root"
+python3 "$repo_root/scripts/wanco_typed_corpus.py" validate \
+    "$artifact_root/receipt.json"
+printf 'typed checkpoint corpus artifact root: %s\n' "$artifact_root"
