@@ -838,6 +838,8 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
     require(
         "gate_system_stock_sqlite()" in gate
         and "scripts/run-stock-sqlite-rollback-matrix.py" in gate
+        and "scripts/wanco_typed_corpus.py validate" in gate
+        and "--typed-corpus-receipt" in gate
         and "scripts/sqlite_rollback_matrix.py validate" in gate
         and "system-stock-sqlite) gate_system_stock_sqlite ;;" in gate,
         "stock SQLite host tier is not wired to the real validated matrix runner",

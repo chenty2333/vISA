@@ -147,7 +147,7 @@ operation ID.
 
 ## Evidence validity
 
-A valid `visa-stock-sqlite-rollback-journal-matrix-v3` receipt contains exactly
+A valid `visa-stock-sqlite-rollback-journal-matrix-v4` receipt contains exactly
 eight cells in canonical order. Each cell binds its plan entry, exact barrier
 effect, nonempty compute checkpoint, four-state handoff, namespace snapshot,
 raw stdout and parsed ACK terminals, stdout-derived expected-ACK input, and an
@@ -155,9 +155,15 @@ accepted independent-oracle report. The
 top-level input chain also binds the SQLite and Wanco source locks and build
 receipts, stock Wasm and AOT, provider, migration binder and migration driver
 binaries, oracle binary,
-the stock Wasm import trace, exact dirty-worktree projection, provider
+the stock Wasm import trace, exact dirty-worktree projection, the complete
+nine-case O0/O1/O2 typed-restore qualification, provider
 kill/reopen qualification, and source-abort reconciliation qualification. The
-validator independently reconstructs both terminal authority documents from
+typed-corpus validator independently checks exact case inventory, frame and
+typed-value observations, exact-stackmap record counts, checkpoint markers,
+wrong-target exclusion, and checkpoint-prefix plus restore-suffix equality to
+the uninterrupted control. Its canonical bytes are digest-bound as an
+execution input rather than inferred from a build capability flag.
+The validator independently reconstructs both terminal authority documents from
 their compact fields, independently reconstructs both adapter-binding receipts
 from their retained documents, and requires distinct adapter configurations for
 the source-retained and committed controls. It rejects state, proof, receipt,
@@ -172,4 +178,4 @@ A receipt is published only after the real stock binary, typed Wanco restore,
 same-request lost-response retry and drain rejection, all eight handoffs, all
 eight oracle runs, provider kill/reopen qualification, and source-compute abort
 reconciliation complete. The `plan` subcommand remains explicitly non-evidence;
-the real runner's compact v3 receipt is the validation input.
+the real runner's compact v4 receipt is the validation input.

@@ -577,7 +577,8 @@ state. This
 is a process-crash result only: power failure, torn sectors, lying `fsync`,
 device write reordering, WAL mode, arbitrary applications, cross-host or
 cross-ISA execution, and production scheduling remain explicit nonclaims.
-Canonical CI retains the compact matrix receipt and input build receipts; its
+Canonical CI retains the compact matrix receipt, the independently validated
+nine-case typed-corpus receipt, and input build receipts; its
 large checkpoint and provider working directories are reproducible scratch
 state rather than archival artifacts.
 

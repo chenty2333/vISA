@@ -29,10 +29,15 @@ scripts/build-wanco-carrier.sh
 third_party/wanco/corpus/run-typed-checkpoint-corpus.sh
 ```
 
-The runner compiles all three inputs at O0, O1, and O2. For each of the nine cells it
-compares checkpoint-prefix plus fresh-process restore output with an
-uninterrupted control. Set `VISA_WANCO_IMAGE` to exercise a specific local image
-or `VISA_WANCO_CORPUS_ROOT` to retain results at an explicit new path.
+The runner compiles all three inputs at O0, O1, and O2. For each of the nine
+cells it compares checkpoint-prefix plus fresh-process restore output with an
+uninterrupted control. It publishes `receipt.json`, whose validator recomputes
+the exact nine-case inventory, frame/value observations, exact stackmap-record
+counts, checkpoint marker, wrong indirect-target exclusion, and output
+equivalence from compact retained values. Run
+`python3 scripts/wanco_typed_corpus.py validate <root>/receipt.json` to validate
+it separately. Set `VISA_WANCO_IMAGE` to exercise a specific local image or
+`VISA_WANCO_CORPUS_ROOT` to retain results at an explicit new path.
 
 This corpus isolates compiler/runtime restore correctness. The stock SQLite
 rollback-journal matrix remains the end-to-end application and WASI-provider

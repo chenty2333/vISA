@@ -33,6 +33,42 @@ def canonical_identity(value: object) -> dict[str, object]:
     return {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}
 
 
+def typed_corpus_receipt(build_receipt: dict[str, object]) -> dict[str, object]:
+    cases: list[dict[str, object]] = []
+    for index, spec in enumerate(MATRIX.TYPED_CORPUS.CASE_SPECS, start=1):
+        prefix = [spec.marker - 1, spec.marker]
+        suffix = [spec.marker + 1]
+        cases.append(
+            {
+                "case_id": spec.case_id,
+                "profile": spec.profile,
+                "optimization": spec.optimization,
+                "checkpoint_marker": spec.marker,
+                "expected_frames": spec.frames,
+                "observed_frames": spec.frames,
+                "expected_typed_stack_values": spec.typed_stack_values,
+                "observed_typed_stack_values": spec.typed_stack_values,
+                "exact_stackmap_records": spec.frames,
+                "control_values": prefix + suffix,
+                "checkpoint_prefix_values": prefix,
+                "restored_suffix_values": suffix,
+                "control_stdout": MATRIX.TYPED_CORPUS.values_identity(prefix + suffix),
+                "checkpoint_stdout": MATRIX.TYPED_CORPUS.values_identity(prefix),
+                "restore_stdout": MATRIX.TYPED_CORPUS.values_identity(suffix),
+                "checkpoint_stderr": identity(index * 20 + 4),
+                "restore_stderr": identity(index * 20 + 5),
+                "checkpoint": identity(index * 20 + 6),
+            }
+        )
+    return {
+        "schema": MATRIX.TYPED_CORPUS.SCHEMA,
+        "image_tag": "visa-wanco-carrier:locked",
+        "image_id": "sha256:" + "ab" * 32,
+        "wanco_build_receipt": build_receipt,
+        "cases": cases,
+    }
+
+
 def status(
     mode: str,
     barrier: str,
@@ -101,11 +137,14 @@ def handoff(source_client: str, destination_client: str) -> dict[str, object]:
 def complete_receipt() -> dict[str, object]:
     plan = MATRIX.build_plan()
     acknowledgement = identity(4)
+    wanco_build_receipt = identity(13)
+    typed_corpus = typed_corpus_receipt(wanco_build_receipt)
     execution_inputs = {
         "sqlite_source_lock": identity(10),
         "sqlite_build_receipt": identity(11),
         "wanco_source_lock": identity(12),
-        "wanco_build_receipt": identity(13),
+        "wanco_build_receipt": wanco_build_receipt,
+        "wanco_typed_restore_corpus": canonical_identity(typed_corpus),
         "stock_sqlite_wasm": identity(14),
         "stock_sqlite_aot": identity(1),
         "stock_sqlite_import_trace": identity(17),
@@ -285,6 +324,7 @@ def complete_receipt() -> dict[str, object]:
         "plan_sha256": MATRIX.canonical_sha256(plan),
         "workload": workload,
         "cells": cells,
+        "typed_restore_corpus_qualification": typed_corpus,
         "process_recovery_qualification": {
             "scope": "provider-process-kill-reopen",
             "report": identity(900),
@@ -567,6 +607,18 @@ class MatrixContractTests(unittest.TestCase):
             "process-recovery-missing-case": lambda receipt: receipt[
                 "process_recovery_qualification"
             ]["qualified_tests"].pop(),
+            "typed-corpus-missing-case": lambda receipt: receipt[
+                "typed_restore_corpus_qualification"
+            ]["cases"].pop(),
+            "typed-corpus-restore-divergence": lambda receipt: receipt[
+                "typed_restore_corpus_qualification"
+            ]["cases"][0]["restored_suffix_values"].__setitem__(0, 9999),
+            "typed-corpus-wrong-build": lambda receipt: receipt[
+                "typed_restore_corpus_qualification"
+            ].__setitem__("wanco_build_receipt", identity(777)),
+            "typed-corpus-identity-drift": lambda receipt: receipt[
+                "execution_inputs"
+            ]["wanco_typed_restore_corpus"].__setitem__("size", 777),
             "ack-not-observed": lambda receipt: receipt["cells"][0][
                 "raw_client_observation"
             ].__setitem__("ack_terminal_count", 0),

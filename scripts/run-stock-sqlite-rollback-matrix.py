@@ -1046,17 +1046,25 @@ def verify_execution_inputs(
     sqlite_source_lock_path: Path,
     wanco_source_lock_path: Path,
     wanco_build_receipt_path: Path,
+    typed_corpus_receipt_path: Path,
     host_binary: Path,
     bind_binary: Path,
     driver_binary: Path,
     oracle_binary: Path,
     docker: str,
-) -> tuple[dict[str, object], DockerAot, dict[str, dict[str, object]], dict[str, Path]]:
+) -> tuple[
+    dict[str, object],
+    DockerAot,
+    dict[str, dict[str, object]],
+    dict[str, Path],
+    dict[str, object],
+]:
     build_receipt_path = artifact_root / "receipt.json"
     build_receipt = read_json(build_receipt_path, "stock SQLite build receipt")
     source_lock = read_json(sqlite_source_lock_path, "stock SQLite source lock")
     wanco_source_lock = read_json(wanco_source_lock_path, "Wanco source lock")
     wanco_receipt = read_json(wanco_build_receipt_path, "Wanco build receipt")
+    typed_corpus = read_json(typed_corpus_receipt_path, "Wanco typed corpus receipt")
     if build_receipt.get("schema") != "visa-stock-sqlite-build-receipt-v1":
         raise MatrixFailure("unsupported stock SQLite build receipt schema")
     if source_lock.get("schema") != "visa-stock-sqlite-source-lock-v1":
@@ -1075,6 +1083,17 @@ def verify_execution_inputs(
         or wanco_receipt.get("post_import_checkpoint_points") is not True
     ):
         raise MatrixFailure("Wanco build lacks the qualified typed-restore contract")
+    try:
+        CONTRACT.TYPED_CORPUS.validate_receipt(typed_corpus)
+    except CONTRACT.TYPED_CORPUS.CorpusFailure as error:
+        raise MatrixFailure(f"Wanco typed corpus receipt is invalid: {error}") from error
+    if (
+        typed_corpus["wanco_build_receipt"]
+        != CONTRACT.file_identity(wanco_build_receipt_path)
+        or typed_corpus["image_tag"] != wanco_receipt.get("image_tag")
+        or typed_corpus["image_id"] != wanco_receipt.get("image_id")
+    ):
+        raise MatrixFailure("Wanco typed corpus is detached from the locked build")
     if (
         build_receipt.get("zero_upstream_source_patches") is not True
         or require_object(source_lock.get("source_policy"), "SQLite source policy").get(
@@ -1165,6 +1184,9 @@ def verify_execution_inputs(
         "sqlite_build_receipt": CONTRACT.file_identity(build_receipt_path),
         "wanco_source_lock": CONTRACT.file_identity(wanco_source_lock_path),
         "wanco_build_receipt": CONTRACT.file_identity(wanco_build_receipt_path),
+        "wanco_typed_restore_corpus": CONTRACT.file_identity(
+            typed_corpus_receipt_path
+        ),
         "stock_sqlite_wasm": CONTRACT.file_identity(wasm),
         "stock_sqlite_aot": CONTRACT.file_identity(aot),
         "stock_sqlite_import_trace": CONTRACT.file_identity(imports_trace),
@@ -1178,6 +1200,7 @@ def verify_execution_inputs(
         DockerAot(docker, image, aot),
         inputs,
         workload_paths,
+        typed_corpus,
     )
 
 
@@ -2913,6 +2936,11 @@ def parse_arguments() -> argparse.Namespace:
         default=Path("target/.ci-cache/wanco-carrier/build-receipt.json"),
     )
     parser.add_argument(
+        "--typed-corpus-receipt",
+        type=Path,
+        default=Path("target/.ci-artifacts/wanco-typed-corpus/receipt.json"),
+    )
+    parser.add_argument(
         "--host-binary", type=Path, default=Path("target/debug/visa_wasi_host")
     )
     parser.add_argument(
@@ -2971,6 +2999,9 @@ def run_matrix(
     wanco_build_receipt = absolute_from(
         repository, arguments.wanco_build_receipt
     ).resolve()
+    typed_corpus_receipt = absolute_from(
+        repository, arguments.typed_corpus_receipt
+    ).resolve()
     host_binary = absolute_from(repository, arguments.host_binary).resolve()
     bind_binary = absolute_from(repository, arguments.bind_binary).resolve()
     driver_binary = absolute_from(repository, arguments.driver_binary).resolve()
@@ -2982,12 +3013,13 @@ def run_matrix(
         raise MatrixFailure(f"refusing to replace an existing matrix receipt: {output}")
     if not arguments.skip_runtime_build:
         build_runtime_binaries(repository)
-    build_receipt, runtime, inputs, workload_paths = verify_execution_inputs(
+    build_receipt, runtime, inputs, workload_paths, typed_corpus = verify_execution_inputs(
         repository=repository,
         artifact_root=artifact_root,
         sqlite_source_lock_path=sqlite_source_lock,
         wanco_source_lock_path=wanco_source_lock,
         wanco_build_receipt_path=wanco_build_receipt,
+        typed_corpus_receipt_path=typed_corpus_receipt,
         host_binary=host_binary,
         bind_binary=bind_binary,
         driver_binary=driver_binary,
@@ -3116,6 +3148,7 @@ def run_matrix(
             "expected_cursor_rows": CURSOR_ROWS,
         },
         "cells": cells,
+        "typed_restore_corpus_qualification": typed_corpus,
         "process_recovery_qualification": process_recovery,
         "source_abort_reconciliation_qualification": source_abort,
         "durability_scope": {

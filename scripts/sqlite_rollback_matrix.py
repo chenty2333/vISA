@@ -19,10 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Protocol
 
+import wanco_typed_corpus as TYPED_CORPUS
+
 
 PLAN_SCHEMA = "visa-stock-sqlite-rollback-journal-plan-v1"
 CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v1"
-MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v3"
+MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v4"
 CANONICAL_AUTHORITY_STATE_SCHEMA = "visa-wasi-canonical-authority-state-v2"
 SOURCE_RETAINED_PROOF_SCHEMA = "visa-canonical-source-retained-proof-v1"
 SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1"
@@ -888,6 +890,7 @@ def validate_matrix_receipt(receipt: object) -> None:
         "plan_sha256",
         "workload",
         "cells",
+        "typed_restore_corpus_qualification",
         "process_recovery_qualification",
         "source_abort_reconciliation_qualification",
         "durability_scope",
@@ -924,6 +927,7 @@ def validate_matrix_receipt(receipt: object) -> None:
         "sqlite_build_receipt",
         "wanco_source_lock",
         "wanco_build_receipt",
+        "wanco_typed_restore_corpus",
         "stock_sqlite_wasm",
         "stock_sqlite_aot",
         "stock_sqlite_import_trace",
@@ -936,6 +940,19 @@ def validate_matrix_receipt(receipt: object) -> None:
         raise MatrixFailure("execution input binding has the wrong fields")
     for name in sorted(expected_inputs):
         _validate_file_identity(execution_inputs[name], "execution input " + name)
+    typed_corpus = receipt["typed_restore_corpus_qualification"]
+    try:
+        TYPED_CORPUS.validate_receipt(typed_corpus)
+    except TYPED_CORPUS.CorpusFailure as error:
+        raise MatrixFailure(f"typed restore corpus is invalid: {error}") from error
+    if typed_corpus["wanco_build_receipt"] != execution_inputs["wanco_build_receipt"]:
+        raise MatrixFailure("typed restore corpus uses a different Wanco build receipt")
+    typed_raw = TYPED_CORPUS.canonical_bytes(typed_corpus) + b"\n"
+    if execution_inputs["wanco_typed_restore_corpus"] != {
+        "sha256": hashlib.sha256(typed_raw).hexdigest(),
+        "size": len(typed_raw),
+    }:
+        raise MatrixFailure("typed restore corpus qualification identity is invalid")
     plan = receipt["plan"]
     if not isinstance(plan, dict) or plan != build_plan(str(plan.get("database_path", ""))):
         raise MatrixFailure("matrix receipt does not contain the canonical cut plan")

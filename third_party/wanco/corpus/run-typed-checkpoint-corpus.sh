@@ -4,16 +4,18 @@ set -Eeuo pipefail
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
+build_receipt=${VISA_WANCO_BUILD_RECEIPT:-$repo_root/target/.ci-cache/wanco-carrier/build-receipt.json}
+if [[ ! -f $build_receipt ]]; then
+    printf '%s\n' 'build the locked Wanco carrier before running its typed corpus' >&2
+    exit 1
+fi
 image=${VISA_WANCO_IMAGE:-}
 if [[ -z $image ]]; then
-    receipt="$repo_root/target/.ci-cache/wanco-carrier/build-receipt.json"
-    if [[ ! -f $receipt ]]; then
-        printf '%s\n' 'set VISA_WANCO_IMAGE or build the locked Wanco carrier first' >&2
-        exit 1
-    fi
-    image=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_tag"])' "$receipt")
+    image=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_tag"])' \
+        "$build_receipt")
 fi
 docker image inspect "$image" >/dev/null
+image_id=$(docker image inspect "$image" --format '{{.Id}}')
 
 if [[ -n ${VISA_WANCO_CORPUS_ROOT:-} ]]; then
     work_root=$VISA_WANCO_CORPUS_ROOT
@@ -167,5 +169,12 @@ done
 for opt in 0 1 2; do
     run_case data-segment "$opt" 903 4 0
 done
+
+python3 "$repo_root/scripts/wanco_typed_corpus.py" build \
+    --root "$work_root" \
+    --image-tag "$image" \
+    --image-id "$image_id" \
+    --wanco-build-receipt "$build_receipt" \
+    --output "$work_root/receipt.json"
 
 printf 'typed checkpoint corpus result root: %s\n' "$work_root"

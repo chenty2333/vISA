@@ -294,6 +294,8 @@ gate_stock_sqlite_source_lock() {
         python3 scripts/test-check-sqlite-source.py
     run_gate "system contract: stock SQLite rollback-journal matrix tests" \
         python3 scripts/test-sqlite-rollback-matrix.py
+    run_gate "system contract: Wanco typed restore corpus receipt tests" \
+        python3 scripts/test-wanco-typed-corpus.py
     run_gate "system runner: stock SQLite rollback-journal runner tests" \
         python3 scripts/test-run-stock-sqlite-rollback-matrix.py
 }
@@ -773,11 +775,14 @@ gate_system_stock_sqlite() {
     run_gate "system-stock-sqlite: nine-cell typed restore corpus" \
         env VISA_WANCO_CORPUS_ROOT="$corpus_root" \
             third_party/wanco/corpus/run-typed-checkpoint-corpus.sh
+    run_gate "system-stock-sqlite: typed restore corpus receipt validation" \
+        python3 scripts/wanco_typed_corpus.py validate "$corpus_root/receipt.json"
     run_gate "system-stock-sqlite: unmodified stock SQLite build" \
         env VISA_STOCK_SQLITE_OUT="$build_root" scripts/build-stock-sqlite.sh
     run_gate "system-stock-sqlite: eight-cut migration and recovery matrix" \
         python3 scripts/run-stock-sqlite-rollback-matrix.py \
             --artifact-root "$build_root" \
+            --typed-corpus-receipt "$corpus_root/receipt.json" \
             --output "$system_bundle_path" \
             --work-root "$matrix_work_root"
     run_gate "system-stock-sqlite: independent matrix receipt validation" \
@@ -792,6 +797,7 @@ from pathlib import Path
 receipt = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert receipt["repository_source_snapshot"]["clean"] is True
 assert len(receipt["cells"]) == 8
+assert len(receipt["typed_restore_corpus_qualification"]["cases"]) == 9
 assert all(cell["external_oracle"]["accepted"] is True for cell in receipt["cells"])
 assert receipt["source_abort_reconciliation_qualification"]["accepted"] is True
 assert receipt["process_recovery_qualification"]["exit_status"] == 0
@@ -803,6 +809,8 @@ PY
         "$system_artifact_root/stock-sqlite-build-receipt.json"
     install -m 0644 target/.ci-cache/wanco-carrier/build-receipt.json \
         "$system_artifact_root/wanco-build-receipt.json"
+    install -m 0644 "$corpus_root/receipt.json" \
+        "$system_artifact_root/wanco-typed-corpus-receipt.json"
 
     case "$scratch_root" in
         /tmp/visa-stock-sqlite-system.*)
