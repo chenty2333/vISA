@@ -80,6 +80,24 @@ fn valid_database() -> Vec<u8> {
     )
 }
 
+fn alternate_valid_database() -> Vec<u8> {
+    stock_database(
+        "CREATE TABLE accounts (\
+             account_id INTEGER PRIMARY KEY,\
+             balance INTEGER NOT NULL\
+         );\
+         CREATE TABLE transactions (\
+             txid TEXT NOT NULL PRIMARY KEY,\
+             from_account INTEGER NOT NULL REFERENCES accounts(account_id),\
+             to_account INTEGER NOT NULL REFERENCES accounts(account_id),\
+             amount INTEGER NOT NULL CHECK(amount > 0)\
+         );",
+        "INSERT INTO accounts(account_id, balance) VALUES (2, 40), (1, 60);\
+         INSERT INTO transactions(txid, from_account, to_account, amount)\
+         VALUES ('tx-001', 1, 2, 30);",
+    )
+}
+
 fn snapshot_with_database(database: Vec<u8>) -> NamespaceSnapshot {
     NamespaceSnapshot {
         version: visa_wasi_protocol::NAMESPACE_SNAPSHOT_VERSION,
@@ -176,6 +194,19 @@ fn assert_finding(report: &OracleReport, code: &str) {
 fn valid_snapshot_is_materialized_and_recomputed_with_native_sqlite() {
     let report = evaluate_snapshot(&snapshot_with_database(valid_database()), &["tx-001"]);
     assert!(report.accepted, "{:?}", report.findings);
+    let projection = report.semantic_projection.as_ref().expect("semantic projection");
+    assert_eq!(projection.schema_version, SEMANTIC_PROJECTION_SCHEMA_VERSION);
+    assert_eq!(projection.logical_contents.account_rows, 2);
+    assert_eq!(projection.logical_contents.transaction_rows, 1);
+    assert_eq!(
+        projection.logical_contents.accounts_sha256,
+        "bf96567759cfb471e6bc31078e151787733b7a8135e26fabd0557b77c7d9b459"
+    );
+    assert_eq!(projection.logical_contents.transactions_sha256.len(), 64);
+    assert!(projection.integrity_ok);
+    assert!(projection.foreign_keys_ok);
+    assert!(projection.schema_accepted);
+    assert!(projection.acknowledgements.exact_match);
     let namespace = report.namespace.expect("namespace report");
     assert_eq!(namespace.sqlite_sidecars[0].utf8.as_deref(), Some("bank.db-journal"));
     assert_eq!(namespace.locks.len(), 1);
@@ -193,6 +224,22 @@ fn valid_snapshot_is_materialized_and_recomputed_with_native_sqlite() {
     assert!(sqlite.balance.all_nonnegative);
     assert!(sqlite.transactions.unique_txids);
     assert!(sqlite.acknowledgements.exact_match);
+}
+
+#[test]
+fn semantic_projection_changes_when_logical_rows_change() {
+    let first = evaluate_snapshot(&snapshot_with_database(valid_database()), &["tx-001"]);
+    let second =
+        evaluate_snapshot(&snapshot_with_database(alternate_valid_database()), &["tx-001"]);
+    assert!(first.accepted, "{:?}", first.findings);
+    assert!(second.accepted, "{:?}", second.findings);
+    let first = first.semantic_projection.expect("first semantic projection");
+    let second = second.semantic_projection.expect("second semantic projection");
+    assert_ne!(first.logical_contents.accounts_sha256, second.logical_contents.accounts_sha256);
+    assert_eq!(
+        first.logical_contents.transactions_sha256,
+        second.logical_contents.transactions_sha256
+    );
 }
 
 #[cfg(unix)]

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 
-SCHEMA = "visa-wanco-typed-checkpoint-corpus-v1"
+SCHEMA = "visa-wanco-typed-checkpoint-corpus-v2"
 
 
 class CorpusFailure(RuntimeError):
@@ -39,6 +39,7 @@ CASE_SPECS = tuple(
         ("direct", 703, 6, 4),
         ("indirect", 803, 3, 3),
         ("data-segment", 903, 4, 0),
+        ("post-import-root", 1003, 1, 0),
     )
     for optimization in range(3)
 )
@@ -280,7 +281,7 @@ def validate_receipt(receipt: object) -> None:
     _require_identity(receipt["wanco_build_receipt"], "Wanco build receipt")
     cases = receipt["cases"]
     if not isinstance(cases, list) or len(cases) != len(CASE_SPECS):
-        raise CorpusFailure("typed corpus must contain exactly nine cases")
+        raise CorpusFailure("typed corpus must contain exactly twelve cases")
     for case, spec in zip(cases, CASE_SPECS, strict=True):
         _validate_case(case, spec)
 

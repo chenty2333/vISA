@@ -1523,6 +1523,7 @@ def validate_execution_input_chain(
         or wanco_receipt.get("active_data_segments_preserved_on_restore") is not True
         or wanco_receipt.get("per_frame_callee_saved_registers") is not True
         or wanco_receipt.get("post_import_checkpoint_points") is not True
+        or wanco_receipt.get("guest_tail_calls_disabled") is not True
     ):
         raise MatrixFailure("Wanco build lacks the qualified typed-restore contract")
 

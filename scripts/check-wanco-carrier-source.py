@@ -136,6 +136,7 @@ def main() -> int:
         "lib-rt/stacktrace/stacktrace.cc",
         "lib-rt/stacktrace/stacktrace.h",
         "lib-rt/wanco.h",
+        "wanco/src/compile/compile_module.rs",
         "wanco/src/compile/control.rs",
         "wanco/src/compile/cr/checkpoint.rs",
         "wanco/src/compile/synthesize.rs",
@@ -151,14 +152,15 @@ def main() -> int:
         fail("build.patched_files contains a malformed SHA-256")
 
     patches = lock["patches"]
-    if not isinstance(patches, list) or len(patches) != 8:
-        fail("exactly eight ordered carrier platform patches are required")
+    if not isinstance(patches, list) or len(patches) != 9:
+        fail("exactly nine ordered carrier platform patches are required")
     expected_scopes = [
         "build",
         "build",
         "runtime-correctness",
         "runtime-correctness",
         "build",
+        "runtime-correctness",
         "runtime-correctness",
         "runtime-correctness",
         "runtime-correctness",

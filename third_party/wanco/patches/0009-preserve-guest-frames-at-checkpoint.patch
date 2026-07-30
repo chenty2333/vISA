@@ -1,0 +1,18 @@
+diff --git a/wanco/src/compile/compile_module.rs b/wanco/src/compile/compile_module.rs
+index f9fc038..7aa1a11 100644
+--- a/wanco/src/compile/compile_module.rs
++++ b/wanco/src/compile/compile_module.rs
+@@ -350,6 +350,13 @@ fn declare_functions(ctx: &mut Context<'_, '_>) -> Result<()> {
+                     .ictx
+                     .create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0);
+                 f.add_attribute(inkwell::attributes::AttributeLoc::Function, attr_noinline);
++                let attr_disable_tail_calls = ctx
++                    .ictx
++                    .create_string_attribute("disable-tail-calls", "true");
++                f.add_attribute(
++                    inkwell::attributes::AttributeLoc::Function,
++                    attr_disable_tail_calls,
++                );
+             }
+             f
+         });

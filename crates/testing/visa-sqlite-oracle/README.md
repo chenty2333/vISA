@@ -25,7 +25,8 @@ The oracle performs four steps:
 4. Emit a deterministic JSON report containing `integrity_check`,
    `foreign_key_check`, sorted logical rows, stock-schema checks, conserved and
    nonnegative balances, positive transfer amounts, unique transaction IDs,
-   and an exact comparison with an external acknowledgement set.
+   an exact comparison with an external acknowledgement set, and a compact
+   native `visa-sqlite-semantic-projection-v1` over those rows and invariants.
 
 Run it with:
 

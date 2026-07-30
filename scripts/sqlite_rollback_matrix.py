@@ -23,8 +23,12 @@ import wanco_typed_corpus as TYPED_CORPUS
 
 
 PLAN_SCHEMA = "visa-stock-sqlite-rollback-journal-plan-v1"
-CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v1"
-MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v4"
+CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v2"
+MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v5"
+CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v1"
+ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
+ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
+EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 CANONICAL_AUTHORITY_STATE_SCHEMA = "visa-wasi-canonical-authority-state-v2"
 SOURCE_RETAINED_PROOF_SCHEMA = "visa-canonical-source-retained-proof-v1"
 SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1"
@@ -589,6 +593,249 @@ def _validate_file_identity(value: object, label: str) -> None:
         raise MatrixFailure(f"{label} size must be positive")
 
 
+def _validate_namespace_snapshot(value: object, label: str) -> None:
+    if not isinstance(value, dict) or set(value) != {
+        "artifact",
+        "effect_frontier",
+        "effects",
+    }:
+        raise MatrixFailure(f"{label} namespace snapshot has the wrong fields")
+    _validate_file_identity(value["artifact"], f"{label} namespace snapshot")
+    _require_hex(value["effect_frontier"], 32, f"{label} namespace effect frontier")
+    if (
+        not isinstance(value["effects"], int)
+        or isinstance(value["effects"], bool)
+        or value["effects"] <= 0
+    ):
+        raise MatrixFailure(f"{label} namespace snapshot has no durable effects")
+
+
+def _validate_oracle_projection(
+    value: object,
+    workload: Mapping[str, object],
+    label: str,
+) -> Mapping[str, object]:
+    fields = {
+        "schema_version",
+        "logical_contents",
+        "integrity_ok",
+        "foreign_keys_ok",
+        "schema_accepted",
+        "balance",
+        "transactions",
+        "acknowledgements",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise MatrixFailure(f"{label} semantic projection has the wrong fields")
+    if value["schema_version"] != ORACLE_PROJECTION_SCHEMA:
+        raise MatrixFailure(f"{label} semantic projection has the wrong schema")
+    logical = value["logical_contents"]
+    if not isinstance(logical, dict) or set(logical) != {
+        "account_rows",
+        "accounts_sha256",
+        "transaction_rows",
+        "transactions_sha256",
+    }:
+        raise MatrixFailure(f"{label} logical-content projection is malformed")
+    expected_txids = workload["expected_acknowledgement_txids"]
+    expected_rows = workload["expected_cursor_rows"]
+    if (
+        logical["account_rows"] != expected_rows
+        or logical["transaction_rows"] != len(expected_txids)
+    ):
+        raise MatrixFailure(f"{label} logical row counts differ from the workload")
+    _require_hex(logical["accounts_sha256"], 32, f"{label} account rows sha256")
+    _require_hex(
+        logical["transactions_sha256"], 32, f"{label} transaction rows sha256"
+    )
+    if (
+        value["integrity_ok"] is not True
+        or value["foreign_keys_ok"] is not True
+        or value["schema_accepted"] is not True
+    ):
+        raise MatrixFailure(f"{label} SQLite integrity invariants did not pass")
+    expected_total = workload["initial_total_balance"]
+    if value["balance"] != {
+        "expected_total": expected_total,
+        "observed_total": expected_total,
+        "total_matches": True,
+        "negative_accounts": 0,
+        "all_nonnegative": True,
+    }:
+        raise MatrixFailure(f"{label} balance projection is invalid")
+    transaction_count = len(expected_txids)
+    if value["transactions"] != {
+        "rows": transaction_count,
+        "nonnull_txids": transaction_count,
+        "distinct_txids": transaction_count,
+        "unique_txids": True,
+        "nonpositive_amounts": 0,
+        "all_amounts_positive": True,
+    }:
+        raise MatrixFailure(f"{label} transaction projection is invalid")
+    if value["acknowledgements"] != {
+        "expected_txids": expected_txids,
+        "observed_txids": expected_txids,
+        "missing_txids": [],
+        "unexpected_txids": [],
+        "exact_match": True,
+    }:
+        raise MatrixFailure(f"{label} acknowledgement projection is invalid")
+    return value
+
+
+def _validate_external_oracle(
+    value: object,
+    workload: Mapping[str, object],
+    execution_inputs: Mapping[str, object],
+    label: str,
+) -> Mapping[str, object]:
+    if not isinstance(value, dict) or set(value) != {
+        "program",
+        "report",
+        "report_schema",
+        "semantic_projection",
+        "exit_status",
+        "accepted",
+    }:
+        raise MatrixFailure(f"{label} external oracle evidence has the wrong fields")
+    _validate_file_identity(value["program"], f"{label} external oracle program")
+    _validate_file_identity(value["report"], f"{label} external oracle report")
+    if (
+        value["report_schema"] != ORACLE_REPORT_SCHEMA
+        or value["exit_status"] != 0
+        or value["accepted"] is not True
+    ):
+        raise MatrixFailure(f"{label} independent SQLite oracle did not accept")
+    if value["program"] != execution_inputs["visa_sqlite_oracle"]:
+        raise MatrixFailure(f"{label} used a different SQLite oracle program")
+    return _validate_oracle_projection(
+        value["semantic_projection"], workload, f"{label} oracle"
+    )
+
+
+def _validate_raw_client_observation(
+    value: object,
+    workload: Mapping[str, object],
+    *,
+    label: str,
+    migrated_cursor: bool,
+) -> Mapping[str, object]:
+    if not isinstance(value, dict) or set(value) != {
+        "stdout",
+        "acknowledged_txids",
+        "ack_terminal_count",
+        "cursor_prefix_rows",
+        "cursor_total_rows",
+        "cursor_done_count",
+        "cursor_rows_sha256",
+    }:
+        raise MatrixFailure(f"{label} raw client observation has the wrong fields")
+    _validate_file_identity(value["stdout"], f"{label} raw client stdout")
+    expected_txids = workload["expected_acknowledgement_txids"]
+    if (
+        value["acknowledged_txids"] != expected_txids
+        or value["ack_terminal_count"] != len(expected_txids)
+    ):
+        raise MatrixFailure(f"{label} raw stdout lacks each expected ACK exactly once")
+    prefix = value["cursor_prefix_rows"]
+    expected_rows = workload["expected_cursor_rows"]
+    if (
+        not isinstance(prefix, int)
+        or isinstance(prefix, bool)
+        or value["cursor_total_rows"] != expected_rows
+        or value["cursor_done_count"] != 1
+    ):
+        raise MatrixFailure(f"{label} cursor observation is not one complete result")
+    if migrated_cursor:
+        if prefix <= 0 or prefix >= expected_rows:
+            raise MatrixFailure(f"{label} cursor continuation lacks a strict source prefix")
+    elif prefix != 0:
+        raise MatrixFailure(f"{label} uninterrupted cursor readback has a source prefix")
+    _require_hex(value["cursor_rows_sha256"], 32, f"{label} cursor rows sha256")
+    return value
+
+
+def _derive_equivalence_projection(
+    oracle: Mapping[str, object],
+    observation: Mapping[str, object],
+    label: str,
+) -> dict[str, object]:
+    logical = oracle["logical_contents"]
+    acknowledgements = oracle["acknowledgements"]
+    assert isinstance(logical, dict)
+    assert isinstance(acknowledgements, dict)
+    if (
+        acknowledgements["observed_txids"] != observation["acknowledged_txids"]
+        or acknowledgements["exact_match"] is not True
+    ):
+        raise MatrixFailure(f"{label} raw ACKs differ from the native SQLite projection")
+    if observation["cursor_rows_sha256"] != logical["accounts_sha256"]:
+        raise MatrixFailure(f"{label} raw cursor rows differ from native SQLite rows")
+    return {
+        "schema": EQUIVALENCE_PROJECTION_SCHEMA,
+        "logical_contents": dict(logical),
+        "invariants": {
+            "integrity_ok": oracle["integrity_ok"],
+            "foreign_keys_ok": oracle["foreign_keys_ok"],
+            "schema_accepted": oracle["schema_accepted"],
+            "balance": dict(oracle["balance"]),
+            "transactions": dict(oracle["transactions"]),
+        },
+        "acknowledgements": {
+            "txids": list(observation["acknowledged_txids"]),
+            "terminal_count": observation["ack_terminal_count"],
+            "oracle": dict(acknowledgements),
+        },
+        "cursor": {
+            "rows_sha256": observation["cursor_rows_sha256"],
+            "total_rows": observation["cursor_total_rows"],
+            "done_count": observation["cursor_done_count"],
+        },
+    }
+
+
+def _validate_uninterrupted_control(
+    value: object,
+    workload: Mapping[str, object],
+    execution_inputs: Mapping[str, object],
+) -> Mapping[str, object]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema",
+        "execution",
+        "namespace_snapshot",
+        "external_oracle",
+        "expected_acknowledgements",
+        "raw_client_observation",
+        "equivalence_projection",
+    }:
+        raise MatrixFailure("uninterrupted control has the wrong fields")
+    if (
+        value["schema"] != CONTROL_SCHEMA
+        or value["execution"]
+        != "single-provider-uninterrupted-transaction-and-readback"
+    ):
+        raise MatrixFailure("uninterrupted control has the wrong execution contract")
+    _validate_namespace_snapshot(value["namespace_snapshot"], "uninterrupted control")
+    oracle = _validate_external_oracle(
+        value["external_oracle"], workload, execution_inputs, "uninterrupted control"
+    )
+    if value["expected_acknowledgements"] != workload["expected_acknowledgements"]:
+        raise MatrixFailure("uninterrupted control uses a different ACK input")
+    observation = _validate_raw_client_observation(
+        value["raw_client_observation"],
+        workload,
+        label="uninterrupted control",
+        migrated_cursor=False,
+    )
+    derived = _derive_equivalence_projection(
+        oracle, observation, "uninterrupted control"
+    )
+    if value["equivalence_projection"] != derived:
+        raise MatrixFailure("uninterrupted control projection was not independently derived")
+    return derived
+
+
 def _canonical_document_identity(value: object) -> dict[str, object]:
     payload = canonical_bytes(value) + b"\n"
     return {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}
@@ -889,6 +1136,7 @@ def validate_matrix_receipt(receipt: object) -> None:
         "plan",
         "plan_sha256",
         "workload",
+        "uninterrupted_control",
         "cells",
         "typed_restore_corpus_qualification",
         "process_recovery_qualification",
@@ -993,6 +1241,9 @@ def validate_matrix_receipt(receipt: object) -> None:
         or workload["expected_cursor_rows"] < 3
     ):
         raise MatrixFailure("cursor workload must contain at least three rows")
+    control_projection = _validate_uninterrupted_control(
+        receipt["uninterrupted_control"], workload, execution_inputs
+    )
     recovery = receipt["process_recovery_qualification"]
     if not isinstance(recovery, dict) or set(recovery) != {
         "scope",
@@ -1129,6 +1380,7 @@ def validate_matrix_receipt(receipt: object) -> None:
             CUT_SPECS[index],
             workload,
             execution_inputs,
+            control_projection,
         )
 
 
@@ -1138,6 +1390,7 @@ def _validate_cell(
     spec: CutSpec,
     workload: Mapping[str, object],
     execution_inputs: Mapping[str, object],
+    control_projection: Mapping[str, object],
 ) -> None:
     required = {
         "schema",
@@ -1150,6 +1403,7 @@ def _validate_cell(
         "external_oracle",
         "expected_acknowledgements",
         "raw_client_observation",
+        "equivalence_projection",
     }
     if spec.continuation_witness is not None:
         required.add("continuation_witness")
@@ -1169,71 +1423,30 @@ def _validate_cell(
     )
     _validate_file_identity(cell["compute_checkpoint"], "compute checkpoint")
     _validate_handoff(cell["handoff"])
-    snapshot = cell["namespace_snapshot"]
-    if not isinstance(snapshot, dict) or set(snapshot) != {
-        "artifact",
-        "effect_frontier",
-        "effects",
-    }:
-        raise MatrixFailure("namespace snapshot evidence has the wrong fields")
-    _validate_file_identity(snapshot["artifact"], "namespace snapshot")
-    _require_hex(snapshot["effect_frontier"], 32, "namespace effect frontier")
-    if (
-        not isinstance(snapshot["effects"], int)
-        or isinstance(snapshot["effects"], bool)
-        or snapshot["effects"] <= 0
-    ):
-        raise MatrixFailure("namespace snapshot has no durable effects")
-    oracle = cell["external_oracle"]
-    if not isinstance(oracle, dict) or set(oracle) != {
-        "program",
-        "report",
-        "exit_status",
-        "accepted",
-    }:
-        raise MatrixFailure("external oracle evidence has the wrong fields")
-    _validate_file_identity(oracle["program"], "external oracle program")
-    _validate_file_identity(oracle["report"], "external oracle report")
-    if oracle["exit_status"] != 0 or oracle["accepted"] is not True:
-        raise MatrixFailure("independent SQLite oracle did not accept the cell")
-    if oracle["program"] != execution_inputs["visa_sqlite_oracle"]:
-        raise MatrixFailure("cell used a different SQLite oracle program")
+    _validate_namespace_snapshot(cell["namespace_snapshot"], f"cell {spec.cell_id}")
+    oracle_projection = _validate_external_oracle(
+        cell["external_oracle"],
+        workload,
+        execution_inputs,
+        f"cell {spec.cell_id}",
+    )
     if cell["expected_acknowledgements"] != workload["expected_acknowledgements"]:
         raise MatrixFailure("cell acknowledgement input differs from the workload binding")
-    observation = cell["raw_client_observation"]
-    if not isinstance(observation, dict) or set(observation) != {
-        "stdout",
-        "acknowledged_txids",
-        "ack_terminal_count",
-        "cursor_prefix_rows",
-        "cursor_total_rows",
-        "cursor_done_count",
-    }:
-        raise MatrixFailure("raw client observation has the wrong fields")
-    _validate_file_identity(observation["stdout"], "raw client stdout")
-    if (
-        observation["acknowledged_txids"]
-        != workload["expected_acknowledgement_txids"]
-        or observation["ack_terminal_count"]
-        != len(workload["expected_acknowledgement_txids"])
-    ):
-        raise MatrixFailure("raw client stdout does not contain each expected ACK exactly once")
-    if spec.cell_id == "active-read-cursor":
-        prefix = observation["cursor_prefix_rows"]
-        if (
-            not isinstance(prefix, int)
-            or isinstance(prefix, bool)
-            or prefix <= 0
-            or prefix >= workload["expected_cursor_rows"]
-            or observation["cursor_total_rows"] != workload["expected_cursor_rows"]
-            or observation["cursor_done_count"] != 1
-        ):
-            raise MatrixFailure("raw cursor stdout is not one complete continuation with a strict prefix")
-    elif any(
-        observation[name] != 0
-        for name in ("cursor_prefix_rows", "cursor_total_rows", "cursor_done_count")
-    ):
-        raise MatrixFailure("non-cursor cell contains cursor terminals")
+    observation = _validate_raw_client_observation(
+        cell["raw_client_observation"],
+        workload,
+        label=f"cell {spec.cell_id}",
+        migrated_cursor=spec.cell_id == "active-read-cursor",
+    )
+    derived_projection = _derive_equivalence_projection(
+        oracle_projection, observation, f"cell {spec.cell_id}"
+    )
+    if cell["equivalence_projection"] != derived_projection:
+        raise MatrixFailure(f"cell {spec.cell_id} projection was not independently derived")
+    if derived_projection != control_projection:
+        raise MatrixFailure(
+            f"cell {spec.cell_id} behavior differs from the uninterrupted control"
+        )
     if spec.continuation_witness is not None:
         witness = cell["continuation_witness"]
         witness_effect = _validate_capture(

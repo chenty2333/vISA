@@ -2,8 +2,11 @@ use std::{collections::BTreeSet, path::Path};
 
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{ExpectedAcks, OracleFinding};
+
+pub const SEMANTIC_PROJECTION_SCHEMA_VERSION: &str = "visa-sqlite-semantic-projection-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,7 +93,47 @@ pub struct SqliteReport {
     pub acknowledgements: AcknowledgementReport,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogicalContentsProjection {
+    pub account_rows: u64,
+    pub accounts_sha256: String,
+    pub transaction_rows: u64,
+    pub transactions_sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SqliteSemanticProjection {
+    pub schema_version: String,
+    pub logical_contents: LogicalContentsProjection,
+    pub integrity_ok: bool,
+    pub foreign_keys_ok: bool,
+    pub schema_accepted: bool,
+    pub balance: BalanceReport,
+    pub transactions: TransactionReport,
+    pub acknowledgements: AcknowledgementReport,
+}
+
 impl SqliteReport {
+    pub fn semantic_projection(&self) -> SqliteSemanticProjection {
+        SqliteSemanticProjection {
+            schema_version: SEMANTIC_PROJECTION_SCHEMA_VERSION.to_owned(),
+            logical_contents: LogicalContentsProjection {
+                account_rows: self.logical_rows.accounts.len() as u64,
+                accounts_sha256: account_rows_sha256(&self.logical_rows.accounts),
+                transaction_rows: self.logical_rows.transactions.len() as u64,
+                transactions_sha256: transaction_rows_sha256(&self.logical_rows.transactions),
+            },
+            integrity_ok: self.integrity_ok,
+            foreign_keys_ok: self.foreign_keys_ok,
+            schema_accepted: self.schema.accepted,
+            balance: self.balance.clone(),
+            transactions: self.transactions.clone(),
+            acknowledgements: self.acknowledgements.clone(),
+        }
+    }
+
     pub(crate) fn findings(&self) -> Vec<OracleFinding> {
         let mut findings = Vec::new();
         if !self.integrity_ok {
@@ -157,6 +200,32 @@ impl SqliteReport {
         }
         findings
     }
+}
+
+fn account_rows_sha256(rows: &[AccountRow]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"visa-sqlite-account-rows-v1\0");
+    digest.update((rows.len() as u64).to_be_bytes());
+    for row in rows {
+        digest.update(row.account_id.to_be_bytes());
+        digest.update(row.balance.to_be_bytes());
+    }
+    hex::encode(digest.finalize())
+}
+
+fn transaction_rows_sha256(rows: &[TransactionRow]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"visa-sqlite-transaction-rows-v1\0");
+    digest.update((rows.len() as u64).to_be_bytes());
+    for row in rows {
+        let txid = row.txid.as_bytes();
+        digest.update((txid.len() as u64).to_be_bytes());
+        digest.update(txid);
+        digest.update(row.from_account.to_be_bytes());
+        digest.update(row.to_account.to_be_bytes());
+        digest.update(row.amount.to_be_bytes());
+    }
+    hex::encode(digest.finalize())
 }
 
 pub(crate) fn inspect(

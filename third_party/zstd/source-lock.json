@@ -163,16 +163,16 @@
   "carrier_build": {
     "wanco_source_lock": {
       "path": "third_party/wanco/source-lock.json",
-      "sha256": "a3bd8e150c9dc4657a4bd904100d22facd8283b1093156b494e19ef9b54d7374"
+      "sha256": "e8871f5a4ea198a19fbb51f32e77aa3aa80c73f4fb6381411b64cb2eb683c92c"
     },
     "wanco_revision": "3c2e400dda5ce51d78333223f6fcbde08e6b198a",
-    "wanco_compiler_sha256": "2faaa8b87ee53d1be1306f972d55b154fcc3f73012b7fb20137480e4515a4289",
+    "wanco_compiler_sha256": "5f0bb587942e03da9c1aa969d48afa74e38f43bf21b696ebf1a669adfd7a4c0c",
     "wanco_runtime_sha256": "8ee54ff43e53f196edfb0d73a18b464a596ae62a761c90e10063d10260d8c067",
     "optimization": "-O1",
     "qualification": "wanco-v4-typed-restore-o1-carrier-qualified",
     "o1_status": {
       "status": "qualified",
-      "qualification_basis": "exact-callsite-typed-stackmap-nine-cell-active-data-and-lz4-validation"
+      "qualification_basis": "exact-callsite-typed-stackmap-twelve-cell-post-import-active-data-and-lz4-validation"
     }
   }
 }

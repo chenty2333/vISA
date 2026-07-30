@@ -110,6 +110,7 @@ receipt = {
     "active_data_segments_preserved_on_restore": True,
     "per_frame_callee_saved_registers": True,
     "post_import_checkpoint_points": True,
+    "guest_tail_calls_disabled": True,
     "benchmark_subtree_in_build_context": False,
 }
 path = Path(output)

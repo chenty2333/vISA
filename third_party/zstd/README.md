@@ -57,6 +57,10 @@ python3 scripts/check-zstd-source.py
 python3 scripts/test-check-zstd-source.py
 scripts/build-stock-zstd.sh
 scripts/run-stock-zstd-migration-matrix.py --skip-build
+python3 scripts/stock_zstd_matrix.py validate \
+  target/.ci-artifacts/stock-zstd-migration-matrix/summary.json
+# Or run the complete clean-SHA build, matrix, validation, and compact receipt lane:
+scripts/run-docker-ci-gate.sh system-stock-zstd
 ```
 
 The source lock states the one optimization level that the build is allowed to
@@ -85,3 +89,12 @@ rejects optimization overrides so an `-O0` diagnostic cannot be mislabeled as
 the qualified matrix input. The matrix v3 runner also resolves the live Wanco
 Docker image ID and cross-checks it through both build receipts and both source
 locks before it is allowed to state that artifact bindings were verified.
+
+The formal `system-stock-zstd` lane uses the canonical 24 MiB input and exact
+successful output `fd_write` occurrences 8 and 64. It retains only the compact
+matrix receipt and the stock-zstd/Wanco build receipts. The standalone validator
+does not import the runner and requires a clean exact repository revision, one
+uninterrupted control, two fresh-provider/fresh-process migrations, native-zstd
+decompression plus compressed-byte identity, and all ten typed negative cells.
+The lane records correctness and falsification evidence; it does not collect or
+publish latency, downtime, throughput, or overhead measurements.

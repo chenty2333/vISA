@@ -152,6 +152,34 @@
       ]
     },
     {
+      "id": "bounded-stock-zstd-streaming-migration-v1",
+      "track": "roadmap",
+      "status": "earned",
+      "scope_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Stock zstd streaming migration"
+      },
+      "validation_ref": {
+        "path": "docs/VALIDATION.md",
+        "heading": "Stock zstd streaming migration"
+      },
+      "acceptance_ref": {
+        "kind": "canonical-validation",
+        "path": "docs/VALIDATION.md",
+        "heading": "Stock zstd streaming migration"
+      },
+      "implementation_refs": [
+        "crates/runtime/visa_wanco_wasi/src/abi.rs",
+        "crates/runtime/visa_wasi_host/src/provider.rs",
+        "scripts/run-stock-zstd-migration-matrix.py",
+        "scripts/stock_zstd_matrix.py",
+        "third_party/zstd/source-lock.json"
+      ],
+      "predecessor_ids": [
+        "bounded-wanco-regular-file-carrier-composition-v1"
+      ]
+    },
+    {
       "id": "bounded-wanco-regular-file-carrier-composition-v1",
       "track": "roadmap",
       "status": "earned",
@@ -502,6 +530,19 @@
       "claims": [
         {
           "id": "bounded-stock-sqlite-rollback-migration-v1",
+          "role": "required"
+        }
+      ]
+    },
+    {
+      "id": "stock-zstd",
+      "job": "docker-claim-gates",
+      "matrix_lane": "stock-zstd",
+      "tier": "system-stock-zstd",
+      "artifact": "stock-zstd-streaming-migration-system-evidence",
+      "claims": [
+        {
+          "id": "bounded-stock-zstd-streaming-migration-v1",
           "role": "required"
         }
       ]

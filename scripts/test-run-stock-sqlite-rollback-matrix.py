@@ -119,6 +119,7 @@ class RunnerTests(unittest.TestCase):
                 transcript=root / "raw.stdout",
                 components=[setup, source, destination],
                 source_cursor_stdout=source,
+                expect_cursor=True,
             )
             self.assertEqual(observation["cursor_prefix_rows"], 111)
             self.assertEqual(observation["cursor_total_rows"], 512)
@@ -140,7 +141,119 @@ class RunnerTests(unittest.TestCase):
                     transcript=root / "raw.stdout",
                     components=[setup, source, destination],
                     source_cursor_stdout=source,
+                    expect_cursor=True,
                 )
+
+    def test_cursor_rejects_forged_terminal(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sqlite-runner-cursor-terminal-") as raw:
+            root = Path(raw)
+            setup = root / "setup.stdout"
+            cursor = root / "cursor.stdout"
+            setup.write_text("VISA_ACK|tx-000001\n", encoding="utf-8")
+            cursor.write_text(
+                "".join(
+                    f"VISA_ROW|{account}|{999 if account <= 256 else 1001}\n"
+                    for account in range(1, RUNNER.CURSOR_ROWS + 1)
+                )
+                + "VISA_CURSOR_DONE|forged\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.MatrixFailure, "exact ordered result"):
+                RUNNER.strict_stdout_observation(
+                    transcript=root / "raw.stdout",
+                    components=[setup, cursor],
+                    source_cursor_stdout=None,
+                    expect_cursor=True,
+                )
+
+    def test_uninterrupted_cursor_projection_matches_oracle_row_encoding(self) -> None:
+        rows = [
+            (account, 999 if account <= 256 else 1001)
+            for account in range(1, RUNNER.CURSOR_ROWS + 1)
+        ]
+        self.assertEqual(
+            RUNNER.account_rows_sha256(rows),
+            "af296aaf2dbda56ab9dfaae715f7c99e918c5eefc017bf2e96063a95484294b3",
+        )
+        with tempfile.TemporaryDirectory(prefix="sqlite-runner-control-") as raw:
+            root = Path(raw)
+            transaction = root / "transaction.stdout"
+            cursor = root / "cursor.stdout"
+            transaction.write_text("VISA_ACK|tx-000001\n", encoding="utf-8")
+            cursor.write_text(
+                "".join(
+                    f"VISA_ROW|{account}|{balance}\n"
+                    for account, balance in rows
+                )
+                + "VISA_CURSOR_DONE|512\n",
+                encoding="utf-8",
+            )
+            observation, _ = RUNNER.strict_stdout_observation(
+                transcript=root / "raw.stdout",
+                components=[transaction, cursor],
+                source_cursor_stdout=None,
+                expect_cursor=True,
+            )
+        self.assertEqual(observation["cursor_prefix_rows"], 0)
+        self.assertEqual(observation["cursor_total_rows"], RUNNER.CURSOR_ROWS)
+        self.assertEqual(
+            observation["cursor_rows_sha256"],
+            "af296aaf2dbda56ab9dfaae715f7c99e918c5eefc017bf2e96063a95484294b3",
+        )
+
+    def test_equivalence_projection_requires_raw_oracle_agreement(self) -> None:
+        oracle_projection = {
+            "schema_version": RUNNER.ORACLE_PROJECTION_SCHEMA,
+            "logical_contents": {
+                "account_rows": RUNNER.CURSOR_ROWS,
+                "accounts_sha256": "af" * 32,
+                "transaction_rows": 1,
+                "transactions_sha256": "be" * 32,
+            },
+            "integrity_ok": True,
+            "foreign_keys_ok": True,
+            "schema_accepted": True,
+            "balance": {
+                "expected_total": RUNNER.INITIAL_TOTAL_BALANCE,
+                "observed_total": RUNNER.INITIAL_TOTAL_BALANCE,
+                "total_matches": True,
+                "negative_accounts": 0,
+                "all_nonnegative": True,
+            },
+            "transactions": {
+                "rows": 1,
+                "nonnull_txids": 1,
+                "distinct_txids": 1,
+                "unique_txids": True,
+                "nonpositive_amounts": 0,
+                "all_amounts_positive": True,
+            },
+            "acknowledgements": {
+                "expected_txids": ["tx-000001"],
+                "observed_txids": ["tx-000001"],
+                "missing_txids": [],
+                "unexpected_txids": [],
+                "exact_match": True,
+            },
+        }
+        observation = {
+            "acknowledged_txids": ["tx-000001"],
+            "ack_terminal_count": 1,
+            "cursor_total_rows": RUNNER.CURSOR_ROWS,
+            "cursor_done_count": 1,
+            "cursor_rows_sha256": "af" * 32,
+        }
+        projection = RUNNER.build_equivalence_projection(
+            {"semantic_projection": oracle_projection}, observation
+        )
+        self.assertEqual(
+            projection["logical_contents"]["accounts_sha256"], "af" * 32
+        )
+        observation["cursor_rows_sha256"] = "cd" * 32
+        with self.assertRaisesRegex(RUNNER.MatrixFailure, "cursor rows differ"):
+            RUNNER.build_equivalence_projection(
+                {"semantic_projection": oracle_projection}, observation
+            )
 
     def test_migration_intent_binds_three_distinct_clients(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sqlite-runner-intent-") as raw:

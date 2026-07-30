@@ -16,12 +16,13 @@ use std::collections::BTreeSet;
 pub use namespace::{ByteString, DescriptorReport, LockReport, NamespaceReport, PathReport};
 use serde::{Deserialize, Serialize};
 pub use sqlite::{
-    AccountRow, AcknowledgementReport, BalanceReport, ForeignKeyViolation, LogicalRows,
-    SchemaReport, SqliteReport, TransactionReport, TransactionRow,
+    AccountRow, AcknowledgementReport, BalanceReport, ForeignKeyViolation,
+    LogicalContentsProjection, LogicalRows, SEMANTIC_PROJECTION_SCHEMA_VERSION, SchemaReport,
+    SqliteReport, SqliteSemanticProjection, TransactionReport, TransactionRow,
 };
 use visa_wasi_protocol::decode_namespace_snapshot;
 
-pub const REPORT_SCHEMA_VERSION: &str = "visa-sqlite-oracle-report-v1";
+pub const REPORT_SCHEMA_VERSION: &str = "visa-sqlite-oracle-report-v2";
 pub const EXPECTED_ACKS_SCHEMA_VERSION: &str = "visa-sqlite-expected-acks-v1";
 const MAX_SNAPSHOT_BYTES: usize = 512 * 1024 * 1024;
 const MAX_TXID_BYTES: usize = 256;
@@ -71,6 +72,7 @@ pub struct OracleReport {
     pub snapshot: Option<SnapshotSummary>,
     pub namespace: Option<NamespaceReport>,
     pub sqlite: Option<SqliteReport>,
+    pub semantic_projection: Option<SqliteSemanticProjection>,
     pub findings: Vec<OracleFinding>,
 }
 
@@ -82,6 +84,7 @@ impl OracleReport {
             snapshot: None,
             namespace: None,
             sqlite: None,
+            semantic_projection: None,
             findings: vec![finding],
         }
     }
@@ -127,6 +130,7 @@ pub fn evaluate(
             snapshot: Some(summary),
             namespace: Some(namespace::namespace_report(&snapshot, database_path)),
             sqlite: None,
+            semantic_projection: None,
             findings,
         };
     }
@@ -140,6 +144,7 @@ pub fn evaluate(
                 snapshot: Some(summary),
                 namespace: Some(namespace::namespace_report(&snapshot, database_path)),
                 sqlite: None,
+                semantic_projection: None,
                 findings: vec![finding],
             };
         }
@@ -154,10 +159,12 @@ pub fn evaluate(
                 snapshot: Some(summary),
                 namespace: Some(namespace),
                 sqlite: None,
+                semantic_projection: None,
                 findings: vec![finding],
             };
         }
     };
+    let semantic_projection = sqlite.semantic_projection();
     findings.extend(sqlite.findings());
     OracleReport {
         schema_version: REPORT_SCHEMA_VERSION.to_owned(),
@@ -165,6 +172,7 @@ pub fn evaluate(
         snapshot: Some(summary),
         namespace: Some(namespace),
         sqlite: Some(sqlite),
+        semantic_projection: Some(semantic_projection),
         findings,
     }
 }

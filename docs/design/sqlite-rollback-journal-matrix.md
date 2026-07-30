@@ -72,10 +72,15 @@ Every normal cell uses this order:
 8. Parse `VISA_ACK` terminals from the cell's raw stock-SQLite stdout and
    generate that cell's expected-ACK input. The runner rejects a missing,
    duplicated, or invented transaction identifier before invoking the oracle.
-9. Take one atomic namespace snapshot and run `visa-sqlite-oracle` against it.
-   Retain compact identities for the raw stdout, checkpoint, snapshot,
-   stdout-derived expected ACK set, oracle program, and oracle report in the
-   matrix receipt.
+9. Complete one ordered application-level cursor readback. The active-cursor
+   cell finishes its checkpointed cursor; the other seven cells use a fresh
+   post-handoff client. All eight must emit the same 512 typed rows and terminal
+   as the uninterrupted control.
+10. Take one atomic namespace snapshot and run `visa-sqlite-oracle` against it.
+    The native oracle emits its own logical-content hashes and invariant
+    projection. The standalone validator combines that projection with raw
+    ACK/cursor observables and requires exact equality with the uninterrupted
+    control.
 
 `scripts/sqlite_rollback_matrix.py` implements the canonical plan, the exact
 barrier controller, and strict matrix-receipt validation. Its `plan` command
@@ -88,6 +93,24 @@ directly, drives Wanco checkpoint/restore in the locked container image, seals
 the migration manifest and authority proofs, snapshots the complete provider
 namespace, and invokes the independent native-SQLite oracle. `--only-cell` is
 explicitly a development mode and never publishes a matrix receipt.
+
+## Uninterrupted control
+
+A full run first executes the same stock seed, transaction, and ordered cursor
+readback without a compute or provider handoff. It snapshots that provider
+namespace and passes it through the same native oracle used by every migrated
+cell. The control is not a constant fixture: its ACK set comes from raw client
+stdout, its cursor projection comes from all emitted `VISA_ROW` terminals, and
+its database projection comes from the native oracle's materialized namespace.
+
+The compact receipt embeds the native oracle projection and an
+`equivalence_projection` derived from both sources. The standalone validator
+reconstructs this projection independently. Each migrated cell must be
+internally consistent and then exactly equal to the control on logical account
+and transaction contents, integrity/schema/balance/transaction invariants,
+acknowledgements, and final cursor-visible rows. The source-prefix length is
+excluded from equivalence because it identifies the active-cursor cut rather
+than final behavior.
 
 ## Process crash and source abort
 
@@ -147,16 +170,18 @@ operation ID.
 
 ## Evidence validity
 
-A valid `visa-stock-sqlite-rollback-journal-matrix-v4` receipt contains exactly
-eight cells in canonical order. Each cell binds its plan entry, exact barrier
+A valid `visa-stock-sqlite-rollback-journal-matrix-v5` receipt contains one
+uninterrupted control and exactly eight cells in canonical order. Each cell
+binds its plan entry, exact barrier
 effect, nonempty compute checkpoint, four-state handoff, namespace snapshot,
-raw stdout and parsed ACK terminals, stdout-derived expected-ACK input, and an
-accepted independent-oracle report. The
+raw stdout and parsed ACK/cursor terminals, stdout-derived expected-ACK input,
+an accepted independent-oracle report, and an independently reconstructed
+control-equivalence projection. The
 top-level input chain also binds the SQLite and Wanco source locks and build
 receipts, stock Wasm and AOT, provider, migration binder and migration driver
 binaries, oracle binary,
 the stock Wasm import trace, exact dirty-worktree projection, the complete
-nine-case O0/O1/O2 typed-restore qualification, provider
+twelve-case O0/O1/O2 typed-restore qualification, provider
 kill/reopen qualification, and source-abort reconciliation qualification. The
 typed-corpus validator independently checks exact case inventory, frame and
 typed-value observations, exact-stackmap record counts, checkpoint markers,
@@ -176,6 +201,7 @@ overclaims.
 
 A receipt is published only after the real stock binary, typed Wanco restore,
 same-request lost-response retry and drain rejection, all eight handoffs, all
-eight oracle runs, provider kill/reopen qualification, and source-compute abort
-reconciliation complete. The `plan` subcommand remains explicitly non-evidence;
-the real runner's compact v4 receipt is the validation input.
+nine oracle runs (one control plus eight migrated cells), provider kill/reopen
+qualification, and source-compute abort reconciliation complete. The `plan`
+subcommand remains explicitly non-evidence; the real runner's compact v5
+receipt is the validation input.

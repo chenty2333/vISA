@@ -34,6 +34,9 @@ host_gid=$(id -g)
 install -m 0644 third_party/wanco/corpus/typed-stackmap.wat "$work_root/direct.wat"
 install -m 0644 third_party/wanco/corpus/typed-stackmap-indirect.wat "$work_root/indirect.wat"
 install -m 0644 third_party/wanco/corpus/data-segment-restore.c "$work_root/data-segment.c"
+install -m 0644 third_party/wanco/corpus/post-import-root.wat "$work_root/post-import-root.wat"
+install -m 0644 third_party/wanco/corpus/post-import-root-host.cc \
+    "$work_root/post-import-root-host.cc"
 
 declare -a live_containers=()
 cleanup() {
@@ -75,6 +78,15 @@ docker run --rm \
                 -I/wanco/lib-rt /usr/local/lib/libwanco_rt.a \
                 -lprotobuf -lunwind -lunwind-x86_64 -lelf \
                 -ldl -lpthread -lm -o "/work/data-segment-O${opt}"
+            wanco --enable-cr -O "$opt" -c \
+                -o "/work/post-import-root-O${opt}.ll" \
+                /work/post-import-root.wat
+            clang++-17 -std=c++20 -flto -no-pie "-O${opt}" -g0 \
+                -Wl,--build-id=none "/work/post-import-root-O${opt}.ll" \
+                /work/post-import-root-host.cc \
+                -I/wanco/lib-rt /usr/local/lib/libwanco_rt.a \
+                -lprotobuf -lunwind -lunwind-x86_64 -lelf \
+                -ldl -lpthread -lm -o "/work/post-import-root-O${opt}"
         done
     ' >"$work_root/compile.stdout" 2>"$work_root/compile.stderr"
 
@@ -168,6 +180,9 @@ for opt in 0 1 2; do
 done
 for opt in 0 1 2; do
     run_case data-segment "$opt" 903 4 0
+done
+for opt in 0 1 2; do
+    run_case post-import-root "$opt" 1003 1 0
 done
 
 python3 "$repo_root/scripts/wanco_typed_corpus.py" build \

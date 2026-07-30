@@ -92,6 +92,7 @@ class RunnerTests(unittest.TestCase):
             "active_data_segments_preserved_on_restore": True,
             "per_frame_callee_saved_registers": True,
             "post_import_checkpoint_points": True,
+            "guest_tail_calls_disabled": True,
         }
         return {
             "build_receipt": build_receipt,

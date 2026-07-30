@@ -33,6 +33,80 @@ def canonical_identity(value: object) -> dict[str, object]:
     return {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}
 
 
+def oracle_projection() -> dict[str, object]:
+    return {
+        "schema_version": MATRIX.ORACLE_PROJECTION_SCHEMA,
+        "logical_contents": {
+            "account_rows": 5,
+            "accounts_sha256": "a1" * 32,
+            "transaction_rows": 1,
+            "transactions_sha256": "b2" * 32,
+        },
+        "integrity_ok": True,
+        "foreign_keys_ok": True,
+        "schema_accepted": True,
+        "balance": {
+            "expected_total": 512000,
+            "observed_total": 512000,
+            "total_matches": True,
+            "negative_accounts": 0,
+            "all_nonnegative": True,
+        },
+        "transactions": {
+            "rows": 1,
+            "nonnull_txids": 1,
+            "distinct_txids": 1,
+            "unique_txids": True,
+            "nonpositive_amounts": 0,
+            "all_amounts_positive": True,
+        },
+        "acknowledgements": {
+            "expected_txids": ["tx-000001"],
+            "observed_txids": ["tx-000001"],
+            "missing_txids": [],
+            "unexpected_txids": [],
+            "exact_match": True,
+        },
+    }
+
+
+def raw_observation(seed: int, *, prefix_rows: int = 0) -> dict[str, object]:
+    return {
+        "stdout": identity(seed),
+        "acknowledged_txids": ["tx-000001"],
+        "ack_terminal_count": 1,
+        "cursor_prefix_rows": prefix_rows,
+        "cursor_total_rows": 5,
+        "cursor_done_count": 1,
+        "cursor_rows_sha256": "a1" * 32,
+    }
+
+
+def equivalence_projection() -> dict[str, object]:
+    projection = oracle_projection()
+    return {
+        "schema": MATRIX.EQUIVALENCE_PROJECTION_SCHEMA,
+        "logical_contents": copy.deepcopy(projection["logical_contents"]),
+        "invariants": {
+            "integrity_ok": True,
+            "foreign_keys_ok": True,
+            "schema_accepted": True,
+            "balance": copy.deepcopy(projection["balance"]),
+            "transactions": copy.deepcopy(projection["transactions"]),
+        },
+        "acknowledgements": {
+            "txids": ["tx-000001"],
+            "terminal_count": 1,
+            "oracle": copy.deepcopy(projection["acknowledgements"]),
+        },
+        "cursor": {
+            "rows_sha256": "a1" * 32,
+            "total_rows": 5,
+            "done_count": 1,
+        },
+    }
+
+
 def typed_corpus_receipt(build_receipt: dict[str, object]) -> dict[str, object]:
     cases: list[dict[str, object]] = []
     for index, spec in enumerate(MATRIX.TYPED_CORPUS.CASE_SPECS, start=1):
@@ -192,18 +266,17 @@ def complete_receipt() -> dict[str, object]:
             "external_oracle": {
                 "program": identity(500),
                 "report": identity(index + 600),
+                "report_schema": MATRIX.ORACLE_REPORT_SCHEMA,
+                "semantic_projection": oracle_projection(),
                 "exit_status": 0,
                 "accepted": True,
             },
             "expected_acknowledgements": acknowledgement,
-            "raw_client_observation": {
-                "stdout": identity(index + 700),
-                "acknowledged_txids": ["tx-000001"],
-                "ack_terminal_count": 1,
-                "cursor_prefix_rows": 2 if spec.cell_id == "active-read-cursor" else 0,
-                "cursor_total_rows": 5 if spec.cell_id == "active-read-cursor" else 0,
-                "cursor_done_count": 1 if spec.cell_id == "active-read-cursor" else 0,
-            },
+            "raw_client_observation": raw_observation(
+                index + 700,
+                prefix_rows=2 if spec.cell_id == "active-read-cursor" else 0,
+            ),
+            "equivalence_projection": equivalence_projection(),
         }
         if spec.continuation_witness is not None:
             cell["continuation_witness"] = capture(
@@ -323,6 +396,26 @@ def complete_receipt() -> dict[str, object]:
         "plan": plan,
         "plan_sha256": MATRIX.canonical_sha256(plan),
         "workload": workload,
+        "uninterrupted_control": {
+            "schema": MATRIX.CONTROL_SCHEMA,
+            "execution": "single-provider-uninterrupted-transaction-and-readback",
+            "namespace_snapshot": {
+                "artifact": identity(580),
+                "effect_frontier": "c4" * 32,
+                "effects": 19,
+            },
+            "external_oracle": {
+                "program": identity(500),
+                "report": identity(590),
+                "report_schema": MATRIX.ORACLE_REPORT_SCHEMA,
+                "semantic_projection": oracle_projection(),
+                "exit_status": 0,
+                "accepted": True,
+            },
+            "expected_acknowledgements": acknowledgement,
+            "raw_client_observation": raw_observation(595),
+            "equivalence_projection": equivalence_projection(),
+        },
         "cells": cells,
         "typed_restore_corpus_qualification": typed_corpus,
         "process_recovery_qualification": {
@@ -418,6 +511,18 @@ def reuse_source_adapter_for_committed_probe(receipt: dict[str, object]) -> None
     terminal["adapter_configuration_sha256"] = abort["adapter_configuration_sha256"]
     terminal["adapter_binding_receipt"] = copy.deepcopy(abort["adapter_binding_receipt"])
     terminal["adapter_binding_document"] = copy.deepcopy(abort["adapter_binding_document"])
+
+
+def rebind_first_cell_to_alternate_logical_rows(receipt: dict[str, object]) -> None:
+    cell = receipt["cells"][0]
+    assert isinstance(cell, dict)
+    digest = "d4" * 32
+    cell["external_oracle"]["semantic_projection"]["logical_contents"][
+        "accounts_sha256"
+    ] = digest
+    cell["raw_client_observation"]["cursor_rows_sha256"] = digest
+    cell["equivalence_projection"]["logical_contents"]["accounts_sha256"] = digest
+    cell["equivalence_projection"]["cursor"]["rows_sha256"] = digest
 
 
 class ScriptedProvider:
@@ -575,6 +680,36 @@ class MatrixContractTests(unittest.TestCase):
 
     def test_receipt_rejects_semantic_gaps_and_overclaims(self) -> None:
         mutations = {
+            "missing-uninterrupted-control": lambda receipt: receipt.pop(
+                "uninterrupted_control"
+            ),
+            "control-oracle-logical-mutation": lambda receipt: receipt[
+                "uninterrupted_control"
+            ]["external_oracle"]["semantic_projection"]["logical_contents"].__setitem__(
+                "accounts_sha256", "d3" * 32
+            ),
+            "control-raw-cursor-mutation": lambda receipt: receipt[
+                "uninterrupted_control"
+            ]["raw_client_observation"].__setitem__("cursor_rows_sha256", "d3" * 32),
+            "control-projection-forgery": lambda receipt: receipt[
+                "uninterrupted_control"
+            ]["equivalence_projection"]["cursor"].__setitem__(
+                "rows_sha256", "d3" * 32
+            ),
+            "cell-oracle-raw-divergence": lambda receipt: receipt["cells"][0][
+                "external_oracle"
+            ]["semantic_projection"]["logical_contents"].__setitem__(
+                "accounts_sha256", "d3" * 32
+            ),
+            "cell-internally-consistent-but-differs-from-control": (
+                rebind_first_cell_to_alternate_logical_rows
+            ),
+            "cell-projection-forgery": lambda receipt: receipt["cells"][0][
+                "equivalence_projection"
+            ]["logical_contents"].__setitem__("transactions_sha256", "d3" * 32),
+            "non-cursor-cell-claims-source-prefix": lambda receipt: receipt["cells"][0][
+                "raw_client_observation"
+            ].__setitem__("cursor_prefix_rows", 1),
             "predicate-drift": lambda receipt: receipt["cells"][2]["barrier"][
                 "predicate"
             ].__setitem__("occurrence", 3),

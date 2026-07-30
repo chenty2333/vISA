@@ -166,6 +166,7 @@ the scope or evidence defined by the roadmap, validation contract, and receipts.
 | `bounded-logical-request-continuity` | `earned` |
 | `bounded-regular-file-continuity` | `earned` |
 | `bounded-stock-sqlite-rollback-migration-v1` | `earned` |
+| `bounded-stock-zstd-streaming-migration-v1` | `earned` |
 | `bounded-wanco-regular-file-carrier-composition-v1` | `earned` |
 | `cooperative-stateful-component-handoff` | `earned` |
 | `cross-execution-path-portability` | `earned` |

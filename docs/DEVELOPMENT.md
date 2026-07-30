@@ -139,6 +139,18 @@ Run the source-locked Wanco carrier-only/vISA-plus-carrier matrix with:
 scripts/run-docker-ci-gate.sh system-wanco-carrier
 ```
 
+Run the zero-source-patch stock-zstd streaming migration matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stock-zstd
+```
+
+Run the stock-SQLite rollback-journal migration matrix with:
+
+```sh
+scripts/run-docker-ci-gate.sh system-stock-sqlite
+```
+
 Run the bounded Stage 3B logical-request gate with:
 
 ```sh

@@ -837,6 +837,34 @@
       ]
     },
     {
+      "id": "stock-zstd.wanco-streaming",
+      "source": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "destination": {
+        "runtime": "wanco-aot",
+        "isa": "x86-64",
+        "substrate": "linux-host"
+      },
+      "resource_profile": "zstd-streaming-regular-files",
+      "handoff_topology": "visa-plus-wanco-carrier-with-provider-handoff",
+      "fault_model": "zstd-two-post-fd-write-cuts-plus-negatives",
+      "verifier": "native-zstd-decompression-and-control-byte-identity",
+      "disposition": "qualified",
+      "claim_ids": [
+        "bounded-stock-zstd-streaming-migration-v1"
+      ],
+      "workflow_binding_ids": [
+        "stock-zstd"
+      ],
+      "evidence_boundary": "Unmodified upstream zstd 1.5.7 sources plus a separately linked WASI metadata compatibility object run on same-host x86-64 Wanco AOT; two exact post-fd_write checkpoints restore into fresh provider and process instances, decompress to the 24 MiB input, and produce bytes identical to uninterrupted execution.",
+      "non_claims": [
+        "This cell does not claim reuse of an upstream-distributed binary, arbitrary applications or resources, cross-host or cross-ISA Wanco execution, performance, external coordinator authenticity, or production orchestration."
+      ]
+    },
+    {
       "id": "wanco.carrier-only.regular-file",
       "source": {
         "runtime": "wanco-aot",
@@ -948,6 +976,17 @@
       "claim_id": "bounded-stock-sqlite-rollback-migration-v1",
       "required_cells": [
         "stock-sqlite.wanco-rollback-journal"
+      ],
+      "supporting_cells": [],
+      "minimum_required_runs_per_cell": 1,
+      "minimum_supporting_runs_per_cell": 1,
+      "requires_clean_git": true,
+      "requires_relocated_verification": false
+    },
+    {
+      "claim_id": "bounded-stock-zstd-streaming-migration-v1",
+      "required_cells": [
+        "stock-zstd.wanco-streaming"
       ],
       "supporting_cells": [],
       "minimum_required_runs_per_cell": 1,

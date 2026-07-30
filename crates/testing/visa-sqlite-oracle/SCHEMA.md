@@ -43,7 +43,7 @@ transaction, a duplicate, or a NULL all fail.
 
 ## Report
 
-`visa-sqlite-oracle-report-v1` contains:
+`visa-sqlite-oracle-report-v2` contains:
 
 - a snapshot header/count summary;
 - the complete byte-path/object projection, descriptor and lock state, SQLite
@@ -51,6 +51,9 @@ transaction, a duplicate, or a NULL all fail.
 - native SQLite version and all rows returned by `PRAGMA integrity_check` and
   `PRAGMA foreign_key_check`;
 - exact sorted `accounts` and `transactions` rows;
+- a `visa-sqlite-semantic-projection-v1` emitted by the native oracle itself,
+  with domain-separated SHA-256 projections of the sorted account and
+  transaction rows plus the checked invariants;
 - balance, transaction-ID, amount, and acknowledgement invariants;
 - stable finding codes and details.
 

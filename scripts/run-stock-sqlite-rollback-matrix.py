@@ -20,6 +20,7 @@ import secrets
 import shutil
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -57,6 +58,10 @@ ADAPTER_BINDING_SCHEMA = "visa-wasi-adapter-binding-v2"
 CANONICAL_AUTHORITY_STATE_SCHEMA = "visa-wasi-canonical-authority-state-v2"
 SOURCE_RETAINED_PROOF_SCHEMA = "visa-canonical-source-retained-proof-v1"
 SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1"
+ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
+ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
+CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v1"
+EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 
 
 MatrixFailure = CONTRACT.MatrixFailure
@@ -919,6 +924,7 @@ def strict_stdout_observation(
     transcript: Path,
     components: Sequence[Path],
     source_cursor_stdout: Path | None,
+    expect_cursor: bool = False,
 ) -> tuple[dict[str, object], list[str]]:
     payload = bytearray()
     for path in components:
@@ -955,22 +961,30 @@ def strict_stdout_observation(
             rows.append((int(fields[1]), int(fields[2])))
         except ValueError as error:
             raise MatrixFailure("stock SQLite cursor row is not numeric") from error
-    done_count = lines.count(f"VISA_CURSOR_DONE|{CURSOR_ROWS}")
+    done_lines = [line for line in lines if line.startswith("VISA_CURSOR_DONE|")]
+    done_count = len(done_lines)
     prefix_rows = 0
-    if source_cursor_stdout is not None:
-        source_lines = source_cursor_stdout.read_text(encoding="utf-8").splitlines()
-        prefix_rows = sum(line.startswith("VISA_ROW|") for line in source_lines)
+    if expect_cursor:
         expected_rows = [
             (account, 999 if account <= 256 else 1001)
             for account in range(1, CURSOR_ROWS + 1)
         ]
-        if rows != expected_rows or done_count != 1:
-            raise MatrixFailure("migrated cursor output is not one exact ordered result")
-        if not 0 < prefix_rows < CURSOR_ROWS:
-            raise MatrixFailure("source cursor output is not a strict nonterminal prefix")
+        if (
+            rows != expected_rows
+            or done_lines != [f"VISA_CURSOR_DONE|{CURSOR_ROWS}"]
+        ):
+            raise MatrixFailure("cursor output is not one exact ordered result")
+        if source_cursor_stdout is not None:
+            source_lines = source_cursor_stdout.read_text(encoding="utf-8").splitlines()
+            prefix_rows = sum(line.startswith("VISA_ROW|") for line in source_lines)
+            if not 0 < prefix_rows < CURSOR_ROWS:
+                raise MatrixFailure(
+                    "source cursor output is not a strict nonterminal prefix"
+                )
     elif rows or done_count:
         raise MatrixFailure("transaction cut emitted unexpected cursor terminals")
 
+    cursor_rows_sha256 = account_rows_sha256(rows) if rows else None
     return (
         {
             "stdout": CONTRACT.file_identity(transcript),
@@ -979,9 +993,20 @@ def strict_stdout_observation(
             "cursor_prefix_rows": prefix_rows,
             "cursor_total_rows": len(rows),
             "cursor_done_count": done_count,
+            "cursor_rows_sha256": cursor_rows_sha256,
         },
         txids,
     )
+
+
+def account_rows_sha256(rows: Sequence[tuple[int, int]]) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"visa-sqlite-account-rows-v1\0")
+    digest.update(struct.pack(">Q", len(rows)))
+    for account_id, balance in rows:
+        digest.update(struct.pack(">q", account_id))
+        digest.update(struct.pack(">q", balance))
+    return digest.hexdigest()
 
 
 def write_expected_acks(path: Path, txids: Sequence[str]) -> dict[str, object]:
@@ -1081,6 +1106,7 @@ def verify_execution_inputs(
         or wanco_receipt.get("active_data_segments_preserved_on_restore") is not True
         or wanco_receipt.get("per_frame_callee_saved_registers") is not True
         or wanco_receipt.get("post_import_checkpoint_points") is not True
+        or wanco_receipt.get("guest_tail_calls_disabled") is not True
     ):
         raise MatrixFailure("Wanco build lacks the qualified typed-restore contract")
     try:
@@ -1845,6 +1871,118 @@ def snapshot_namespace(
     }
 
 
+def native_oracle_semantic_projection(
+    report: Mapping[str, object],
+) -> dict[str, object]:
+    projection = report.get("semantic_projection")
+    fields = {
+        "schema_version",
+        "logical_contents",
+        "integrity_ok",
+        "foreign_keys_ok",
+        "schema_accepted",
+        "balance",
+        "transactions",
+        "acknowledgements",
+    }
+    if not isinstance(projection, dict) or set(projection) != fields:
+        raise MatrixFailure("SQLite oracle omitted its exact semantic projection")
+    if projection["schema_version"] != ORACLE_PROJECTION_SCHEMA:
+        raise MatrixFailure("SQLite oracle semantic projection has the wrong schema")
+    logical = projection["logical_contents"]
+    if not isinstance(logical, dict) or set(logical) != {
+        "account_rows",
+        "accounts_sha256",
+        "transaction_rows",
+        "transactions_sha256",
+    }:
+        raise MatrixFailure("SQLite oracle logical-content projection is malformed")
+    if logical["account_rows"] != CURSOR_ROWS or logical["transaction_rows"] != 1:
+        raise MatrixFailure("SQLite oracle observed the wrong logical row counts")
+    hex_identity(logical["accounts_sha256"], 32, "SQLite account rows")
+    hex_identity(logical["transactions_sha256"], 32, "SQLite transaction rows")
+    if (
+        projection["integrity_ok"] is not True
+        or projection["foreign_keys_ok"] is not True
+        or projection["schema_accepted"] is not True
+    ):
+        raise MatrixFailure("SQLite oracle semantic integrity invariants failed")
+    if projection["balance"] != {
+        "expected_total": INITIAL_TOTAL_BALANCE,
+        "observed_total": INITIAL_TOTAL_BALANCE,
+        "total_matches": True,
+        "negative_accounts": 0,
+        "all_nonnegative": True,
+    }:
+        raise MatrixFailure("SQLite oracle balance projection is invalid")
+    if projection["transactions"] != {
+        "rows": 1,
+        "nonnull_txids": 1,
+        "distinct_txids": 1,
+        "unique_txids": True,
+        "nonpositive_amounts": 0,
+        "all_amounts_positive": True,
+    }:
+        raise MatrixFailure("SQLite oracle transaction projection is invalid")
+    if projection["acknowledgements"] != {
+        "expected_txids": EXPECTED_TXIDS,
+        "observed_txids": EXPECTED_TXIDS,
+        "missing_txids": [],
+        "unexpected_txids": [],
+        "exact_match": True,
+    }:
+        raise MatrixFailure("SQLite oracle acknowledgement projection is invalid")
+    return projection
+
+
+def build_equivalence_projection(
+    external_oracle: Mapping[str, object],
+    observation: Mapping[str, object],
+) -> dict[str, object]:
+    oracle_projection = external_oracle.get("semantic_projection")
+    if not isinstance(oracle_projection, dict):
+        raise MatrixFailure("external oracle has no semantic projection")
+    logical = oracle_projection.get("logical_contents")
+    acknowledgements = oracle_projection.get("acknowledgements")
+    if not isinstance(logical, dict) or not isinstance(acknowledgements, dict):
+        raise MatrixFailure("external oracle semantic projection is incomplete")
+    if (
+        observation.get("acknowledged_txids") != EXPECTED_TXIDS
+        or observation.get("ack_terminal_count") != len(EXPECTED_TXIDS)
+        or acknowledgements.get("observed_txids") != observation["acknowledged_txids"]
+        or acknowledgements.get("exact_match") is not True
+    ):
+        raise MatrixFailure("raw ACK terminals differ from the native SQLite projection")
+    cursor_sha256 = observation.get("cursor_rows_sha256")
+    if (
+        observation.get("cursor_total_rows") != CURSOR_ROWS
+        or observation.get("cursor_done_count") != 1
+        or cursor_sha256 != logical.get("accounts_sha256")
+    ):
+        raise MatrixFailure("raw cursor rows differ from the native SQLite projection")
+    return {
+        "schema": EQUIVALENCE_PROJECTION_SCHEMA,
+        "logical_contents": dict(logical),
+        "invariants": {
+            "integrity_ok": oracle_projection["integrity_ok"],
+            "foreign_keys_ok": oracle_projection["foreign_keys_ok"],
+            "schema_accepted": oracle_projection["schema_accepted"],
+            "balance": dict(oracle_projection["balance"]),
+            "transactions": dict(oracle_projection["transactions"]),
+        },
+        "acknowledgements": {
+            "txids": list(observation["acknowledged_txids"]),
+            "terminal_count": observation["ack_terminal_count"],
+            "oracle": dict(acknowledgements),
+        },
+        "cursor": {
+            "rows_sha256": cursor_sha256,
+            "total_rows": observation["cursor_total_rows"],
+            "done_count": observation["cursor_done_count"],
+        },
+    }
+
+
 def run_sqlite_oracle(
     *,
     oracle_binary: Path,
@@ -1869,18 +2007,145 @@ def run_sqlite_oracle(
     if (
         completed.returncode != 0
         or not isinstance(report, dict)
-        or report.get("schema_version") != "visa-sqlite-oracle-report-v1"
+        or report.get("schema_version") != ORACLE_REPORT_SCHEMA
         or report.get("accepted") is not True
     ):
         raise MatrixFailure(
             "independent SQLite oracle rejected the migrated namespace: "
             + completed.stderr.decode("utf-8", errors="replace")[-2000:]
         )
+    semantic_projection = native_oracle_semantic_projection(report)
     return {
         "program": CONTRACT.file_identity(oracle_binary),
         "report": CONTRACT.file_identity(report_path),
+        "report_schema": ORACLE_REPORT_SCHEMA,
+        "semantic_projection": semantic_projection,
         "exit_status": completed.returncode,
         "accepted": True,
+    }
+
+
+def run_uninterrupted_control(
+    *,
+    root: Path,
+    sockets: ShortSocketRoot,
+    host_binary: Path,
+    oracle_binary: Path,
+    runtime: DockerAot,
+    workload_paths: Mapping[str, Path],
+) -> dict[str, object]:
+    case = root / "uninterrupted-control"
+    execution = case / "execution"
+    ensure_private_directory(case)
+    ensure_private_directory(execution)
+    imports = {
+        SEED_GUEST_PATH: workload_paths["seed"],
+        TRANSACTION_GUEST_PATH: workload_paths["transaction"],
+        CURSOR_GUEST_PATH: workload_paths["cursor"],
+    }
+    session = stable_id("uninterrupted-control-session")
+    owner = stable_id("uninterrupted-control-owner")
+    seed_client = stable_id("uninterrupted-control-seed-client")
+    transaction_client = stable_id("uninterrupted-control-transaction-client")
+    cursor_client = stable_id("uninterrupted-control-cursor-client")
+    snapshot_client = stable_id("uninterrupted-control-snapshot-client")
+    admin = secrets.token_hex(32)
+    guest = secrets.token_hex(32)
+    database = execution / "provider" / "state.sqlite"
+    socket_path = sockets.allocate()
+    create_provider(
+        host_binary,
+        database,
+        session=session,
+        admin_capability=admin,
+        guest_capability=guest,
+        epoch=1,
+        imports=imports,
+        cwd=execution,
+    )
+    with Provider(host_binary, database, socket_path, admin, execution) as provider:
+        seed_source(
+            runtime,
+            case_root=case,
+            cwd=execution,
+            environment=guest_environment(
+                socket_path,
+                session=session,
+                owner=owner,
+                client=seed_client,
+                guest_capability=guest,
+                epoch=1,
+            ),
+        )
+        transaction = run_script(
+            runtime,
+            case_root=case,
+            cwd=execution,
+            environment=guest_environment(
+                socket_path,
+                session=session,
+                owner=owner,
+                client=transaction_client,
+                guest_capability=guest,
+                epoch=1,
+            ),
+            label="uninterrupted-transaction",
+            script_path=TRANSACTION_GUEST_PATH,
+        )
+        cursor = run_script(
+            runtime,
+            case_root=case,
+            cwd=execution,
+            environment=guest_environment(
+                socket_path,
+                session=session,
+                owner=owner,
+                client=cursor_client,
+                guest_capability=guest,
+                epoch=1,
+            ),
+            label="uninterrupted-cursor",
+            script_path=CURSOR_GUEST_PATH,
+        )
+        observation, txids = strict_stdout_observation(
+            transcript=case / "raw-client.stdout",
+            components=[transaction.stdout_path, cursor.stdout_path],
+            source_cursor_stdout=None,
+            expect_cursor=True,
+        )
+        expected_path = case / "expected-acks.json"
+        expected_identity = write_expected_acks(expected_path, txids)
+        namespace = snapshot_namespace(
+            runtime,
+            case_root=case,
+            destination=execution,
+            provider=provider,
+            environment=guest_environment(
+                socket_path,
+                session=session,
+                owner=owner,
+                client=snapshot_client,
+                guest_capability=guest,
+                epoch=1,
+            ),
+            cell_id="uninterrupted-control",
+        )
+        external_oracle = run_sqlite_oracle(
+            oracle_binary=oracle_binary,
+            snapshot=namespace.pop("path"),
+            expected_acks=expected_path,
+            cwd=execution,
+        )
+    return {
+        "schema": CONTROL_SCHEMA,
+        "execution": "single-provider-uninterrupted-transaction-and-readback",
+        "namespace_snapshot": namespace,
+        "external_oracle": external_oracle,
+        "expected_acknowledgements": expected_identity,
+        "raw_client_observation": observation,
+        "equivalence_projection": build_equivalence_projection(
+            external_oracle, observation
+        ),
     }
 
 
@@ -1918,6 +2183,7 @@ def run_matrix_cell(
     source_client = stable_id(cell_id + "-source-client")
     source_restore_client = stable_id(cell_id + "-source-restore-client")
     destination_client = stable_id(cell_id + "-destination-client")
+    projection_client = stable_id(cell_id + "-projection-client")
     snapshot_client = stable_id(cell_id + "-snapshot-client")
     token = stable_id(cell_id + "-checkpoint-barrier")
     handoff = stable_id(cell_id + "-handoff")
@@ -2132,10 +2398,28 @@ def run_matrix_cell(
             if setup_stdout is not None:
                 components.insert(0, setup_stdout)
                 source_cursor_stdout = source_process.stdout_path
+            else:
+                readback = run_script(
+                    bound_runtime,
+                    case_root=case,
+                    cwd=destination,
+                    environment=guest_environment(
+                        destination_socket,
+                        session=session,
+                        owner=owner,
+                        client=projection_client,
+                        guest_capability=destination_guest,
+                        epoch=2,
+                    ),
+                    label="post-handoff-readback",
+                    script_path=CURSOR_GUEST_PATH,
+                )
+                components.append(readback.stdout_path)
             observation, txids = strict_stdout_observation(
                 transcript=case / "raw-client.stdout",
                 components=components,
                 source_cursor_stdout=source_cursor_stdout,
+                expect_cursor=True,
             )
             expected_path = case / "expected-acks.json"
             expected_identity = write_expected_acks(expected_path, txids)
@@ -2179,6 +2463,9 @@ def run_matrix_cell(
         "external_oracle": external_oracle,
         "expected_acknowledgements": expected_identity,
         "raw_client_observation": observation,
+        "equivalence_projection": build_equivalence_projection(
+            external_oracle, observation
+        ),
     }
     if continuation_witness is not None:
         cell["continuation_witness"] = continuation_witness
@@ -3056,6 +3343,7 @@ def run_matrix(
     )
     process_recovery = None
     source_abort = None
+    uninterrupted_control = None
     if arguments.only_cell is None:
         source_abort = qualify_source_abort_reconciliation(
             root=work_root,
@@ -3086,6 +3374,15 @@ def run_matrix(
             )
             return None
         process_recovery = qualify_provider_process_recovery(repository, work_root)
+        print("[control] stock SQLite uninterrupted transaction and readback")
+        uninterrupted_control = run_uninterrupted_control(
+            root=work_root,
+            sockets=sockets,
+            host_binary=host_binary,
+            oracle_binary=oracle_binary,
+            runtime=runtime,
+            workload_paths=workload_paths,
+        )
     selected = [
         (spec, plan["cells"][index])
         for index, spec in enumerate(CONTRACT.CUT_SPECS)
@@ -3128,9 +3425,13 @@ def run_matrix(
         raise MatrixFailure("full matrix omitted source-abort reconciliation")
     if process_recovery is None:
         raise MatrixFailure("full matrix omitted provider process-recovery qualification")
+    if uninterrupted_control is None:
+        raise MatrixFailure("full matrix omitted the uninterrupted control")
     expected_ack_identity = cells[0]["expected_acknowledgements"]
     if any(cell["expected_acknowledgements"] != expected_ack_identity for cell in cells):
         raise MatrixFailure("cells derived different expected ACK inputs from raw stdout")
+    if uninterrupted_control["expected_acknowledgements"] != expected_ack_identity:
+        raise MatrixFailure("uninterrupted control derived a different expected ACK input")
     receipt = {
         "schema": CONTRACT.MATRIX_SCHEMA,
         "repository_revision": revision,
@@ -3147,6 +3448,7 @@ def run_matrix(
             "minimum_dirty_database_pages": 3,
             "expected_cursor_rows": CURSOR_ROWS,
         },
+        "uninterrupted_control": uninterrupted_control,
         "cells": cells,
         "typed_restore_corpus_qualification": typed_corpus,
         "process_recovery_qualification": process_recovery,

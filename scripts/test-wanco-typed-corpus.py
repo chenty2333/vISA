@@ -65,8 +65,29 @@ def inject_wrong_indirect_target(receipt: dict[str, object]) -> None:
 
 
 class TypedCorpusTests(unittest.TestCase):
-    def test_complete_nine_case_receipt_is_accepted(self) -> None:
+    def test_complete_twelve_case_receipt_is_accepted(self) -> None:
         CORPUS.validate_receipt(complete_receipt())
+        root_cases = [
+            case
+            for case in complete_receipt()["cases"]
+            if case["profile"] == "post-import-root"
+        ]
+        self.assertEqual(
+            [
+                (
+                    case["optimization"],
+                    case["observed_frames"],
+                    case["checkpoint_prefix_values"],
+                    case["restored_suffix_values"],
+                )
+                for case in root_cases
+            ],
+            [
+                (0, 1, [1002, 1003], [1004]),
+                (1, 1, [1002, 1003], [1004]),
+                (2, 1, [1002, 1003], [1004]),
+            ],
+        )
 
     def test_builder_derives_observations_from_raw_case_outputs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="wanco-typed-corpus-") as raw:
@@ -108,7 +129,7 @@ class TypedCorpusTests(unittest.TestCase):
                 wanco_build_receipt=build_receipt,
             )
             CORPUS.validate_receipt(receipt)
-            self.assertEqual(len(receipt["cases"]), 9)
+            self.assertEqual(len(receipt["cases"]), 12)
             output = root / "receipt.json"
             CORPUS.publish(output, receipt)
             self.assertEqual(
@@ -131,6 +152,9 @@ class TypedCorpusTests(unittest.TestCase):
             ),
             "missing-exact-stackmap": lambda receipt: receipt["cases"][0].__setitem__(
                 "exact_stackmap_records", 5
+            ),
+            "missing-root-guest-frame": lambda receipt: receipt["cases"][9].__setitem__(
+                "observed_frames", 0
             ),
             "wrong-marker": lambda receipt: receipt["cases"][0][
                 "checkpoint_prefix_values"

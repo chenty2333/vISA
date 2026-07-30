@@ -56,6 +56,12 @@
       "sha256": "1e6ec9824dabb8bde3db8e6cd63caa62c9990882a8de5de104065fe9223e0532",
       "scope": "runtime-correctness",
       "purpose": "Emit an exact migration point after a direct imported hostcall has returned and its result has been materialized in guest execution state."
+    },
+    {
+      "path": "third_party/wanco/patches/0009-preserve-guest-frames-at-checkpoint.patch",
+      "sha256": "53c559a603d27f7b03261080fdae42b817947e21c8415e25d2687aeab29a5152",
+      "scope": "runtime-correctness",
+      "purpose": "Disable sibling and tail calls in checkpoint-enabled guest functions so every exact active callsite retains its corresponding native guest frame."
     }
   ],
   "build": {
@@ -68,7 +74,7 @@
     "excluded_source_subtree": "benchmark/",
     "build_recipe": {
       "path": "scripts/build-wanco-carrier.sh",
-      "sha256": "189f01de9e56aadcccbf86dfec24ab7e037eb8bc8ff39ed9f714501c32c6420f"
+      "sha256": "f4adcf089b75b959cab9d162a613ff577d9456dc3e874bc6f3b467b6535b8903"
     },
     "patched_files": {
       "Dockerfile": "6a34966874c5ee0c64253dcc547ff75a45af1fb4f65080aac95c24950eb77b47",
@@ -80,6 +86,7 @@
       "lib-rt/stacktrace/stacktrace.cc": "248ee8cec7d24d8eccf0a4c382f40a1093158ae76622ab5267b71c93d6ea8885",
       "lib-rt/stacktrace/stacktrace.h": "ffc82e6f45cbdb3c5fdec3023c0fcc11077205a2f7b6b3470bb63b7974a845d5",
       "lib-rt/wanco.h": "071eca312bcb29afae16b56b69a7c6f7019ebbdc9c33100a722f9d3019747028",
+      "wanco/src/compile/compile_module.rs": "e46c8daf4eecd481160bb5d976a36563d032d078b4872ad80f74da4d242ff66a",
       "wanco/src/compile/control.rs": "092014256e58884ba15a3210104aefb55256f5ce1f52540842b9cd5c8da9c1f7",
       "wanco/src/compile/cr/checkpoint.rs": "298b9c47ce0d9f0084fdc2446b71ff2c45df100fc35d3b56210a0ef0cb66762f",
       "wanco/src/compile/synthesize.rs": "f139d7d182565e229e1247c08a16042af728219640175b2ef455c18d467ad9f1",

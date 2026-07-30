@@ -22,6 +22,13 @@ Fresh-process restore must retain those mutations instead of replaying the
 module's data initializer. The final checksum and the complete output stream
 must match an uninterrupted control.
 
+`post-import-root.wat` calls a host function that publishes marker `1003` and
+then blocks. The runner sends the checkpoint signal while that import is still
+active. Capture must be deferred until the hostcall returns, and the root guest
+frame must remain unwindable while the exact post-import stackmap is collected.
+This case guards against sibling-call elimination of the checkpoint helper,
+which would otherwise remove the only native guest frame.
+
 Run the matrix after building the locked Wanco image:
 
 ```sh
@@ -29,10 +36,10 @@ scripts/build-wanco-carrier.sh
 third_party/wanco/corpus/run-typed-checkpoint-corpus.sh
 ```
 
-The runner compiles all three inputs at O0, O1, and O2. For each of the nine
+The runner compiles all four inputs at O0, O1, and O2. For each of the twelve
 cells it compares checkpoint-prefix plus fresh-process restore output with an
 uninterrupted control. It publishes `receipt.json`, whose validator recomputes
-the exact nine-case inventory, frame/value observations, exact stackmap-record
+the exact twelve-case inventory, frame/value observations, exact stackmap-record
 counts, checkpoint marker, wrong indirect-target exclusion, and output
 equivalence from compact retained values. Run
 `python3 scripts/wanco_typed_corpus.py validate <root>/receipt.json` to validate

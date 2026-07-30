@@ -381,7 +381,7 @@ def validate(lock_path: Path = DEFAULT_LOCK) -> dict[str, Any]:
     )
     exact_string(
         o1["qualification_basis"],
-        "exact-callsite-typed-stackmap-nine-cell-active-data-and-lz4-validation",
+        "exact-callsite-typed-stackmap-twelve-cell-post-import-active-data-and-lz4-validation",
         "carrier_build.o1_status.qualification_basis",
     )
     return lock

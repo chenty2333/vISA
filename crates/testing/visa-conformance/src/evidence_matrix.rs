@@ -54,6 +54,7 @@ pub enum MatrixResourceProfile {
     RegularFile,
     SqliteRollbackJournal,
     TimerKv,
+    ZstdStreamingRegularFiles,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -82,6 +83,7 @@ pub enum MatrixFaultModel {
     Stage4Stage1ThirtyOneCase,
     SqliteRollbackEightCutPlusProcessCrash,
     WancoRegularFileTwoCase,
+    ZstdTwoPostFdWriteCutsPlusNegatives,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -98,6 +100,7 @@ pub enum MatrixVerifier {
     Stage3aCrossRuntimeOuterAndRawOracle,
     Stage4ReconstructedNormalized,
     SqliteNamespaceNativeOracle,
+    NativeZstdDecompressionAndControlByteIdentity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

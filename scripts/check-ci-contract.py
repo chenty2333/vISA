@@ -797,7 +797,8 @@ def check_claim_matrix(job: dict[str, Any]) -> None:
 
 def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
     container_lane_condition = (
-        "${{ matrix.lane != 'wanco-carrier' && matrix.lane != 'stock-sqlite' }}"
+        "${{ matrix.lane != 'wanco-carrier' && matrix.lane != 'stock-zstd' && "
+        "matrix.lane != 'stock-sqlite' }}"
     )
     image_builds = steps_using(job, "docker/build-push-action@")
     require(
@@ -814,7 +815,8 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
     wrapper = (ROOT / "scripts/run-docker-ci-gate.sh").read_text(encoding="utf-8")
     native_branch_start = (
         'if [[ "$tier" == system-wanco-carrier || '
-        '"$tier" == system-stock-sqlite ]]; then'
+        '"$tier" == system-stock-zstd \\\n'
+        '    || "$tier" == system-stock-sqlite ]]; then'
     )
     require(
         native_branch_start in wrapper
@@ -834,6 +836,14 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
         and "scripts/run-wanco-carrier-matrix.sh" in gate
         and "system-wanco-carrier) gate_system_wanco_carrier ;;" in gate,
         "Wanco carrier host tier is not wired to the real matrix runner",
+    )
+    require(
+        "gate_system_stock_zstd()" in gate
+        and "scripts/run-stock-zstd-migration-matrix.py" in gate
+        and "scripts/stock_zstd_matrix.py validate" in gate
+        and "--expected-revision" in gate
+        and "system-stock-zstd) gate_system_stock_zstd ;;" in gate,
+        "stock zstd host tier is not wired to the real independently validated matrix runner",
     )
     require(
         "gate_system_stock_sqlite()" in gate

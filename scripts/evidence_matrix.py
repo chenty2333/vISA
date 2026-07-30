@@ -55,6 +55,7 @@ RESOURCE_PROFILES = {
     "regular-file",
     "sqlite-rollback-journal",
     "timer-kv",
+    "zstd-streaming-regular-files",
 }
 HANDOFF_TOPOLOGIES = {
     "in-process-distinct-stores",
@@ -77,6 +78,7 @@ FAULT_MODELS = {
     "stage4-stage1-thirty-one-case",
     "sqlite-rollback-eight-cut-plus-process-crash",
     "wanco-regular-file-two-case",
+    "zstd-two-post-fd-write-cuts-plus-negatives",
 }
 VERIFIERS = {
     "joint-admission-artifact-static",
@@ -90,6 +92,7 @@ VERIFIERS = {
     "sqlite-namespace-native-oracle",
     "stage3a-cross-runtime-outer-and-raw-oracle",
     "stage4-reconstructed-normalized",
+    "native-zstd-decompression-and-control-byte-identity",
 }
 DISPOSITIONS = {"candidate", "declared-gap", "qualified"}
 ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
