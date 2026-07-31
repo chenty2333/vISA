@@ -161,16 +161,16 @@ fn predicate_triggers_only_after_exact_occurrence_and_guest_writeback() {
         BarrierPhase::Held
     );
 
-    assert!(
-        admin(
-            &mut provider,
-            AdminOperation::BarrierRelease {
-                token: BARRIER,
-                action: BarrierReleaseAction::Checkpoint,
-            },
-        )
-        .ok
+    let checkpoint_release = admin(
+        &mut provider,
+        AdminOperation::BarrierRelease { token: BARRIER, action: BarrierReleaseAction::Checkpoint },
     );
+    assert!(checkpoint_release.ok);
+    let checkpoint_status = checkpoint_release.status.unwrap();
+    assert_eq!(checkpoint_status.barrier, BarrierPhase::CheckpointReleased);
+    assert_eq!(checkpoint_status.barrier_effect, Some(target.effect));
+    assert_eq!(checkpoint_status.completed_barrier, None);
+    assert_eq!(checkpoint_status.completed_barrier_effect, None);
     assert_eq!(
         provider.handle_guest(request(CLIENT_A, 4, effect(24), Operation::FdTell { fd },)).errno,
         errno::AGAIN
@@ -263,16 +263,19 @@ fn stable_effect_is_exactly_once_across_clients_and_drain_blocks_uncertain_deliv
     let target = request(CLIENT_A, 3, effect(43), Operation::FdTell { fd });
     assert_eq!(provider.handle_guest(target.clone()).errno, errno::SUCCESS);
     assert_eq!(complete(&mut provider, &target).directive, BarrierDirective::Wait);
-    assert!(
-        admin(
-            &mut provider,
-            AdminOperation::BarrierRelease {
-                token: BARRIER,
-                action: BarrierReleaseAction::Continue,
-            },
-        )
-        .ok
+    let held = admin(&mut provider, AdminOperation::Status).status.unwrap();
+    let continue_release = admin(
+        &mut provider,
+        AdminOperation::BarrierRelease { token: BARRIER, action: BarrierReleaseAction::Continue },
     );
+    assert!(continue_release.ok);
+    let continued = continue_release.status.unwrap();
+    assert_eq!(continued.barrier, BarrierPhase::Open);
+    assert_eq!(continued.barrier_effect, None);
+    assert_eq!(continued.completed_barrier, Some(BARRIER));
+    assert_eq!(continued.completed_barrier_effect, Some(target.effect));
+    assert_eq!(continued.effects, held.effects);
+    assert_eq!(continued.completed_requests, held.completed_requests);
 
     let released_poll = provider.handle_barrier_poll(BarrierPollRequest {
         version: PROTOCOL_VERSION,

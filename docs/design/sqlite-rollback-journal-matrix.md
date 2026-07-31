@@ -62,13 +62,21 @@ Every normal cell uses this order:
 4. The provider records the effect and response before entering `triggered`.
    The bridge writes the result into guest linear memory and sends
    `GuestCompletion`; only then may the provider enter `held`.
-5. Release `checkpoint`, require `checkpoint_released` with the same effect,
-   and require a nonempty Wanco checkpoint before freezing the provider.
+5. Release `checkpoint` and retain the status returned by that same atomic
+   `BarrierRelease` response. Require `checkpoint_released` with the same
+   effect, unchanged effect/request counters, and empty `completed_barrier` and
+   `completed_barrier_effect`, then require a nonempty Wanco checkpoint before
+   freezing the provider.
 6. Execute the canonical source-frozen, destination-prepared, source-fenced,
    destination-active handoff with a fresh destination process client.
 7. For cells with a continuation witness, arm that second exact predicate
    after destination activation and before compute restore, then release it
-   with `continue`.
+   with `continue`. The status in that atomic release response must be `open`,
+   must preserve the held counters, and must bind `completed_barrier` and
+   `completed_barrier_effect` to the exact released token/effect. The
+   controller must not issue a second `status` request to establish the release:
+   after `continue` the guest may execute another hostcall before that request,
+   creating a TOCTOU observation rather than evidence of the release edge.
 8. Parse `VISA_ACK` terminals from the cell's raw stock-SQLite stdout and
    generate that cell's expected-ACK input. The runner rejects a missing,
    duplicated, or invented transaction identifier before invoking the oracle.
@@ -174,9 +182,10 @@ operation ID.
 
 ## Evidence validity
 
-A valid `visa-stock-sqlite-rollback-journal-matrix-v9` receipt contains one
-uninterrupted control and exactly eight cells in canonical order. Each cell
-binds its plan entry, exact barrier
+A valid `visa-stock-sqlite-rollback-journal-matrix-v10` receipt contains one
+uninterrupted control and exactly eight
+`visa-stock-sqlite-rollback-journal-cell-v5` cells in canonical order. Each
+cell binds its plan entry, exact barrier
 effect, nonempty compute checkpoint, four-state handoff, namespace snapshot,
 raw per-segment stdout/stderr/exit status and parsed ACK/cursor terminals,
 stdout-derived expected-ACK input,
@@ -198,7 +207,8 @@ receipts, stock Wasm and AOT, provider, migration binder and migration driver
 binaries, oracle binary,
 the stock Wasm import trace, an exact clean-tree and full-HEAD projection, the complete
 twelve-case O0/O1/O2 typed-restore qualification, provider
-kill/reopen qualification, and source-abort reconciliation qualification.
+kill/reopen qualification, and
+`visa-sqlite-source-abort-reconciliation-v3` qualification.
 Provider recovery retains the exact Cargo test stdout, stderr, and canonical
 process report; the outer validator reparses the two named test terminals and
 the `2 passed, 0 failed` harness terminal. Source-abort recovery retains the
@@ -214,6 +224,13 @@ rederives its frozen cut status. For every control, migrated cell, and
 source-abort run, it also binds the top-level effect count and effect frontier to
 the snapshot summary decoded by the rerun native oracle; re-sealing only the
 runner summaries cannot move those counters.
+The WASI provider protocol v3.0 status projection carries
+`completed_barrier` and `completed_barrier_effect`. The validator requires both
+to remain empty at the frozen `checkpoint_released` cut, binds the activated
+destination and source-abort resume to the exact checkpoint token/effect, and
+binds each continuation witness to the exact token/effect returned by its
+atomic `BarrierRelease(continue)` response. It rejects a release observation
+reconstructed from a later `status` request.
 The typed-corpus v5 manifest contains no observed values or verdict. It
 references retained process observations, control/checkpoint/restore stdout
 and stderr, protobuf checkpoints, the locked source/build receipts, and
@@ -243,5 +260,5 @@ same-request lost-response retry and drain rejection, all eight handoffs, all
 ten oracle runs (one uninterrupted control plus eight migrated cells, followed
 by one source-abort recovery oracle), provider kill/reopen qualification, and
 source-compute abort reconciliation complete. The `plan` subcommand remains
-explicitly non-evidence; the real runner's compact v9
+explicitly non-evidence; the real runner's compact v10
 receipt is the validation input.

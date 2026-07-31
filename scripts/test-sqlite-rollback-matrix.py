@@ -77,6 +77,8 @@ def fixture_capsule_state_bytes() -> bytes:
                     barrier_token BLOB,
                     barrier_remaining INTEGER,
                     barrier_effect BLOB,
+                    completed_barrier BLOB,
+                    completed_barrier_effect BLOB,
                     completed_requests INTEGER NOT NULL
                 );
                 CREATE TABLE effects (effect_id BLOB PRIMARY KEY);
@@ -85,7 +87,7 @@ def fixture_capsule_state_bytes() -> bytes:
             connection.execute(
                 """
                 INSERT INTO meta VALUES
-                    (1, 5, ?, 1, 1, ?, 2, 4, ?, NULL, ?, 20)
+                    (1, 5, ?, 1, 1, ?, 2, 4, ?, NULL, ?, NULL, NULL, 20)
                 """,
                 (
                     bytes.fromhex("c1" * 16),
@@ -444,6 +446,8 @@ def status(
     effect: str | None = None,
     effects: int = 20,
     completed: int = 20,
+    completed_barrier: str | None = None,
+    completed_effect: str | None = None,
 ) -> dict[str, object]:
     return {
         "mode": mode,
@@ -451,6 +455,8 @@ def status(
         "barrier": barrier,
         "barrier_remaining": remaining,
         "barrier_effect": effect,
+        "completed_barrier": completed_barrier,
+        "completed_barrier_effect": completed_effect,
         "effects": effects,
         "completed_requests": completed,
         # Deliberately present: this counter is not a cut-location input.
@@ -490,23 +496,39 @@ def capture(
         )
     elif release == "open":
         result["continued"] = status(
-            "active", "open", effects=20, completed=20
+            "active",
+            "open",
+            effects=20,
+            completed=20,
+            completed_barrier=token,
+            completed_effect=effect,
         )
     return result
 
 
-def handoff(source_client: str, destination_client: str) -> dict[str, object]:
+def handoff(
+    source_client: str,
+    destination_client: str,
+    barrier_token: str,
+    barrier_effect: str,
+) -> dict[str, object]:
     return {
         "source_frozen": status(
-            "frozen", "checkpoint_released", effect="aa" * 16
+            "frozen", "checkpoint_released", effect=barrier_effect
         ),
         "destination_prepared": status(
-            "prepared", "checkpoint_released", effect="aa" * 16
+            "prepared", "checkpoint_released", effect=barrier_effect
         ),
         "source_fenced": status(
-            "fenced", "checkpoint_released", effect="aa" * 16
+            "fenced", "checkpoint_released", effect=barrier_effect
         ),
-        "destination_active": status("active", "open", epoch=2),
+        "destination_active": status(
+            "active",
+            "open",
+            epoch=2,
+            completed_barrier=barrier_token,
+            completed_effect=barrier_effect,
+        ),
         "source_client": source_client,
         "destination_client": destination_client,
     }
@@ -561,7 +583,12 @@ def complete_receipt() -> dict[str, object]:
                 ),
             ),
             "compute_checkpoint": identity(index + 100),
-            "handoff": handoff(source_client, destination_client),
+            "handoff": handoff(
+                source_client,
+                destination_client,
+                token,
+                effect,
+            ),
             "namespace_snapshot": {
                 "artifact": identity(index + 200),
                 "effect_frontier": f"{index + 300:064x}",
@@ -1414,16 +1441,30 @@ def materialize_retained_receipt(
         "compute_checkpoint": abort["compute_checkpoint"],
     }
     integrated_report_value = {
-        "schema": "visa-sqlite-source-abort-real-driver-v4",
+        "schema": "visa-sqlite-source-abort-real-driver-v5",
         "cut": source_abort_cut,
         "source_frozen": MATRIX.status_projection(
             status("frozen", "checkpoint_released", effect="f1" * 16)
         ),
         "source_provider_resumed_before_restart": MATRIX.status_projection(
-            status("active", "open", epoch=1)
+            status(
+                "active",
+                "open",
+                epoch=1,
+                completed_barrier="c4" * 16,
+                completed_effect="f1" * 16,
+            )
         ),
         "source_provider_after_recovery": MATRIX.status_projection(
-            status("active", "open", epoch=1, effects=21, completed=21)
+            status(
+                "active",
+                "open",
+                epoch=1,
+                effects=21,
+                completed=21,
+                completed_barrier="c4" * 16,
+                completed_effect="f1" * 16,
+            )
         ),
         "source_client": abort["source_client"],
         "source_restore_client": abort["source_restore_client"],
@@ -1594,8 +1635,10 @@ class ScriptedProvider:
         self.arms: list[tuple[str, dict[str, object]]] = []
         self.releases: list[tuple[str, str]] = []
         self.events: list[str] = []
+        self.status_calls = 0
 
     def status(self) -> dict[str, object]:
+        self.status_calls += 1
         if self.statuses:
             self.last = self.statuses.pop(0)
         self.events.append("status:" + str(self.last["barrier"]))
@@ -1605,9 +1648,13 @@ class ScriptedProvider:
         self.arms.append((token, dict(predicate)))
         self.events.append("arm")
 
-    def release(self, token: str, action: str) -> None:
+    def release(self, token: str, action: str) -> dict[str, object]:
         self.releases.append((token, action))
         self.events.append("release:" + action)
+        if self.statuses:
+            self.last = self.statuses.pop(0)
+        self.events.append("atomic-release-status:" + str(self.last["barrier"]))
+        return self.last
 
 
 class MatrixContractTests(unittest.TestCase):
@@ -1745,6 +1792,37 @@ class MatrixContractTests(unittest.TestCase):
             MATRIX.MatrixFailure, "did not stop guest completion"
         ):
             controller.await_target("triggered")
+
+    def test_continue_release_uses_atomic_status_and_exact_completion_identity(self) -> None:
+        predicate = MATRIX.build_plan()["cells"][0]["continuation_witness"]
+        token = "23" * 16
+        effect = "24" * 16
+        provider = ScriptedProvider(
+            [
+                status("active", "open"),
+                status("active", "armed", remaining=1, effects=19, completed=19),
+                status("active", "held", effect=effect),
+                status(
+                    "active",
+                    "open",
+                    completed_barrier=token,
+                    completed_effect=effect,
+                ),
+            ]
+        )
+        witness = MATRIX.execute_continue_witness(
+            provider,
+            token=token,
+            predicate=predicate,
+            start_segment=lambda: provider.events.append("start-segment"),
+            timeout_seconds=1,
+        )
+        self.assertEqual(provider.status_calls, 3)
+        self.assertEqual(witness["continued"]["completed_barrier"], token)
+        self.assertEqual(witness["continued"]["completed_barrier_effect"], effect)
+        self.assertEqual(
+            witness["continued"]["effects"], witness["target"]["effects"]
+        )
 
     def test_execution_helper_orders_arm_segment_release_and_checkpoint(self) -> None:
         predicate = MATRIX.build_plan()["cells"][4]["predicate"]
@@ -2463,6 +2541,15 @@ class MatrixContractTests(unittest.TestCase):
             "missing-continuation-witness": lambda receipt: receipt["cells"][1].pop(
                 "continuation_witness"
             ),
+            "continuation-completed-token-drift": lambda receipt: receipt["cells"][0][
+                "continuation_witness"
+            ]["continued"].__setitem__("completed_barrier", "d1" * 16),
+            "continuation-completed-effect-drift": lambda receipt: receipt["cells"][0][
+                "continuation_witness"
+            ]["continued"].__setitem__("completed_barrier_effect", "d2" * 16),
+            "continuation-release-counter-advance": lambda receipt: receipt["cells"][0][
+                "continuation_witness"
+            ]["continued"].update({"effects": 21, "completed_requests": 21}),
             "fresh-client-uncertain-replay": lambda receipt: receipt["cells"][6][
                 "delivery_fault"
             ].__setitem__(

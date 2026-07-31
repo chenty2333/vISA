@@ -28,15 +28,15 @@ import wanco_process_diagnostics as WANCO_DIAGNOSTICS
 
 
 PLAN_SCHEMA = "visa-stock-sqlite-rollback-journal-plan-v1"
-CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v4"
-MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v9"
+CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v5"
+MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v10"
 CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v3"
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 PROCESS_RECOVERY_SCHEMA = "visa-sqlite-provider-process-recovery-v2"
 PROCESS_RECOVERY_REPORT_SCHEMA = "visa-sqlite-provider-process-recovery-v1"
-SOURCE_ABORT_SCHEMA = "visa-sqlite-source-abort-reconciliation-v2"
+SOURCE_ABORT_SCHEMA = "visa-sqlite-source-abort-reconciliation-v3"
 DRIVER_RECORD_SCHEMA = "visa-wasi-migration-driver-record-v4"
 MIGRATION_MANIFEST_SCHEMA = "visa-transparent-wasi-migration-v3"
 PROVIDER_SCHEMA_VERSION = 5
@@ -298,7 +298,7 @@ class ProviderControl(Protocol):
 
     def arm(self, token: str, predicate: Mapping[str, object]) -> None: ...
 
-    def release(self, token: str, action: str) -> None: ...
+    def release(self, token: str, action: str) -> Mapping[str, object]: ...
 
 
 def _require_hex(value: object, bytes_count: int, label: str) -> str:
@@ -311,21 +311,31 @@ def _require_hex(value: object, bytes_count: int, label: str) -> str:
     return value
 
 
-def _effect_hex(value: object) -> str | None:
+def _wire_id_hex(value: object, label: str) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return _require_hex(value, 16, "barrier effect")
+        return _require_hex(value, 16, label)
     if (
         isinstance(value, list)
         and len(value) == 16
         and all(isinstance(item, int) and 0 <= item <= 255 for item in value)
     ):
-        return _require_hex(bytes(value).hex(), 16, "barrier effect")
-    raise MatrixFailure("provider barrier effect has an unsupported encoding")
+        return _require_hex(bytes(value).hex(), 16, label)
+    raise MatrixFailure(f"provider {label} has an unsupported encoding")
+
+
+def _effect_hex(value: object) -> str | None:
+    return _wire_id_hex(value, "barrier effect")
+
+
+def _barrier_token_hex(value: object) -> str | None:
+    return _wire_id_hex(value, "completed barrier token")
 
 
 def status_projection(status: Mapping[str, object]) -> dict[str, object]:
+    if "completed_barrier" not in status or "completed_barrier_effect" not in status:
+        raise MatrixFailure("provider status omits its durable completed-barrier identity")
     barrier = status.get("barrier")
     mode = status.get("mode")
     epoch = status.get("authority_epoch")
@@ -346,6 +356,10 @@ def status_projection(status: Mapping[str, object]) -> dict[str, object]:
         "barrier": barrier,
         "barrier_remaining": remaining,
         "barrier_effect": _effect_hex(status.get("barrier_effect")),
+        "completed_barrier": _barrier_token_hex(status.get("completed_barrier")),
+        "completed_barrier_effect": _wire_id_hex(
+            status.get("completed_barrier_effect"), "completed barrier effect"
+        ),
     }
     for name in ("effects", "completed_requests"):
         value = status.get(name)
@@ -389,6 +403,11 @@ class ExactBarrierController:
             raise MatrixFailure("provider armed a different occurrence")
         if armed["barrier_effect"] is not None:
             raise MatrixFailure("an armed barrier already has a target effect")
+        if (
+            armed["completed_barrier"] is not None
+            or armed["completed_barrier_effect"] is not None
+        ):
+            raise MatrixFailure("an armed barrier retained an earlier completion")
         return {"before": before, "armed": armed}
 
     def await_target(self, target_phase: str = "held") -> dict[str, object]:
@@ -404,6 +423,11 @@ class ExactBarrierController:
             if phase == target_phase:
                 if status["mode"] != "active" or status["barrier_effect"] is None:
                     raise MatrixFailure("target barrier phase lacks its durable effect")
+                if (
+                    status["completed_barrier"] is not None
+                    or status["completed_barrier_effect"] is not None
+                ):
+                    raise MatrixFailure("target barrier retained an earlier completion")
                 return status
             if target_phase == "triggered" and phase == "held":
                 raise MatrixFailure(
@@ -420,24 +444,32 @@ class ExactBarrierController:
         _require_hex(token, 16, "barrier token")
         if held.get("barrier") != "held" or held.get("barrier_effect") is None:
             raise MatrixFailure("checkpoint release requires a held target effect")
-        self.provider.release(token, "checkpoint")
-        released = status_projection(self.provider.status())
+        released = status_projection(self.provider.release(token, "checkpoint"))
         if released["mode"] != "active" or released["barrier"] != "checkpoint_released":
             raise MatrixFailure("provider did not enter checkpoint_released")
         if released["barrier_effect"] != held["barrier_effect"]:
             raise MatrixFailure("checkpoint release changed the target effect")
+        if (
+            released["completed_barrier"] is not None
+            or released["completed_barrier_effect"] is not None
+        ):
+            raise MatrixFailure("checkpoint release incorrectly completed the barrier")
         return released
 
     def release_continue(self, token: str, held: Mapping[str, object]) -> dict[str, object]:
         _require_hex(token, 16, "barrier token")
         if held.get("barrier") != "held" or held.get("barrier_effect") is None:
             raise MatrixFailure("continue release requires a held target effect")
-        self.provider.release(token, "continue")
-        released = status_projection(self.provider.status())
+        released = status_projection(self.provider.release(token, "continue"))
         if released["mode"] != "active" or released["barrier"] != "open":
             raise MatrixFailure("provider did not reopen after continue release")
         if released["barrier_effect"] is not None:
             raise MatrixFailure("continued barrier retained a target effect")
+        if (
+            released["completed_barrier"] != token
+            or released["completed_barrier_effect"] != held["barrier_effect"]
+        ):
+            raise MatrixFailure("continued barrier did not retain its exact token/effect")
         return released
 
 
@@ -608,10 +640,14 @@ class CliProviderControl:
             str(predicate["occurrence"]),
         )
 
-    def release(self, token: str, action: str) -> None:
+    def release(self, token: str, action: str) -> Mapping[str, object]:
         if action not in {"checkpoint", "continue"}:
             raise MatrixFailure("unknown barrier release action")
-        self._control("barrier-release", token, action)
+        response = self._control("barrier-release", token, action)
+        status = response.get("status")
+        if not isinstance(status, dict):
+            raise MatrixFailure("provider barrier release returned no atomic status")
+        return status
 
 
 def _validate_predicate(value: object, label: str) -> Mapping[str, object]:
@@ -1791,7 +1827,8 @@ def _derive_provider_capsule_status(
                     SELECT schema_version, hex(session), mode, authority_epoch,
                            hex(handoff), destination_epoch, barrier_phase,
                            hex(barrier_token), barrier_remaining,
-                           hex(barrier_effect), completed_requests,
+                           hex(barrier_effect), hex(completed_barrier),
+                           hex(completed_barrier_effect), completed_requests,
                            (SELECT count(*) FROM effects)
                     FROM meta WHERE singleton = 1
                     """
@@ -1819,6 +1856,8 @@ def _derive_provider_capsule_status(
         barrier_token_hex,
         barrier_remaining,
         barrier_effect_hex,
+        completed_barrier_hex,
+        completed_barrier_effect_hex,
         completed_requests,
         effects,
     ) = rows[0]
@@ -1833,6 +1872,8 @@ def _derive_provider_capsule_status(
         or barrier_token_hex.lower() != cut_token
         or barrier_remaining is not None
         or barrier_effect_hex.lower() != cut_effect
+        or completed_barrier_hex not in ("", None)
+        or completed_barrier_effect_hex not in ("", None)
         or not isinstance(completed_requests, int)
         or not isinstance(effects, int)
         or completed_requests != effects
@@ -1845,6 +1886,8 @@ def _derive_provider_capsule_status(
         "barrier": "checkpoint_released",
         "barrier_remaining": None,
         "barrier_effect": barrier_effect_hex.lower(),
+        "completed_barrier": None,
+        "completed_barrier_effect": None,
         "effects": effects,
         "completed_requests": completed_requests,
     }
@@ -2358,7 +2401,7 @@ def _recompute_source_abort(
         "external_oracle",
     }
     if set(report) != report_fields or report["schema"] != (
-        "visa-sqlite-source-abort-real-driver-v4"
+        "visa-sqlite-source-abort-real-driver-v5"
     ):
         raise MatrixFailure("source-abort integrated driver report has the wrong fields")
     restart = report["coordinator_restart"]
@@ -2526,6 +2569,8 @@ def _recompute_source_abort(
         "barrier",
         "barrier_remaining",
         "barrier_effect",
+        "completed_barrier",
+        "completed_barrier_effect",
         "effects",
         "completed_requests",
     }
@@ -2550,17 +2595,23 @@ def _recompute_source_abort(
         or frozen["barrier"] != "checkpoint_released"
         or frozen["barrier_remaining"] is not None
         or frozen["barrier_effect"] != cut_effect
+        or frozen["completed_barrier"] is not None
+        or frozen["completed_barrier_effect"] is not None
         or frozen != capsule_status
         or resumed["mode"] != "active"
         or resumed["authority_epoch"] != source_epoch
         or resumed["barrier"] != "open"
         or resumed["barrier_remaining"] is not None
         or resumed["barrier_effect"] is not None
+        or resumed["completed_barrier"] != cut_token
+        or resumed["completed_barrier_effect"] != cut_effect
         or recovered["mode"] != "active"
         or recovered["authority_epoch"] != source_epoch
         or recovered["barrier"] != "open"
         or recovered["barrier_remaining"] is not None
         or recovered["barrier_effect"] is not None
+        or recovered["completed_barrier"] != cut_token
+        or recovered["completed_barrier_effect"] != cut_effect
         or frozen["effects"] != released["effects"]
         or frozen["completed_requests"] != released["completed_requests"]
         or resumed["effects"] != frozen["effects"]
@@ -2942,9 +2993,13 @@ def _validate_capture(
         or armed["barrier"] != "armed"
         or armed["barrier_remaining"] != expected_predicate["occurrence"]
         or armed["barrier_effect"] is not None
+        or armed["completed_barrier"] is not None
+        or armed["completed_barrier_effect"] is not None
         or target["mode"] != "active"
         or target["authority_epoch"] != armed["authority_epoch"]
         or target["barrier_remaining"] is not None
+        or target["completed_barrier"] is not None
+        or target["completed_barrier_effect"] is not None
         or target["effects"] <= armed["effects"]
         or target["completed_requests"] <= armed["completed_requests"]
     ):
@@ -2959,19 +3014,33 @@ def _validate_capture(
             or released["authority_epoch"] != target["authority_epoch"]
             or released["barrier"] != release_phase
             or released["barrier_remaining"] is not None
-            or released["effects"] != target["effects"]
-            or released["completed_requests"] != target["completed_requests"]
         ):
             raise MatrixFailure("barrier capture lacks its required release phase")
         if release_phase == "checkpoint_released":
-            if released["barrier_effect"] != effect:
-                raise MatrixFailure("barrier effect changed at checkpoint release")
-        elif released["barrier_effect"] is not None:
-            raise MatrixFailure("continued barrier retained its target effect")
+            if (
+                released["barrier_effect"] != effect
+                or released["completed_barrier"] is not None
+                or released["completed_barrier_effect"] is not None
+                or released["effects"] != target["effects"]
+                or released["completed_requests"] != target["completed_requests"]
+            ):
+                raise MatrixFailure(
+                    "checkpoint release identity or counters changed at the cut"
+                )
+        elif (
+            released["barrier_effect"] is not None
+            or released["completed_barrier"] != value["token"]
+            or released["completed_barrier_effect"] != effect
+            or released["effects"] != target["effects"]
+            or released["completed_requests"] != target["completed_requests"]
+        ):
+            raise MatrixFailure("continued barrier lacks its durable release identity")
     return effect
 
 
-def _validate_handoff(value: object) -> None:
+def _validate_handoff(
+    value: object, *, barrier_token: str, barrier_effect: str
+) -> None:
     required = {
         "source_frozen",
         "destination_prepared",
@@ -3000,6 +3069,34 @@ def _validate_handoff(value: object) -> None:
         and active["authority_epoch"] == source["authority_epoch"] + 1
     ):
         raise MatrixFailure("handoff authority epochs are invalid")
+    for label, status in (
+        ("source", source),
+        ("prepared destination", prepared),
+        ("fenced source", fenced),
+    ):
+        if (
+            status["barrier"] != "checkpoint_released"
+            or status["barrier_remaining"] is not None
+            or status["barrier_effect"] != barrier_effect
+            or status["completed_barrier"] is not None
+            or status["completed_barrier_effect"] is not None
+        ):
+            raise MatrixFailure(f"{label} is detached from the checkpoint barrier")
+    if (
+        active["barrier"] != "open"
+        or active["barrier_remaining"] is not None
+        or active["barrier_effect"] is not None
+        or active["completed_barrier"] != barrier_token
+        or active["completed_barrier_effect"] != barrier_effect
+    ):
+        raise MatrixFailure("activated destination lacks the completed checkpoint barrier")
+    if len(
+        {
+            (status["effects"], status["completed_requests"])
+            for status in (source, prepared, fenced, active)
+        }
+    ) != 1:
+        raise MatrixFailure("handoff changed provider effect counters")
     source_client = _require_hex(value["source_client"], 16, "source client")
     destination_client = _require_hex(
         value["destination_client"], 16, "destination client"
@@ -3352,7 +3449,11 @@ def _validate_cell(
         release_phase="checkpoint_released" if spec.target_phase == "held" else None,
     )
     _validate_file_identity(cell["compute_checkpoint"], "compute checkpoint")
-    _validate_handoff(cell["handoff"])
+    _validate_handoff(
+        cell["handoff"],
+        barrier_token=str(cell["barrier"]["token"]),
+        barrier_effect=effect,
+    )
     _validate_namespace_snapshot(cell["namespace_snapshot"], f"cell {spec.cell_id}")
     oracle_projection = _validate_external_oracle(
         cell["external_oracle"],

@@ -558,9 +558,16 @@ The required cell, `stock-zstd.wanco-streaming`, compresses one deterministic
 pre-arms successful output `fd_write` occurrences 8 and 64. The provider holds
 the guest only after the durable response has been written back into guest
 memory; neither byte-counter polling nor an asynchronous signal chooses the cut.
+The runner retains the status returned by the same atomic
+`BarrierRelease(checkpoint)` response: it must remain
+`checkpoint_released`, preserve the target effect and effect/request counters,
+and leave `completed_barrier` and `completed_barrier_effect` empty. It never
+substitutes a later `status` request for that release-edge observation.
 Each cut binds the Wanco compute checkpoint and provider capsule into one
 migration manifest, follows `active@1 -> frozen@1 -> prepared@1 -> fenced@1 ->
-active@2`, and resumes in a fresh provider database and process.
+active@2`, and resumes in a fresh provider database and process. Destination
+activation must bind `completed_barrier` and `completed_barrier_effect` to the
+exact checkpoint token/effect while preserving the checkpoint counters.
 
 The external oracle materializes `output.zst`, invokes separately installed
 native zstd 1.5.7, and requires the decoded SHA-256 and size to equal the raw
@@ -570,7 +577,7 @@ restore into an empty provider, compute-checkpoint tamper, provider-capsule
 tamper, commit/fence proof pairing tamper, and destination guest-capability
 spoof.
 
-The v6 formal lane retains the canonical receipt, one deduplicated `.zst` blob
+The v7 formal lane retains the canonical receipt, one deduplicated `.zst` blob
 shared only after all three positive outputs compare byte-identically, the
 positive application stdout/stderr streams and exit statuses, three raw
 native-zstd oracle reports, bounded raw stderr plus a verdict-free process
@@ -609,12 +616,20 @@ post-hostcall predicates for lock acquisition, partial journal write, journal
 sync, database-page write, database sync, journal-delete commit, lost response,
 and an active read cursor. A barrier can reach `held` only after the provider
 has durably recorded the effect and response and the bridge has written the
-result into guest state. Each cut then performs a Wanco checkpoint, canonical
-provider handoff, fresh destination process restore, complete namespace
-snapshot, and an independent native-SQLite oracle. The oracle ignores runner
-verdicts and recomputes `integrity_check`, `foreign_key_check`, ordered logical
-contents, unique transaction IDs, total-balance invariants, and exact raw ACK
-membership.
+result into guest state. The controller consumes the status returned by the
+same atomic `BarrierRelease`: `checkpoint` must retain the target effect while
+leaving both completed-identity fields empty, and `continue` must reopen the
+barrier while binding `completed_barrier` and
+`completed_barrier_effect` to the exact token/effect with unchanged counters.
+It never issues a second `status` request to prove release, because resumed
+guest execution could advance the provider before that request and turn the
+observation into a TOCTOU race. Each cut then performs a Wanco checkpoint,
+canonical provider handoff, fresh destination process restore, complete
+namespace snapshot, and an independent native-SQLite oracle. The activated
+destination must carry the exact completed checkpoint token/effect. The oracle
+ignores runner verdicts and recomputes `integrity_check`,
+`foreign_key_check`, ordered logical contents, unique transaction IDs,
+total-balance invariants, and exact raw ACK membership.
 
 The gate also runs one uninterrupted stock transaction followed by a complete
 ordered cursor readback. Every migrated cut reaches the same application-level
@@ -622,23 +637,29 @@ readback: the active-cursor cell completes its split source/destination cursor,
 while the other seven use a fresh post-handoff read client. The source-abort
 recovery likewise uses a third fresh client for a complete readback after the
 source compute and provider are resumed. Native oracle report v2 emits a
-domain-separated logical-content projection. Matrix receipt v9
+domain-separated logical-content projection. Matrix receipt v10 contains
+eight `visa-stock-sqlite-rollback-journal-cell-v5` records and one
+`visa-sqlite-source-abort-reconciliation-v3` qualification. It
 retains, for the control and every cut, each role-ordered application segment's
-stdout, stderr, and exit status, the reconstructed client transcript, canonical
-expected-ACK input, verdict-free namespace snapshot, and original oracle
-report. The standalone validator securely reads those receipt-relative files,
-requires zero exits, applies a closed grammar to Wanco checkpoint/restore
-diagnostics while requiring ordinary segments to be quiet, reconstructs the
-transcript from the individual stdout streams, and reparses ACK, row, and
-cursor terminals without consuming runner verdicts. The active-cursor prefix
-comes directly from the retained `source` segment. The validator then reruns
-the exact bound native oracle over private copies of every retained snapshot
-and requires the raw application projection, reproduced oracle projection,
-receipt summary, and uninterrupted control to agree on logical contents,
-invariants, acknowledgements, and final cursor-visible rows. It additionally
-binds each top-level namespace effect count and frontier to the snapshot summary
-decoded by the rerun oracle, and opens the source-abort provider capsule as the
-current schema-5 SQLite state to rederive its frozen cut status.
+stdout, stderr, and exit status, the reconstructed client transcript,
+canonical expected-ACK input, verdict-free namespace snapshot, and original
+oracle report. The standalone validator securely reads those receipt-relative
+files, requires zero exits, applies a closed grammar to Wanco
+checkpoint/restore diagnostics while requiring ordinary segments to be quiet,
+reconstructs the transcript from the individual stdout streams, and reparses
+ACK, row, and cursor terminals without consuming runner verdicts. The
+active-cursor prefix comes directly from the retained `source` segment. The
+validator then reruns the exact bound native oracle over private copies of
+every retained snapshot and requires the raw application projection,
+reproduced oracle projection, receipt summary, and uninterrupted control to
+agree on logical contents, invariants, acknowledgements, and final
+cursor-visible rows. It additionally binds each top-level namespace effect
+count and frontier to the snapshot summary decoded by the rerun oracle, and
+opens the source-abort provider capsule as the current schema-5 SQLite state to
+rederive its frozen cut status. Protocol v3.0 status carries
+`completed_barrier` and `completed_barrier_effect`; the validator requires both
+to be empty at every frozen checkpoint and requires the exact checkpoint
+token/effect after destination activation and source-abort resume.
 
 The same gate proves `fd_sync`/`fd_datasync` and response replay across provider
 `SIGKILL` plus reopen, rejects migration while response delivery is uncertain,

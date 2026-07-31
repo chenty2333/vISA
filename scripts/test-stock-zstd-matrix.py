@@ -91,12 +91,16 @@ def status(
     bytes_written: int = 0,
     requests: int = 0,
     session: int = 1,
+    completed_barrier: list[int] | None = None,
+    completed_effect: list[int] | None = None,
 ) -> dict[str, object]:
     return {
         "authority_epoch": epoch,
         "barrier": barrier,
         "barrier_effect": list(range(16)) if effect else None,
         "barrier_remaining": remaining,
+        "completed_barrier": completed_barrier,
+        "completed_barrier_effect": completed_effect,
         "bytes_read": bytes_read,
         "bytes_written": bytes_written,
         "completed_requests": requests,
@@ -158,6 +162,8 @@ def migrated_cell(
         bytes_written=written,
         requests=requests,
         session=index,
+        completed_barrier=list(bytes.fromhex(f"{index:032x}")),
+        completed_effect=list(range(16)),
     )
     final = status(
         epoch=2,
@@ -165,6 +171,8 @@ def migrated_cell(
         bytes_written=oracle["compressed"]["size"],
         requests=408,
         session=index,
+        completed_barrier=list(bytes.fromhex(f"{index:032x}")),
+        completed_effect=list(range(16)),
     )
     return {
         "active_status": active,
@@ -967,6 +975,18 @@ class StockZstdMatrixTests(unittest.TestCase):
                 "session", [9] * 16
             ),
             r"destination session differs",
+        )
+        self.assert_rejected(
+            lambda receipt: receipt["migrated_cells"][0]["active_status"].__setitem__(
+                "completed_barrier", [9] * 16
+            ),
+            r"detached from the checkpoint barrier",
+        )
+        self.assert_rejected(
+            lambda receipt: receipt["migrated_cells"][0]["active_status"].__setitem__(
+                "completed_barrier_effect", [9] * 16
+            ),
+            r"detached from the checkpoint barrier",
         )
 
     def test_cut_and_fault_inventory_remain_exact(self) -> None:

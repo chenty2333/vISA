@@ -1077,6 +1077,8 @@ mod tests {
             barrier: BarrierPhase::CheckpointReleased,
             barrier_remaining: None,
             barrier_effect: Some(EffectId([8; 16])),
+            completed_barrier: None,
+            completed_barrier_effect: None,
             open_descriptors: 1,
             objects: 1,
             paths: 1,

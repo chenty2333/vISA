@@ -244,6 +244,7 @@ fn fresh_destination_preserves_descriptors_chunks_locks_and_fencing() {
         )
         .ok
     );
+    let barrier_effect = source.effect(source.sequence);
     assert_eq!(source.call(Operation::FdTell { fd: output_fd }).errno, errno::SUCCESS);
     assert!(
         admin(
@@ -311,18 +312,19 @@ fn fresh_destination_preserves_descriptors_chunks_locks_and_fencing() {
         AdminOperation::Activate { handoff: HANDOFF, authority_epoch: 2 },
     );
     assert!(activation.ok);
-    assert_eq!(activation.status.unwrap().mode, ProviderMode::Active);
-    assert!(
-        admin(
-            &destination_socket,
-            DESTINATION_CAPABILITY,
-            AdminOperation::BarrierRelease {
-                token: BARRIER,
-                action: BarrierReleaseAction::Continue,
-            }
-        )
-        .ok
+    let activation_status = activation.status.unwrap();
+    assert_eq!(activation_status.mode, ProviderMode::Active);
+    assert_eq!(activation_status.completed_barrier, Some(BARRIER));
+    assert_eq!(activation_status.completed_barrier_effect, Some(barrier_effect));
+    let continued = admin(
+        &destination_socket,
+        DESTINATION_CAPABILITY,
+        AdminOperation::BarrierRelease { token: BARRIER, action: BarrierReleaseAction::Continue },
     );
+    assert!(continued.ok);
+    let continued_status = continued.status.unwrap();
+    assert_eq!(continued_status.completed_barrier, Some(BARRIER));
+    assert_eq!(continued_status.completed_barrier_effect, Some(barrier_effect));
 
     let tell = destination.call(Operation::FdTell { fd: output_fd });
     assert_eq!(tell.result, OperationResult::Offset(prefix.len() as u64));

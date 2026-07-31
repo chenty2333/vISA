@@ -72,6 +72,11 @@ def canonical_bytes(value: object) -> bytes:
     return CONTRACT.canonical_bytes(value)
 
 
+def development_projection(value: Mapping[str, object]) -> dict[str, object]:
+    """Remove runner-only filesystem handles from a development receipt."""
+    return {key: item for key, item in value.items() if key != "_raw_paths"}
+
+
 def sha256_file(path: Path) -> str:
     return str(CONTRACT.file_identity(path)["sha256"])
 
@@ -3464,7 +3469,7 @@ def qualify_source_abort_reconciliation(
         report_path,
         canonical_bytes(
             {
-                "schema": "visa-sqlite-source-abort-real-driver-v4",
+                "schema": "visa-sqlite-source-abort-real-driver-v5",
                 "cut": capture,
                 "source_frozen": frozen,
                 "source_provider_resumed_before_restart": resumed,
@@ -3819,11 +3824,7 @@ def run_matrix(
         )
         if arguments.only_source_abort:
             development = work_root / "development-source-abort.json"
-            development_qualification = {
-                key: value
-                for key, value in source_abort.items()
-                if key != "_raw_paths"
-            }
+            development_qualification = development_projection(source_abort)
             write_new(
                 development,
                 canonical_bytes(
@@ -3877,12 +3878,13 @@ def run_matrix(
         )
     if arguments.only_cell is not None:
         development = work_root / "development-cell.json"
+        development_cell = development_projection(cells[0])
         write_new(
             development,
             canonical_bytes(
                 {
                     "artifact_class": "partial-development-run-not-matrix-evidence",
-                    "cell": cells[0],
+                    "cell": development_cell,
                 }
             )
             + b"\n",

@@ -195,6 +195,8 @@ fn response_loss_then_provider_kill_reopen_replays_exactly_once() {
     let recovered = admin(&socket, AdminOperation::Status).status.unwrap();
     assert_eq!(recovered.barrier, BarrierPhase::Triggered);
     assert_eq!(recovered.barrier_effect, Some(uncertain.effect));
+    assert_eq!(recovered.completed_barrier, None);
+    assert_eq!(recovered.completed_barrier_effect, None);
     let blocked_arm = admin(
         &socket,
         AdminOperation::BarrierArm {
@@ -218,16 +220,19 @@ fn response_loss_then_provider_kill_reopen_replays_exactly_once() {
     assert_eq!(admin(&socket, AdminOperation::Status).status.unwrap().effects, 2);
     complete(&socket, &uncertain);
     assert_eq!(admin(&socket, AdminOperation::Status).status.unwrap().barrier, BarrierPhase::Held);
-    assert!(
-        admin(
-            &socket,
-            AdminOperation::BarrierRelease {
-                token: BARRIER,
-                action: BarrierReleaseAction::Continue,
-            },
-        )
-        .ok
+    let continued = admin(
+        &socket,
+        AdminOperation::BarrierRelease { token: BARRIER, action: BarrierReleaseAction::Continue },
     );
+    assert!(continued.ok);
+    let continued_status = continued.status.unwrap();
+    assert_eq!(continued_status.completed_barrier, Some(BARRIER));
+    assert_eq!(continued_status.completed_barrier_effect, Some(uncertain.effect));
+    kill(second_server, &socket);
+    let second_server = start(&database, &socket);
+    let recovered_completion = admin(&socket, AdminOperation::Status).status.unwrap();
+    assert_eq!(recovered_completion.completed_barrier, Some(BARRIER));
+    assert_eq!(recovered_completion.completed_barrier_effect, Some(uncertain.effect));
 
     let restarted = request_for(RESTARTED_CLIENT, 1, 42, uncertain.operation.clone());
     let replay = send_guest(&socket, &restarted).unwrap();

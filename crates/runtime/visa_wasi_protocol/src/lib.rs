@@ -6,7 +6,7 @@ use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 2, minor: 0 };
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 3, minor: 0 };
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const ROOT_PREOPEN_FD: u32 = 3;
 pub const NAMESPACE_SNAPSHOT_VERSION: u16 = 2;
@@ -251,6 +251,8 @@ pub enum WireRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+// This low-rate control-plane envelope preserves a stable, allocation-free API.
+#[allow(clippy::large_enum_variant)]
 pub enum WireResponse {
     Guest(GuestResponse),
     Completion(GuestCompletionResponse),
@@ -608,6 +610,8 @@ pub struct ProviderStatus {
     pub barrier: BarrierPhase,
     pub barrier_remaining: Option<u64>,
     pub barrier_effect: Option<EffectId>,
+    pub completed_barrier: Option<BarrierToken>,
+    pub completed_barrier_effect: Option<EffectId>,
     pub open_descriptors: u64,
     pub objects: u64,
     pub paths: u64,
@@ -772,6 +776,37 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert!(bytes.len() < MAX_FRAME_BYTES);
         assert_eq!(decode_request(&bytes).unwrap(), request);
+    }
+
+    #[test]
+    fn provider_status_round_trip_retains_completed_barrier_identity() {
+        let response = WireResponse::Admin(AdminResponse {
+            version: PROTOCOL_VERSION,
+            ok: true,
+            message: "barrier released".into(),
+            status: Some(ProviderStatus {
+                session: SessionId([1; 16]),
+                mode: ProviderMode::Active,
+                authority_epoch: 2,
+                barrier: BarrierPhase::Open,
+                barrier_remaining: None,
+                barrier_effect: None,
+                completed_barrier: Some(BarrierToken([2; 16])),
+                completed_barrier_effect: Some(EffectId([3; 16])),
+                open_descriptors: 1,
+                objects: 1,
+                paths: 1,
+                locks: 0,
+                effects: 7,
+                completed_requests: 7,
+                bytes_read: 11,
+                bytes_written: 13,
+            }),
+            snapshot: None,
+        });
+        let bytes = encode_response(&response).unwrap();
+        assert!(bytes.len() < MAX_FRAME_BYTES);
+        assert_eq!(decode_response(&bytes).unwrap(), response);
     }
 
     #[test]

@@ -406,10 +406,10 @@ class RunnerTests(unittest.TestCase):
                 [retained],
             )
 
-    def test_v6_formal_runner_has_no_dirty_snapshot_escape(self) -> None:
+    def test_v7_formal_runner_has_no_dirty_snapshot_escape(self) -> None:
         self.assertEqual(
             MATRIX.SCHEMA,
-            "visa-stock-zstd-transparent-migration-matrix-v6",
+            "visa-stock-zstd-transparent-migration-matrix-v7",
         )
         parser_source = inspect.getsource(MATRIX.parse_args)
         main_source = inspect.getsource(MATRIX.main)

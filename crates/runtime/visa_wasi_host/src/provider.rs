@@ -826,6 +826,8 @@ impl Provider {
             barrier: meta.barrier,
             barrier_remaining: meta.barrier_remaining,
             barrier_effect: meta.barrier_effect,
+            completed_barrier: meta.completed_barrier,
+            completed_barrier_effect: meta.completed_barrier_effect,
             open_descriptors,
             objects,
             paths,

@@ -26,7 +26,7 @@ from receipt_artifacts import (
 )
 import wanco_process_diagnostics as WANCO_DIAGNOSTICS
 
-SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v6"
+SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"
 ORACLE_REPORT_SCHEMA = "visa-stock-zstd-external-oracle-report-v1"
 FAULT_PROCESS_OBSERVATION_SCHEMA = (
     "visa-stock-zstd-fault-process-observation-v1"
@@ -69,6 +69,8 @@ STATUS_KEYS = {
     "barrier",
     "barrier_effect",
     "barrier_remaining",
+    "completed_barrier",
+    "completed_barrier_effect",
     "bytes_read",
     "bytes_written",
     "completed_requests",
@@ -228,6 +230,26 @@ def validate_status(
             fail(f"{label}.barrier_effect must be a 16-byte array")
     elif status["barrier_effect"] is not None:
         fail(f"{label}.barrier_effect must be null")
+    completed_barrier = status["completed_barrier"]
+    completed_effect = status["completed_barrier_effect"]
+    if (completed_barrier is None) != (completed_effect is None):
+        fail(f"{label} has a partial completed-barrier identity")
+    for field, value in (
+        ("completed_barrier", completed_barrier),
+        ("completed_barrier_effect", completed_effect),
+    ):
+        if value is not None and (
+            not isinstance(value, list)
+            or len(value) != 16
+            or any(
+                isinstance(item, bool)
+                or not isinstance(item, int)
+                or item < 0
+                or item > 255
+                for item in value
+            )
+        ):
+            fail(f"{label}.{field} must be null or a 16-byte array")
     if barrier == "armed":
         positive_int(status["barrier_remaining"], f"{label}.barrier_remaining")
     elif status["barrier_remaining"] is not None:
@@ -738,6 +760,9 @@ def validate_cut(
     )
     if held != {**released, "barrier": "held"}:
         fail(f"{label} held and checkpoint-released observations drifted")
+    for name, status in (("armed", armed), ("held", held), ("released", released)):
+        if status["completed_barrier"] is not None:
+            fail(f"{label} {name} status retained an earlier barrier completion")
     checkpoint = identity(cut["checkpoint"], f"{label}.checkpoint")
     positive_int(checkpoint["size"], f"{label}.checkpoint.size")
     return released, checkpoint
@@ -821,6 +846,12 @@ def validate_cell(
         barrier="open",
         effect_required=False,
     )
+    expected_completed_barrier = list(bytes.fromhex(cell["cut"]["barrier_token"]))
+    if (
+        active["completed_barrier"] != expected_completed_barrier
+        or active["completed_barrier_effect"] != released["barrier_effect"]
+    ):
+        fail(f"{label} activated destination is detached from the checkpoint barrier")
     for field in ("bytes_read", "bytes_written", "completed_requests", "effects"):
         if active[field] != source_post[field]:
             fail(f"{label} destination prepare changed {field}")
@@ -834,6 +865,11 @@ def validate_cell(
         barrier="open",
         effect_required=False,
     )
+    if (
+        final["completed_barrier"] != active["completed_barrier"]
+        or final["completed_barrier_effect"] != active["completed_barrier_effect"]
+    ):
+        fail(f"{label} final status changed the completed checkpoint barrier")
     if (
         source_post["bytes_read"] >= expected_input["size"]
         or source_post["bytes_written"] >= control["oracle"]["compressed"]["size"]

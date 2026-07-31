@@ -23,6 +23,20 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class RunnerTests(unittest.TestCase):
+    def test_development_projection_is_json_serializable(self) -> None:
+        projected = RUNNER.development_projection(
+            {
+                "schema": "fixture",
+                "nested": {"accepted": True},
+                "_raw_paths": {"capsule": Path("/tmp/capsule")},
+            }
+        )
+        self.assertEqual(
+            json.loads(RUNNER.canonical_bytes(projected)),
+            {"nested": {"accepted": True}, "schema": "fixture"},
+        )
+        self.assertNotIn("_raw_paths", projected)
+
     def test_application_runs_retain_stdout_stderr_and_exit_status(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sqlite-runner-retained-") as raw:
             root = Path(raw)

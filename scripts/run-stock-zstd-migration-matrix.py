@@ -30,7 +30,7 @@ from typing import Any, Iterator, Sequence
 from receipt_artifacts import ArtifactError, publish_reference
 
 
-SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v6"
+SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"
 ORACLE_REPORT_SCHEMA = "visa-stock-zstd-external-oracle-report-v1"
 FAULT_PROCESS_OBSERVATION_SCHEMA = (
     "visa-stock-zstd-fault-process-observation-v1"
@@ -571,8 +571,9 @@ def checkpoint_source(
                 )
             if held_status is None or held_status.get("barrier_effect") is None:
                 raise MatrixFailure("held zstd barrier has no durable target effect")
-            provider.control("barrier-release", barrier_token, "checkpoint")
-            released_status = read_status(provider.control("status"))
+            released_status = read_status(
+                provider.control("barrier-release", barrier_token, "checkpoint")
+            )
             if (
                 released_status.get("barrier") != "checkpoint_released"
                 or released_status.get("barrier_effect")
