@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 RUNNER = Path(__file__).with_name("run-stock-zstd-migration-matrix.py")
@@ -23,6 +24,69 @@ SPEC.loader.exec_module(MATRIX)
 
 
 class RunnerTests(unittest.TestCase):
+    def test_native_oracle_accepts_package_owned_zstd_1_5_5(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="stock-zstd-oracle-test-") as raw:
+            root = Path(raw)
+            zstd = root / "zstd"
+            zstd.write_bytes(b"package-owned-zstd-fixture")
+            zstd.chmod(0o755)
+
+            def fake_run(
+                command: object, *, cwd: Path, check: bool = True, **_: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                del cwd, check
+                argv = list(command)
+                if Path(argv[0]).resolve() == zstd.resolve():
+                    return subprocess.CompletedProcess(
+                        argv,
+                        0,
+                        b"*** Zstandard CLI (64-bit) v1.5.5, by Yann Collet ***\n",
+                        b"",
+                    )
+                if argv[0] == "/test/rpm":
+                    return subprocess.CompletedProcess(
+                        argv, 0, b"zstd-1.5.5-1.x86_64", b""
+                    )
+                raise AssertionError(f"unexpected command: {argv!r}")
+
+            with mock.patch.object(
+                MATRIX, "run", side_effect=fake_run
+            ), mock.patch.object(
+                MATRIX.shutil,
+                "which",
+                side_effect=lambda name: "/test/rpm" if name == "rpm" else None,
+            ):
+                identity = MATRIX.native_zstd_identity(zstd, root)
+
+        self.assertIn("v1.5.5", identity["version"])
+        self.assertEqual(identity["path"], str(zstd.resolve()))
+        self.assertEqual(
+            identity["package"],
+            {"manager": "rpm", "identity": "zstd-1.5.5-1.x86_64"},
+        )
+
+    def test_formal_cli_requires_an_explicit_stock_zstd_oracle(self) -> None:
+        with mock.patch.object(MATRIX.sys, "argv", ["runner"]):
+            with self.assertRaises(SystemExit) as raised:
+                MATRIX.parse_args()
+        self.assertEqual(raised.exception.code, 2)
+
+        with mock.patch.object(
+            MATRIX.sys,
+            "argv",
+            ["runner", "--stock-zstd", "/explicit/package-owned/zstd"],
+        ):
+            arguments = MATRIX.parse_args()
+        self.assertEqual(
+            arguments.stock_zstd, Path("/explicit/package-owned/zstd")
+        )
+        main_source = inspect.getsource(MATRIX.main)
+        self.assertIn(
+            "native_zstd_identity(arguments.stock_zstd, repository)",
+            main_source,
+        )
+        self.assertNotIn('require_tool("zstd")', main_source)
+
     def test_formal_workload_rejects_custom_input_and_cut_sets(self) -> None:
         MATRIX.validate_formal_workload_arguments(
             MATRIX.DEFAULT_INPUT_MIB,

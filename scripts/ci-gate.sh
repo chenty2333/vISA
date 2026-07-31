@@ -810,6 +810,7 @@ gate_system_stock_zstd() {
         python3 scripts/run-stock-zstd-migration-matrix.py \
             --artifact-root "$build_root" \
             --output "$system_bundle_path" \
+            --stock-zstd "$stock_zstd" \
             --skip-build
     run_gate "system-stock-zstd: independent clean exact-SHA receipt validation" \
         python3 scripts/stock_zstd_matrix.py validate "$system_bundle_path" \

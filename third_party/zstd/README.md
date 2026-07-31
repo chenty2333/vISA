@@ -56,9 +56,15 @@ Run:
 python3 scripts/check-zstd-source.py
 python3 scripts/test-check-zstd-source.py
 scripts/build-stock-zstd.sh
-scripts/run-stock-zstd-migration-matrix.py --skip-build
 revision=$(git rev-parse --verify HEAD)
-stock_zstd=$(command -v zstd)
+if [[ -x /usr/bin/zstd ]]; then
+  stock_zstd=/usr/bin/zstd
+else
+  stock_zstd=$(command -v zstd)
+fi
+scripts/run-stock-zstd-migration-matrix.py \
+  --stock-zstd "$stock_zstd" \
+  --skip-build
 python3 scripts/stock_zstd_matrix.py validate \
   target/.ci-artifacts/stock-zstd-migration-matrix/summary.json \
   --expected-revision "$revision" \
@@ -90,7 +96,7 @@ token into the provider freeze. It does not poll byte counters or signal the
 container to choose a cut. The matrix also uses a fresh provider/process,
 external native-zstd byte comparison, and negative cells. The build script
 rejects optimization overrides so an `-O0` diagnostic cannot be mislabeled as
-the qualified matrix input. The matrix v6 runner also resolves the live Wanco
+the qualified matrix input. The matrix v7 runner also resolves the live Wanco
 Docker image ID and cross-checks it through both build receipts and both source
 locks before it is allowed to state that artifact bindings were verified.
 
@@ -110,3 +116,9 @@ exit-status binding, stderr digest/tail, and detector signature, and also checks
 the clean exact revision and fault inventory. The lane records correctness and
 falsification evidence; it does not collect or publish latency, downtime,
 throughput, or overhead measurements.
+
+The migrated application remains the source-locked upstream zstd 1.5.7 build.
+The independent native decompression oracle may be a different packaged zstd
+release: its absolute path, version, binary digest, size, and RPM/dpkg identity
+are recorded and rechecked, while losslessness is decided from the decompressed
+bytes rather than version equality.

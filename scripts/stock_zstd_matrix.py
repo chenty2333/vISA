@@ -36,6 +36,9 @@ CANONICAL_INPUT_SEED = b"vISA stock zstd transparent migration input v1"
 CUTS = (("cut-1", 8), ("cut-2", 64))
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
+ZSTD_CLI_VERSION_RE = re.compile(
+    r"\bZstandard CLI\b.*\bv[0-9]+\.[0-9]+\.[0-9]+\b"
+)
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 MAX_STDOUT_BYTES = 1024 * 1024
 MAX_STDERR_BYTES = 1024 * 1024
@@ -371,7 +374,10 @@ def validate_stock_zstd_program(
         observed_version = completed.stdout.decode("utf-8").strip()
     except UnicodeDecodeError as error:
         fail(f"verifier-selected stock zstd version is not UTF-8: {error}")
-    if observed_version != program["version"] or "v1.5.7" not in observed_version:
+    if (
+        observed_version != program["version"]
+        or ZSTD_CLI_VERSION_RE.search(observed_version) is None
+    ):
         fail("verifier-selected stock zstd version differs from the receipt")
     return resolved
 
@@ -1233,8 +1239,11 @@ def validate_document(
     positive_int(program["size"], "external_oracle.program.size")
     if not isinstance(program["path"], str) or not program["path"].startswith("/"):
         fail("external_oracle.program.path must be absolute")
-    if not isinstance(program["version"], str) or "v1.5.7" not in program["version"]:
-        fail("external_oracle program must identify native zstd v1.5.7")
+    if (
+        not isinstance(program["version"], str)
+        or ZSTD_CLI_VERSION_RE.search(program["version"]) is None
+    ):
+        fail("external_oracle program must identify a native zstd CLI")
     package = exact_object(program["package"], {"identity", "manager"}, "external_oracle.program.package")
     if package["manager"] not in {"rpm", "dpkg"} or not isinstance(package["identity"], str) or not package["identity"]:
         fail("external_oracle program has no RPM/dpkg identity")

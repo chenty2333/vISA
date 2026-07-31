@@ -44,6 +44,9 @@ DEFAULT_CUT_WRITE_OCCURRENCES = (8, 64)
 PROCESS_TIMEOUT_SECONDS = 300
 PROVIDER_START_TIMEOUT_SECONDS = 20
 CHECKPOINT_CUT_TIMEOUT_SECONDS = 120
+ZSTD_CLI_VERSION_RE = re.compile(
+    r"\bZstandard CLI\b.*\bv[0-9]+\.[0-9]+\.[0-9]+\b"
+)
 
 
 class MatrixFailure(RuntimeError):
@@ -188,12 +191,22 @@ def repository_snapshot(repository: Path) -> dict[str, object]:
     }
 
 
-def native_zstd_identity(zstd: str, repository: Path) -> dict[str, object]:
-    path = Path(zstd).resolve()
-    version = run([path, "--version"], cwd=repository).stdout.decode().strip()
-    if "v1.5.7" not in version:
+def native_zstd_identity(zstd: Path, repository: Path) -> dict[str, object]:
+    try:
+        path = zstd.resolve(strict=True)
+        mode = path.stat().st_mode
+    except OSError as error:
         raise MatrixFailure(
-            f"external oracle must be stock zstd 1.5.7, found: {version}"
+            f"cannot resolve the external stock-zstd oracle: {error}"
+        ) from error
+    if not path.is_file() or mode & 0o111 == 0:
+        raise MatrixFailure(
+            f"external stock-zstd oracle is not an executable regular file: {path}"
+        )
+    version = run([path, "--version"], cwd=repository).stdout.decode().strip()
+    if ZSTD_CLI_VERSION_RE.search(version) is None:
+        raise MatrixFailure(
+            f"external oracle does not identify a native zstd CLI: {version}"
         )
     package: dict[str, str] | None = None
     rpm = shutil.which("rpm")
@@ -653,7 +666,7 @@ def run_aot(
 
 
 def external_oracle(
-    zstd: str,
+    zstd: Path,
     compressed: Path,
     original: Path,
     decoded: Path,
@@ -696,7 +709,7 @@ def materialize_and_check(
     output: Path,
     input_path: Path,
     decoded: Path,
-    zstd: str,
+    zstd: Path,
     cwd: Path,
     cell: str,
 ) -> tuple[dict[str, object], Path]:
@@ -729,7 +742,7 @@ def run_control(
     host_binary: Path,
     runtime: DockerAot,
     input_path: Path,
-    zstd: str,
+    zstd: Path,
 ) -> tuple[dict[str, object], dict[str, object]]:
     case = root / "control"
     ensure_private_directory(case)
@@ -933,7 +946,7 @@ def run_migrated_cell(
     bind_binary: Path,
     runtime: DockerAot,
     input_path: Path,
-    zstd: str,
+    zstd: Path,
     build_receipt: dict[str, object],
     build_configuration_sha256: str,
     runtime_sha256: str,
@@ -1965,6 +1978,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-mib", type=int, default=DEFAULT_INPUT_MIB)
     parser.add_argument(
+        "--stock-zstd",
+        required=True,
+        type=Path,
+        help=(
+            "package-owned native zstd executable used as the independent "
+            "decompression oracle"
+        ),
+    )
+    parser.add_argument(
         "--cut-write-occurrence",
         type=int,
         nargs="+",
@@ -2079,8 +2101,8 @@ def main() -> int:
     if not host_binary.is_file() or not bind_binary.is_file():
         raise MatrixFailure("required release control binaries are absent")
 
-    zstd = require_tool("zstd")
-    zstd_identity = native_zstd_identity(zstd, repository)
+    zstd = arguments.stock_zstd.resolve()
+    zstd_identity = native_zstd_identity(arguments.stock_zstd, repository)
     runtime_sha256 = execution_input_binding["wanco_runtime_sha256"]
 
     with work_directory(arguments.keep_work) as work:

@@ -874,10 +874,10 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
         and "scripts/run-stock-zstd-migration-matrix.py" in gate
         and "scripts/stock_zstd_matrix.py validate" in gate
         and "--expected-revision" in gate
-        and "--stock-zstd" in gate
         and "system-stock-zstd) gate_system_stock_zstd ;;" in gate,
         "stock zstd host tier is not wired to the real independently validated matrix runner",
     )
+    check_stock_zstd_oracle_wiring(gate)
     require(
         'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"'
         in zstd_runner
@@ -914,6 +914,30 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
         encoding="utf-8"
     )
     check_wanco_canonical_evidence_closure(gate, runner)
+
+
+def check_stock_zstd_oracle_wiring(gate: str) -> None:
+    try:
+        function = gate.split("gate_system_stock_zstd() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        runner = function.split(
+            "scripts/run-stock-zstd-migration-matrix.py", 1
+        )[1].split(
+            'run_gate "system-stock-zstd: independent clean exact-SHA receipt validation"',
+            1,
+        )[0]
+        validator = function.split(
+            "scripts/stock_zstd_matrix.py validate", 1
+        )[1]
+    except IndexError:
+        require(False, "stock zstd oracle wiring is incomplete")
+        return
+    explicit_oracle = '--stock-zstd "$stock_zstd"'
+    require(
+        explicit_oracle in runner and explicit_oracle in validator,
+        "stock zstd generator and validator must use the same explicit oracle",
+    )
 
 
 def check_wanco_canonical_evidence_closure(gate: str, runner: str) -> None:

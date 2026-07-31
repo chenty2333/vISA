@@ -408,8 +408,8 @@ class StockZstdMatrixTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         ).stdout.decode()
-        if "v1.5.7" not in version:
-            raise unittest.SkipTest("stock zstd 1.5.7 is unavailable")
+        if MATRIX.ZSTD_CLI_VERSION_RE.search(version) is None:
+            raise unittest.SkipTest("a recognizable native zstd CLI is unavailable")
         cls.temporary = tempfile.TemporaryDirectory(
             prefix="stock-zstd-validator-test-"
         )

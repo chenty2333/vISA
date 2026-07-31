@@ -236,6 +236,24 @@ class ClaimWorkflowBindingTests(unittest.TestCase):
         ):
             CONTRACT.check_wanco_canonical_evidence_closure(gate, mutated)
 
+    def test_stock_zstd_generator_and_validator_share_explicit_oracle(self) -> None:
+        gate = (ROOT / "scripts/ci-gate.sh").read_text(encoding="utf-8")
+        CONTRACT.check_stock_zstd_oracle_wiring(gate)
+        explicit = '--stock-zstd "$stock_zstd"'
+        implicit = '--stock-zstd "$(command -v zstd)"'
+        prefix, final = gate.rsplit(explicit, 1)
+        mutations = {
+            "generator": gate.replace(explicit, implicit, 1),
+            "validator": prefix + implicit + final,
+        }
+        for component, mutated in mutations.items():
+            with self.subTest(component=component):
+                with self.assertRaisesRegex(
+                    CONTRACT.ContractError,
+                    r"generator and validator must use the same explicit oracle",
+                ):
+                    CONTRACT.check_stock_zstd_oracle_wiring(mutated)
+
     def test_nonmatrix_artifact_drift_is_rejected(self) -> None:
         jobs = copy.deepcopy(self.jobs)
         uploads = CONTRACT.steps_using(
