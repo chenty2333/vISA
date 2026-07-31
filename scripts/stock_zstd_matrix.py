@@ -108,26 +108,31 @@ FAULT_SPECIFICATIONS = {
         "stock-zstd-filesystem-error-from-fresh-empty-provider",
         "end-to-end",
         ("Bad file descriptor", "Read error", "Permission denied"),
+        "zstd-stderr-code",
     ),
     "compute-checkpoint-tamper": (
         "migration-manifest-bound-file-digest",
         "manifest-verification-path",
         ("migration integrity failure: bound file content differs",),
+        "canonical-cli-failure",
     ),
     "provider-capsule-tamper": (
         "provider-capsule-state-digest",
         "provider-restore-path",
         ("provider integrity failure: capsule state digest",),
+        "canonical-cli-failure",
     ),
     "commit-fence-proof-pair-swap": (
         "canonical-fence-to-commit-binding",
         "canonical-proof-verification-path",
         ("canonical proof rejected: source fence proof binding differs",),
+        "canonical-cli-failure",
     ),
     "destination-guest-capability-spoof": (
         "guest-capability-admission-before-provider-mutation",
         "end-to-end",
         ("Permission denied", "Read error", "Bad file descriptor"),
+        "zstd-stderr-code",
     ),
 }
 
@@ -887,7 +892,9 @@ def validate_faults(
         suffix = name[len(cut) + 1 :]
         if suffix not in FAULT_SPECIFICATIONS:
             fail(f"fault cell has an unknown fault: {name}")
-        detector, scope, stderr_signatures = FAULT_SPECIFICATIONS[suffix]
+        detector, scope, stderr_signatures, exit_policy = (
+            FAULT_SPECIFICATIONS[suffix]
+        )
         required = {
             "detector",
             "exit_status",
@@ -947,8 +954,6 @@ def validate_faults(
             process["exit_status"],
             f"fault {name} raw process observation exit_status",
         )
-        if observed_exit_status != 1:
-            fail(f"fault {name} raw process exit status must be one")
         observed_stderr_identity = bytes_identity(stderr_payload)
         if (
             identity(
@@ -963,6 +968,25 @@ def validate_faults(
         if raw["stderr_sha256"] != observed_stderr_identity["sha256"]:
             fail(f"fault {name} summary stderr digest differs from raw stderr")
         stderr_text = stderr_payload.decode("utf-8", errors="replace")
+        if exit_policy == "zstd-stderr-code":
+            observed_codes = re.findall(
+                r"(?m)^zstd: error ([1-9][0-9]{0,2}) :", stderr_text
+            )
+            if len(observed_codes) != 1:
+                fail(f"fault {name} raw stderr has no unique zstd exit code")
+            stderr_exit_status = int(observed_codes[0])
+            if (
+                stderr_exit_status > 255
+                or observed_exit_status != stderr_exit_status
+            ):
+                fail(
+                    f"fault {name} raw process exit status differs from zstd stderr"
+                )
+        elif exit_policy == "canonical-cli-failure":
+            if observed_exit_status != 1:
+                fail(f"fault {name} raw process exit status must be one")
+        else:
+            fail(f"fault {name} has an unsupported exit-status policy")
         observed_tail = stderr_text[-320:]
         if raw["stderr_tail"] != observed_tail:
             fail(f"fault {name} summary stderr tail differs from raw stderr")

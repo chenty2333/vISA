@@ -43,7 +43,7 @@ RESTORE_STDERR = (
 )
 FAULT_DIAGNOSTICS = {
     "carrier-only-fresh-empty-provider": (
-        b"zstd: error 25 : Read error : Bad file descriptor\n"
+        b"zstd: error 37 : Read error\n"
     ),
     "compute-checkpoint-tamper": (
         b"migration integrity failure: bound file content differs\n"
@@ -55,8 +55,15 @@ FAULT_DIAGNOSTICS = {
         b"canonical proof rejected: source fence proof binding differs\n"
     ),
     "destination-guest-capability-spoof": (
-        b"zstd: error 25 : Read error : Permission denied\n"
+        b"zstd: error 37 : Read error\n"
     ),
+}
+FAULT_EXIT_STATUSES = {
+    suffix: 37 if suffix in {
+        "carrier-only-fresh-empty-provider",
+        "destination-guest-capability-spoof",
+    } else 1
+    for suffix in FAULT_DIAGNOSTICS
 }
 
 
@@ -226,9 +233,10 @@ def fault_cells(root: Path) -> list[dict[str, object]]:
     )
     result: list[dict[str, object]] = []
     for cut in (1, 2):
-        for offset, (suffix, detector, scope) in enumerate(specifications):
+        for suffix, detector, scope in specifications:
             name = f"cut-{cut}-{suffix}"
             stderr = FAULT_DIAGNOSTICS[suffix]
+            exit_status = FAULT_EXIT_STATUSES[suffix]
             prefix = f"raw/faults/cut-{cut}/{suffix}"
             stderr_path = root / f"{prefix}.stderr"
             stderr_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,14 +244,14 @@ def fault_cells(root: Path) -> list[dict[str, object]]:
             process = {
                 "schema": MATRIX.FAULT_PROCESS_OBSERVATION_SCHEMA,
                 "fault": name,
-                "exit_status": 1,
+                "exit_status": exit_status,
                 "stderr": MATRIX.bytes_identity(stderr),
             }
             process_path = root / f"{prefix}.process.json"
             process_path.write_bytes(MATRIX.canonical_bytes(process) + b"\n")
             cell: dict[str, object] = {
                 "detector": detector,
-                "exit_status": 1,
+                "exit_status": exit_status,
                 "fault": name,
                 "raw_process_observation": file_reference(
                     root, f"{prefix}.process.json"
@@ -617,6 +625,33 @@ class StockZstdMatrixTests(unittest.TestCase):
             ),
             r"summary stderr tail differs from raw stderr",
         )
+
+    def test_zstd_guest_exit_status_is_derived_from_raw_diagnostic(self) -> None:
+        self.assertEqual(self.base_receipt["fault_cells"][0]["exit_status"], 37)
+        self.validate(copy.deepcopy(self.base_receipt))
+
+        process_path = self.root / (
+            "raw/faults/cut-1/carrier-only-fresh-empty-provider.process.json"
+        )
+        original = process_path.read_bytes()
+        try:
+            process = json.loads(original)
+            process["exit_status"] = 7
+            process_path.write_bytes(MATRIX.canonical_bytes(process) + b"\n")
+            receipt = copy.deepcopy(self.base_receipt)
+            fault = receipt["fault_cells"][0]
+            fault["exit_status"] = 7
+            fault["raw_process_observation"] = file_reference(
+                self.root,
+                "raw/faults/cut-1/carrier-only-fresh-empty-provider.process.json",
+            )
+            with self.assertRaisesRegex(
+                MATRIX.ReceiptError,
+                r"raw process exit status differs from zstd stderr",
+            ):
+                self.validate(receipt)
+        finally:
+            process_path.write_bytes(original)
 
     def test_coordinated_fault_forgery_without_detector_signature_is_rejected(self) -> None:
         stderr_path = self.root / (

@@ -132,7 +132,7 @@ uploaded bytes.
 | `system-stage3a-cross-runtime` | The fixed 12-case regular-file profile in all four Wasmtime/source-locked-Wacogo directions, three runs per direction, 12 complete inner validations, 144/144 executions, calibrated Stage 1 detector closure, verdict-free observations, independent semantic replay, a 20-entry preclassified outer-verifier corpus, and relocated verification | Regresses only `cross-runtime-regular-file-continuity-v1` for the named x86-64 Linux runtimes and bounded file profile. It does not qualify unmodified upstream Wacogo, logical requests, another ISA/substrate, cross-host execution, arbitrary filesystem objects, or joint composition. |
 | `system-wanco-carrier` | A real source-locked Wanco AOT `SIGUSR1` checkpoint and fresh-process restore for `read-write-offset` and `append-continuity`; one shared uninterrupted control, carrier-only expected rejection, vISA-plus-carrier acceptance, three clean-SHA repeats, and original-root plus relocated validation through the same verdict-free oracle | Establishes only `bounded-wanco-regular-file-carrier-composition-v1` on same-host native x86-64 Linux. It distinguishes compute-state carriage from resource rebinding; it does not qualify arbitrary Wanco applications, another file relation/resource, cross-host or cross-ISA Wanco, or a production migration service. |
 | `system-stock-zstd` | Exact upstream zstd 1.5.7 sources with zero source patches, a separately linked WASI metadata compatibility object, a 24 MiB deterministic input, one uninterrupted control, Wanco checkpoints after successful output `fd_write` occurrences 8 and 64, fresh-provider/fresh-process restores, native-zstd decompression and compressed-byte comparison, plus five negative cells per cut | Establishes `bounded-stock-zstd-streaming-migration-v1` for the named same-host x86-64 Wanco AOT streaming-file workload. It does not establish reuse of an upstream-distributed binary, arbitrary applications/resources, cross-host/cross-ISA Wanco, external coordinator authenticity, performance, or production orchestration. |
-| `system-stock-sqlite` | A clean source-locked Wanco build; the twelve-cell O0/O1/O2 typed-checkpoint corpus; zero-source-patch SQLite 3.53.4 built for WASI; one uninterrupted transaction/readback control; provider kill/reopen and source-abort reconciliation; and all eight rollback-journal cuts through fresh-process restore, complete cursor readback, namespace snapshot, native SQLite projection, and control-equivalence validation | Establishes `bounded-stock-sqlite-rollback-migration-v1` for the named same-host x86-64, rollback-journal `DELETE`, `synchronous=FULL`, process-crash profile. It does not establish power-loss or storage-device ordering safety, WAL mode, cross-host/cross-ISA execution, arbitrary applications, or a production orchestrator. |
+| `system-stock-sqlite` | A clean source-locked Wanco build; the twelve-cell O0/O1/O2 typed-checkpoint corpus with independently decoded protobuf/LZ4 checkpoints; zero-source-patch SQLite 3.53.4 built for WASI; one uninterrupted transaction/readback control; raw provider kill/reopen and source-abort recovery observations; and all eight rollback-journal cuts through fresh-process restore, complete cursor readback, namespace snapshot, native SQLite projection, and control-equivalence validation | Establishes `bounded-stock-sqlite-rollback-migration-v1` for the named same-host x86-64, rollback-journal `DELETE`, `synchronous=FULL`, process-crash profile. It does not establish power-loss or storage-device ordering safety, WAL mode, cross-host/cross-ISA execution, arbitrary applications, or a production orchestrator. |
 | `system-stage3b` | All 14 accepted bounded logical-request cases through separate source/destination Wasmtime stores, a durable provider ledger, a real bounded loopback TCP protocol/peer, handoff, and independent Stage 3B bundle validation | The `bounded-logical-request-continuity` claim passes for the named Wasmtime-to-Wasmtime x86-64 Linux cell. It does not preserve arbitrary live TCP, socket sequence state, credential bytes, runtime future/stream state, or prove another runtime. |
 | `system-stage3` | `system-stage3a` followed by `system-stage3b`, retaining one evidence root for each profile | Both bounded Stage 3 profile gates pass in one local invocation. This aggregate adds no cross-profile, cross-runtime, cross-ISA, or production claim. |
 | `system-stage4` | Release x86-64 runner/worker/verifier and AArch64 worker builds; raw x86-64 Linux host observation; all seven Hx/Qx/Qa cells and 217 executions; seven inner Stage 1 validations; 31 independently recomputed normalized equality groups; exact artifact inventory; independent verification before and after a real directory rename | Locally establishes only `named-target-substrate-continuity-v1` for Hx/Qx and `emulated-cross-isa-continuity-v1` for Qx/Qa with Wasmtime and timer/KV fixed. Roadmap closure additionally requires the complete-workflow and downloaded-artifact receipt recorded below. It does not establish real AArch64 hardware, a no-std/reference kernel, real devices, Stage 3 resources, another runtime, AOT binary portability, cross-host behavior, confidentiality, performance, or production readiness. |
@@ -619,8 +619,10 @@ membership.
 The gate also runs one uninterrupted stock transaction followed by a complete
 ordered cursor readback. Every migrated cut reaches the same application-level
 readback: the active-cursor cell completes its split source/destination cursor,
-while the other seven use a fresh post-handoff read client. Native oracle report
-v2 emits a domain-separated logical-content projection. Matrix receipt v7
+while the other seven use a fresh post-handoff read client. The source-abort
+recovery likewise uses a third fresh client for a complete readback after the
+source compute and provider are resumed. Native oracle report v2 emits a
+domain-separated logical-content projection. Matrix receipt v9
 retains, for the control and every cut, each role-ordered application segment's
 stdout, stderr, and exit status, the reconstructed client transcript, canonical
 expected-ACK input, verdict-free namespace snapshot, and original oracle
@@ -633,7 +635,10 @@ comes directly from the retained `source` segment. The validator then reruns
 the exact bound native oracle over private copies of every retained snapshot
 and requires the raw application projection, reproduced oracle projection,
 receipt summary, and uninterrupted control to agree on logical contents,
-invariants, acknowledgements, and final cursor-visible rows.
+invariants, acknowledgements, and final cursor-visible rows. It additionally
+binds each top-level namespace effect count and frontier to the snapshot summary
+decoded by the rerun oracle, and opens the source-abort provider capsule as the
+current schema-5 SQLite state to rederive its frozen cut status.
 
 The same gate proves `fd_sync`/`fd_datasync` and response replay across provider
 `SIGKILL` plus reopen, rejects migration while response delivery is uncertain,
@@ -651,7 +656,7 @@ is a process-crash result only: power failure, torn sectors, lying `fsync`,
 device write reordering, WAL mode, arbitrary applications, cross-host or
 cross-ISA execution, and production scheduling remain explicit nonclaims.
 Canonical CI retains the compact matrix receipt, input build receipts, and the
-complete compact twelve-case typed-corpus v4 bundle. That bundle includes the
+complete compact twelve-case typed-corpus v5 bundle. That bundle includes the
 raw stdout/stderr used for semantic reconstruction, each compressed checkpoint,
 and all post-import witness files; it excludes LLVM, executables, and other
 regenerable build scratch. Its manifest carries only canonical relative

@@ -34,7 +34,7 @@ def _lines(payload: bytes, label: str) -> list[str]:
     return text.splitlines()
 
 
-def validate_checkpoint_stderr(payload: bytes, label: str) -> None:
+def validate_checkpoint_stderr(payload: bytes, label: str) -> dict[str, int]:
     lines = _lines(payload, label)
     if len(lines) < 7 or lines[0] != "[info] Checkpoint started":
         raise DiagnosticFailure(f"{label} lacks the checkpoint start terminal")
@@ -50,9 +50,10 @@ def validate_checkpoint_stderr(payload: bytes, label: str) -> None:
         or tail[4] != "[info] Checkpoint time has been saved to chkpt-time.txt"
     ):
         raise DiagnosticFailure(f"{label} lacks the checkpoint success terminals")
+    return {"exact_stackmap_records": len(stackmaps)}
 
 
-def validate_restore_stderr(payload: bytes, label: str) -> None:
+def validate_restore_stderr(payload: bytes, label: str) -> dict[str, int]:
     lines = _lines(payload, label)
     if len(lines) != 5:
         raise DiagnosticFailure(f"{label} has extra or missing restore diagnostics")
@@ -69,15 +70,43 @@ def validate_restore_stderr(payload: bytes, label: str) -> None:
         or lines[4] != "[info] Restore time has been saved to restore-time.txt"
     ):
         raise DiagnosticFailure(f"{label} lacks the restore success terminals")
+    call_stack = _CALL_STACK.fullmatch(lines[2])
+    value_stack = _VALUE_STACK.fullmatch(lines[3])
+    assert call_stack is not None and value_stack is not None
+    return {
+        "memory_pages": pages,
+        "memory_bytes": byte_count,
+        "restored_frames": int(call_stack.group(1), 10),
+        "restored_values": int(value_stack.group(1), 10),
+    }
 
 
-def validate_application_stderr(role: str, payload: bytes, label: str) -> None:
+def validate_checkpoint_restore_pair(
+    checkpoint_payload: bytes,
+    restore_payload: bytes,
+    label: str,
+) -> tuple[dict[str, int], dict[str, int]]:
+    checkpoint = validate_checkpoint_stderr(
+        checkpoint_payload, f"{label} checkpoint stderr"
+    )
+    restore = validate_restore_stderr(restore_payload, f"{label} restore stderr")
+    if checkpoint["exact_stackmap_records"] != restore["restored_frames"]:
+        raise DiagnosticFailure(
+            f"{label} exact stackmap count differs from the restored frame count"
+        )
+    return checkpoint, restore
+
+
+def validate_application_stderr(
+    role: str, payload: bytes, label: str
+) -> dict[str, int]:
     if role == "source":
-        validate_checkpoint_stderr(payload, label)
+        return validate_checkpoint_stderr(payload, label)
     elif role == "destination":
-        validate_restore_stderr(payload, label)
+        return validate_restore_stderr(payload, label)
     elif role in {"control", "transaction", "cursor", "transaction-setup", "readback"}:
         if payload:
             raise DiagnosticFailure(f"{label} must be empty")
+        return {}
     else:
         raise DiagnosticFailure(f"{label} has an unsupported application role {role!r}")

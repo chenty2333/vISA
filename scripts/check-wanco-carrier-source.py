@@ -96,13 +96,14 @@ def main() -> int:
             "optimizations",
             "runner",
             "validator",
+            "diagnostics",
             "artifact_reader",
             "inputs",
         },
         "qualification",
     )
     if (
-        qualification["schema"] != "visa-wanco-typed-checkpoint-corpus-v4"
+        qualification["schema"] != "visa-wanco-typed-checkpoint-corpus-v5"
         or qualification["case_count"] != 12
         or qualification["profiles"]
         != ["direct", "indirect", "data-segment", "post-import-root"]
@@ -112,6 +113,7 @@ def main() -> int:
     qualification_paths = {
         "runner": "third_party/wanco/corpus/run-typed-checkpoint-corpus.sh",
         "validator": "scripts/wanco_typed_corpus.py",
+        "diagnostics": "scripts/wanco_process_diagnostics.py",
         "artifact_reader": "scripts/receipt_artifacts.py",
     }
     for field, expected_path in qualification_paths.items():

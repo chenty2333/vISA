@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import struct
 import subprocess
 import tempfile
@@ -28,11 +29,17 @@ import wanco_process_diagnostics as WANCO_DIAGNOSTICS
 
 PLAN_SCHEMA = "visa-stock-sqlite-rollback-journal-plan-v1"
 CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v4"
-MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v7"
+MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v9"
 CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v3"
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
+PROCESS_RECOVERY_SCHEMA = "visa-sqlite-provider-process-recovery-v2"
+PROCESS_RECOVERY_REPORT_SCHEMA = "visa-sqlite-provider-process-recovery-v1"
+SOURCE_ABORT_SCHEMA = "visa-sqlite-source-abort-reconciliation-v2"
+DRIVER_RECORD_SCHEMA = "visa-wasi-migration-driver-record-v4"
+MIGRATION_MANIFEST_SCHEMA = "visa-transparent-wasi-migration-v3"
+PROVIDER_SCHEMA_VERSION = 5
 CANONICAL_AUTHORITY_STATE_SCHEMA = "visa-wasi-canonical-authority-state-v2"
 SOURCE_RETAINED_PROOF_SCHEMA = "visa-canonical-source-retained-proof-v1"
 SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1"
@@ -45,6 +52,47 @@ MAX_SQLITE_STDERR_BYTES = 1024 * 1024
 MAX_SQLITE_JSON_BYTES = 2 * 1024 * 1024
 MAX_SQLITE_SNAPSHOT_BYTES = 64 * 1024 * 1024
 MAX_SQLITE_RETAINED_BYTES = 128 * 1024 * 1024
+PROCESS_RECOVERY_COMMAND = (
+    "cargo test --locked -p visa_wasi_host --test "
+    "provider_process_recovery -- --nocapture"
+)
+PROCESS_RECOVERY_TESTS = (
+    "response_loss_then_provider_kill_reopen_replays_exactly_once",
+    "fd_sync_and_datasync_survive_provider_kill_reopen_in_process_crash_model",
+)
+PROCESS_RECOVERY_NONCLAIMS = (
+    "power-loss",
+    "torn-sector",
+    "device-write-reordering",
+)
+SOURCE_ABORT_DRIVER_RUNS = (
+    ("init", "init", "init_exit_status", 0),
+    ("authority-init", "authority_init", "authority_init_exit_status", 0),
+    (
+        "commit-probe-init",
+        "commit_probe_init",
+        "commit_probe_init_exit_status",
+        0,
+    ),
+    (
+        "commit-probe-commit",
+        "commit_probe_commit",
+        "commit_probe_commit_exit_status",
+        0,
+    ),
+    (
+        "committed-probe-abort",
+        "canonical_commit_abort",
+        "canonical_commit_abort_exit_status",
+        1,
+    ),
+    ("injected-recovery", "injected", "injected_exit_status", 75),
+    ("restart-recovery", "recovered", "recovery_exit_status", 0),
+)
+CANONICAL_COMMIT_ABORT_STDERR = (
+    b"visa-wasi-migration-driver: migration integrity failure: "
+    b"canonical ownership committed from an incompatible local phase\n"
+)
 
 
 class MatrixFailure(RuntimeError):
@@ -61,11 +109,11 @@ def canonical_sha256(value: object) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
-def file_identity(path: Path) -> dict[str, object]:
+def file_identity(path: Path, *, allow_empty: bool = False) -> dict[str, object]:
     if not path.is_file() or path.is_symlink():
         raise MatrixFailure(f"expected a regular retained artifact: {path}")
     size = path.stat().st_size
-    if size <= 0:
+    if size == 0 and not allow_empty:
         raise MatrixFailure(f"retained artifact is empty: {path}")
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -304,6 +352,8 @@ def status_projection(status: Mapping[str, object]) -> dict[str, object]:
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise MatrixFailure(f"provider returned an invalid {name} counter")
         projection[name] = value
+    if projection["effects"] != projection["completed_requests"]:
+        raise MatrixFailure("provider effect and completed-request counters diverged")
     return projection
 
 
@@ -603,12 +653,17 @@ def _validate_file_identity(value: object, label: str) -> None:
         raise MatrixFailure(f"{label} size must be positive")
 
 
-def _artifact_identity(reference: object, label: str) -> dict[str, object]:
+def _artifact_identity(
+    reference: object,
+    label: str,
+    *,
+    allow_empty: bool = False,
+) -> dict[str, object]:
     try:
         validated = ARTIFACTS.validate_reference(reference, label)
     except ARTIFACTS.ArtifactError as error:
         raise MatrixFailure(str(error)) from error
-    if validated["size"] <= 0:
+    if validated["size"] == 0 and not allow_empty:
         raise MatrixFailure(f"{label} size must be positive")
     return {"sha256": validated["sha256"], "size": validated["size"]}
 
@@ -792,6 +847,63 @@ def _validate_oracle_projection(
     return value
 
 
+def _validate_oracle_snapshot_binding(
+    value: object,
+    namespace: Mapping[str, object],
+    label: str,
+) -> None:
+    fields = {
+        "version",
+        "session_hex",
+        "authority_epoch",
+        "mode",
+        "barrier",
+        "effect_frontier_hex",
+        "effects",
+        "objects",
+        "paths",
+        "descriptors",
+        "locks",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise MatrixFailure(f"{label} oracle snapshot summary has the wrong fields")
+    for field in (
+        "version",
+        "authority_epoch",
+        "effects",
+        "objects",
+        "paths",
+        "descriptors",
+        "locks",
+    ):
+        field_value = value[field]
+        if (
+            not isinstance(field_value, int)
+            or isinstance(field_value, bool)
+            or field_value < 0
+        ):
+            raise MatrixFailure(f"{label} oracle snapshot {field} is invalid")
+    if value["version"] == 0:
+        raise MatrixFailure(f"{label} oracle snapshot version is invalid")
+    _require_hex(value["session_hex"], 16, f"{label} oracle snapshot session")
+    _require_hex(
+        value["effect_frontier_hex"],
+        32,
+        f"{label} oracle snapshot effect frontier",
+    )
+    if not isinstance(value["mode"], str) or not value["mode"]:
+        raise MatrixFailure(f"{label} oracle snapshot mode is invalid")
+    if not isinstance(value["barrier"], str) or not value["barrier"]:
+        raise MatrixFailure(f"{label} oracle snapshot barrier is invalid")
+    if (
+        value["effects"] != namespace["effects"]
+        or value["effect_frontier_hex"] != namespace["effect_frontier"]
+    ):
+        raise MatrixFailure(
+            f"{label} namespace counters differ from the raw snapshot oracle"
+        )
+
+
 def _validate_external_oracle(
     value: object,
     workload: Mapping[str, object],
@@ -927,6 +1039,88 @@ def _parse_json_bytes(payload: bytes, label: str) -> dict[str, object]:
     return value
 
 
+def _validate_bound_file(
+    value: object,
+    *,
+    semantic_path: str,
+    label: str,
+) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {
+        "semantic_path",
+        "size",
+        "sha256",
+    }:
+        raise MatrixFailure(f"{label} bound file has the wrong fields")
+    size = value["size"]
+    if (
+        value["semantic_path"] != semantic_path
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+    ):
+        raise MatrixFailure(f"{label} bound file is invalid")
+    digest = _require_hex(value["sha256"], 32, f"{label} sha256")
+    return {"sha256": digest, "size": size}
+
+
+def _identity_array_hex(value: object, label: str) -> str:
+    if (
+        not isinstance(value, list)
+        or len(value) != 16
+        or any(
+            not isinstance(item, int)
+            or isinstance(item, bool)
+            or item < 0
+            or item > 255
+            for item in value
+        )
+    ):
+        raise MatrixFailure(f"{label} must be one exact 16-byte identity")
+    return _require_hex(bytes(value).hex(), 16, label)
+
+
+def _validate_build_identity(value: object, label: str) -> None:
+    if not isinstance(value, dict) or set(value) != {
+        "source_revision",
+        "toolchain",
+        "build_configuration_sha256",
+    }:
+        raise MatrixFailure(f"{label} build identity has the wrong fields")
+    if (
+        not isinstance(value["source_revision"], str)
+        or not value["source_revision"]
+        or not isinstance(value["toolchain"], str)
+        or not value["toolchain"]
+    ):
+        raise MatrixFailure(f"{label} build identity is incomplete")
+    _require_hex(
+        value["build_configuration_sha256"],
+        32,
+        f"{label} build configuration sha256",
+    )
+
+
+def _validate_platform_identity(value: object, label: str) -> None:
+    fields = {
+        "operating_system",
+        "architecture",
+        "abi",
+        "runtime_name",
+        "runtime_version",
+        "runtime_build_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise MatrixFailure(f"{label} platform identity has the wrong fields")
+    for field in fields - {"runtime_build_sha256"}:
+        if not isinstance(value[field], str) or not value[field]:
+            raise MatrixFailure(f"{label} platform identity is incomplete")
+    _require_hex(
+        value["runtime_build_sha256"],
+        32,
+        f"{label} runtime build sha256",
+    )
+
+
 def _account_rows_sha256(rows: list[tuple[int, int]]) -> str:
     digest = hashlib.sha256()
     digest.update(b"visa-sqlite-account-rows-v1\0")
@@ -1044,6 +1238,316 @@ def _read_retained_reference(
         )
     except ARTIFACTS.ArtifactError as error:
         raise MatrixFailure(str(error)) from error
+
+
+def _validate_process_recovery_qualification(value: object) -> None:
+    fields = {
+        "schema",
+        "scope",
+        "qualified_tests",
+        "nonclaims",
+        "retained_raw_evidence",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise MatrixFailure("provider process-recovery qualification has the wrong fields")
+    if (
+        value["schema"] != PROCESS_RECOVERY_SCHEMA
+        or value["scope"] != "provider-process-kill-reopen"
+        or value["qualified_tests"] != list(PROCESS_RECOVERY_TESTS)
+        or value["nonclaims"] != list(PROCESS_RECOVERY_NONCLAIMS)
+    ):
+        raise MatrixFailure("provider process-recovery qualification changed its contract")
+    retained = value["retained_raw_evidence"]
+    if not isinstance(retained, dict) or set(retained) != {"report", "process"}:
+        raise MatrixFailure("provider process-recovery raw evidence has the wrong fields")
+    report = retained["report"]
+    _artifact_identity(report, "provider process-recovery raw report")
+    assert isinstance(report, dict)
+    if report["path"] != "observations/provider-process-recovery/report.json":
+        raise MatrixFailure("provider process-recovery report has a noncanonical path")
+    process = retained["process"]
+    if not isinstance(process, dict) or set(process) != {
+        "command",
+        "exit_status",
+        "stdout",
+        "stderr",
+    }:
+        raise MatrixFailure("provider process-recovery process observation is malformed")
+    if (
+        process["command"] != PROCESS_RECOVERY_COMMAND
+        or process["exit_status"] != 0
+    ):
+        raise MatrixFailure("provider process-recovery process did not complete cleanly")
+    for stream in ("stdout", "stderr"):
+        reference = process[stream]
+        _artifact_identity(
+            reference,
+            f"provider process-recovery {stream}",
+            allow_empty=True,
+        )
+        assert isinstance(reference, dict)
+        expected_path = f"observations/provider-process-recovery/process.{stream}"
+        if reference["path"] != expected_path:
+            raise MatrixFailure(
+                f"provider process-recovery {stream} has a noncanonical path"
+            )
+
+
+def _recompute_process_recovery(
+    value: Mapping[str, object],
+    *,
+    artifact_root: Path,
+    budget: ARTIFACTS.ReadBudget,
+) -> None:
+    retained = value["retained_raw_evidence"]
+    assert isinstance(retained, dict)
+    process = retained["process"]
+    assert isinstance(process, dict)
+    stdout = _read_retained_reference(
+        artifact_root,
+        process["stdout"],
+        "provider process-recovery stdout",
+        budget=budget,
+        max_bytes=MAX_SQLITE_STDOUT_BYTES,
+    )
+    stderr = _read_retained_reference(
+        artifact_root,
+        process["stderr"],
+        "provider process-recovery stderr",
+        budget=budget,
+        max_bytes=MAX_SQLITE_STDERR_BYTES,
+    )
+    report_bytes = _read_retained_reference(
+        artifact_root,
+        retained["report"],
+        "provider process-recovery report",
+        budget=budget,
+        max_bytes=MAX_SQLITE_JSON_BYTES,
+    )
+    report = _parse_json_bytes(report_bytes, "provider process-recovery report")
+    if report_bytes != canonical_bytes(report) + b"\n":
+        raise MatrixFailure("provider process-recovery report is not canonical JSON")
+    if set(report) != {
+        "schema",
+        "command",
+        "exit_status",
+        "qualified_tests",
+        "stdout",
+        "stderr",
+        "scope",
+        "nonclaims",
+    }:
+        raise MatrixFailure("provider process-recovery report has the wrong fields")
+    if (
+        report["schema"] != PROCESS_RECOVERY_REPORT_SCHEMA
+        or report["command"] != PROCESS_RECOVERY_COMMAND
+        or report["exit_status"] != 0
+        or report["qualified_tests"] != list(PROCESS_RECOVERY_TESTS)
+        or report["scope"] != value["scope"]
+        or report["nonclaims"] != list(PROCESS_RECOVERY_NONCLAIMS)
+        or report["stdout"] != _artifact_identity(
+            process["stdout"],
+            "provider process-recovery report stdout",
+            allow_empty=True,
+        )
+        or report["stderr"] != _artifact_identity(
+            process["stderr"],
+            "provider process-recovery report stderr",
+            allow_empty=True,
+        )
+    ):
+        raise MatrixFailure("provider process-recovery report differs from raw execution")
+    try:
+        output = (stdout + b"\n" + stderr).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise MatrixFailure("provider process-recovery output is not UTF-8") from error
+    terminals = re.findall(
+        r"(?m)^test ([A-Za-z0-9_]+) \.\.\. ([A-Za-z]+)\r?$",
+        output,
+    )
+    if sorted(terminals) != sorted((name, "ok") for name in PROCESS_RECOVERY_TESTS):
+        raise MatrixFailure(
+            "provider process-recovery output does not contain the exact passing tests"
+        )
+    summaries = re.findall(
+        r"(?m)^test result: ok\. 2 passed; 0 failed; 0 ignored; "
+        r"0 measured; 0 filtered out; finished in [^\r\n]+\r?$",
+        output,
+    )
+    if len(summaries) != 1:
+        raise MatrixFailure(
+            "provider process-recovery output lacks one exact successful harness terminal"
+        )
+
+
+def _validate_source_abort_retained_references(
+    value: object,
+    abort: Mapping[str, object],
+) -> None:
+    fields = {
+        "application_runs",
+        "client_stdout",
+        "expected_acknowledgements",
+        "namespace_snapshot",
+        "oracle_report",
+        "compute_checkpoint",
+        "migration_application",
+        "resource_capsule_manifest",
+        "resource_capsule_state",
+        "driver_runs",
+        "integrated_driver_report",
+        "pending_driver_record",
+        "final_driver_record",
+        "crash_marker",
+        "wanco_restore_started",
+        "wanco_restore_completion",
+        "source_exit_receipt",
+        "source_authority_state",
+        "committed_authority_state",
+        "source_adapter_binding",
+        "committed_adapter_binding",
+        "source_retained_receipt",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise MatrixFailure("source-abort retained raw evidence has the wrong fields")
+    filenames = {
+        "client_stdout": "raw-client.stdout",
+        "expected_acknowledgements": "expected-acks.json",
+        "namespace_snapshot": "namespace.snapshot",
+        "oracle_report": "oracle-report.json",
+        "compute_checkpoint": "compute-checkpoint.pb",
+        "migration_application": "migration/application.aot",
+        "resource_capsule_manifest": "migration/capsule-manifest.json",
+        "resource_capsule_state": "migration/capsule-state.sqlite",
+        "integrated_driver_report": "integrated-driver-report.json",
+        "pending_driver_record": "pending-driver-record.json",
+        "final_driver_record": "final-driver-record.json",
+        "crash_marker": "crash-marker.json",
+        "wanco_restore_started": "wanco-restore-started.json",
+        "wanco_restore_completion": "wanco-restore-completion.json",
+        "source_exit_receipt": "source-exit-receipt.json",
+        "source_authority_state": "source-authority-state.json",
+        "committed_authority_state": "committed-authority-state.json",
+        "source_adapter_binding": "source-adapter-binding.json",
+        "committed_adapter_binding": "committed-adapter-binding.json",
+        "source_retained_receipt": "source-retained-receipt.json",
+    }
+    for name, filename in filenames.items():
+        reference = value[name]
+        _artifact_identity(reference, f"source-abort retained {name}")
+        assert isinstance(reference, dict)
+        if reference["path"] != f"observations/source-abort/{filename}":
+            raise MatrixFailure(f"source-abort retained {name} has a noncanonical path")
+    runs = value["application_runs"]
+    expected_roles = ("source", "destination", "readback")
+    if not isinstance(runs, list) or len(runs) != len(expected_roles):
+        raise MatrixFailure("source-abort retained application run inventory differs")
+    for raw_run, expected_role in zip(runs, expected_roles, strict=True):
+        if not isinstance(raw_run, dict) or set(raw_run) != {
+            "role",
+            "exit_status",
+            "stdout",
+            "stderr",
+        }:
+            raise MatrixFailure("source-abort retained application run is malformed")
+        if raw_run["role"] != expected_role or raw_run["exit_status"] != 0:
+            raise MatrixFailure("source-abort retained application run did not succeed")
+        for stream in ("stdout", "stderr"):
+            reference = raw_run[stream]
+            _artifact_identity(
+                reference,
+                f"source-abort {expected_role} application {stream}",
+                allow_empty=stream == "stderr",
+            )
+            assert isinstance(reference, dict)
+            expected_path = (
+                f"observations/source-abort/runs/{expected_role}.{stream}"
+            )
+            if reference["path"] != expected_path:
+                raise MatrixFailure(
+                    f"source-abort {expected_role} {stream} has a noncanonical path"
+                )
+    driver_runs = value["driver_runs"]
+    if not isinstance(driver_runs, list) or len(driver_runs) != len(
+        SOURCE_ABORT_DRIVER_RUNS
+    ):
+        raise MatrixFailure("source-abort retained driver run inventory differs")
+    for raw_run, (role, _, _, expected_status) in zip(
+        driver_runs, SOURCE_ABORT_DRIVER_RUNS, strict=True
+    ):
+        if not isinstance(raw_run, dict) or set(raw_run) != {
+            "role",
+            "exit_status",
+            "stdout",
+            "stderr",
+        }:
+            raise MatrixFailure("source-abort retained driver run is malformed")
+        exit_status = raw_run["exit_status"]
+        if (
+            raw_run["role"] != role
+            or not isinstance(exit_status, int)
+            or isinstance(exit_status, bool)
+            or exit_status != expected_status
+        ):
+            raise MatrixFailure("source-abort retained driver run status differs")
+        for stream in ("stdout", "stderr"):
+            reference = raw_run[stream]
+            _artifact_identity(
+                reference,
+                f"source-abort {role} driver {stream}",
+                allow_empty=True,
+            )
+            assert isinstance(reference, dict)
+            expected_path = (
+                f"observations/source-abort/driver-runs/{role}.{stream}"
+            )
+            if reference["path"] != expected_path:
+                raise MatrixFailure(
+                    f"source-abort {role} driver {stream} has a noncanonical path"
+                )
+    identity_bindings = {
+        "integrated_driver_report": abort["integrated_driver_report"],
+        "compute_checkpoint": abort["compute_checkpoint"],
+        "pending_driver_record": abort["pending_driver_record"],
+        "wanco_restore_started": abort["wanco_restore_started"],
+        "wanco_restore_completion": abort["wanco_restore_completion"],
+        "oracle_report": abort["external_oracle_report"],
+    }
+    source_terminal = abort["source_retained_terminal"]
+    committed_terminal = abort["committed_probe_terminal"]
+    assert isinstance(source_terminal, dict)
+    assert isinstance(committed_terminal, dict)
+    identity_bindings.update(
+        {
+            "source_authority_state": source_terminal["state"],
+            "committed_authority_state": committed_terminal["state"],
+            "source_adapter_binding": abort["adapter_binding_receipt"],
+            "committed_adapter_binding": committed_terminal[
+                "adapter_binding_receipt"
+            ],
+            "source_retained_receipt": source_terminal["receipt"],
+        }
+    )
+    for name, expected in identity_bindings.items():
+        if _artifact_identity(value[name], f"source-abort retained {name}") != expected:
+            raise MatrixFailure(f"source-abort retained {name} identity differs")
+    raw_observation = abort["raw_client_observation"]
+    namespace = abort["namespace_snapshot"]
+    assert isinstance(raw_observation, dict)
+    assert isinstance(namespace, dict)
+    if (
+        _artifact_identity(value["client_stdout"], "source-abort retained stdout")
+        != raw_observation["stdout"]
+        or _artifact_identity(
+            value["expected_acknowledgements"], "source-abort retained ACK input"
+        )
+        != abort["expected_acknowledgements"]
+        or _artifact_identity(
+            value["namespace_snapshot"], "source-abort retained namespace"
+        )
+        != namespace["artifact"]
+    ):
+        raise MatrixFailure("source-abort retained semantic inputs differ from the summary")
 
 
 def _recompute_retained_observation(
@@ -1191,10 +1695,881 @@ def _recompute_retained_observation(
         workload,
         f"{label} retained oracle",
     )
+    namespace = record["namespace_snapshot"]
+    assert isinstance(namespace, dict)
+    _validate_oracle_snapshot_binding(
+        retained_report.get("snapshot"),
+        namespace,
+        label,
+    )
     external = record["external_oracle"]
     assert isinstance(external, dict)
     if projection != external["semantic_projection"]:
         raise MatrixFailure(f"{label} oracle summary differs from the raw oracle report")
+
+
+def _read_canonical_retained_json(
+    artifact_root: Path,
+    reference: object,
+    label: str,
+    *,
+    budget: ARTIFACTS.ReadBudget,
+) -> dict[str, object]:
+    payload = _read_retained_reference(
+        artifact_root,
+        reference,
+        label,
+        budget=budget,
+        max_bytes=MAX_SQLITE_JSON_BYTES,
+    )
+    value = _parse_json_bytes(payload, label)
+    if payload != canonical_bytes(value) + b"\n":
+        raise MatrixFailure(f"{label} is not canonical JSON")
+    return value
+
+
+def _read_bare_canonical_retained_json(
+    artifact_root: Path,
+    reference: object,
+    label: str,
+    *,
+    budget: ARTIFACTS.ReadBudget,
+) -> dict[str, object]:
+    payload = _read_retained_reference(
+        artifact_root,
+        reference,
+        label,
+        budget=budget,
+        max_bytes=MAX_SQLITE_JSON_BYTES,
+    )
+    value = _parse_json_bytes(payload, label)
+    if payload != canonical_bytes(value):
+        raise MatrixFailure(f"{label} is not bare canonical RFC 8785 JSON")
+    return value
+
+
+def _parse_pretty_json_line(payload: bytes, label: str) -> dict[str, object]:
+    if not payload.endswith(b"\n") or payload.endswith(b"\n\n"):
+        raise MatrixFailure(f"{label} is not one newline-terminated JSON document")
+    value = _parse_json_bytes(payload[:-1], label)
+    expected = (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            indent=2,
+            separators=(",", ": "),
+        ).encode("utf-8")
+        + b"\n"
+    )
+    if payload != expected:
+        raise MatrixFailure(f"{label} is not the production pretty JSON encoding")
+    return value
+
+
+def _derive_provider_capsule_status(
+    payload: bytes,
+    *,
+    manifest: Mapping[str, object],
+    cut_token: str,
+    cut_effect: str,
+) -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="visa-capsule-verify-") as raw:
+        database = Path(raw) / "state.sqlite"
+        database.write_bytes(payload)
+        try:
+            connection = sqlite3.connect(
+                f"file:{database}?mode=ro&immutable=1",
+                uri=True,
+                timeout=0,
+            )
+            try:
+                connection.execute("PRAGMA query_only = ON")
+                integrity = connection.execute("PRAGMA integrity_check").fetchall()
+                version = connection.execute("PRAGMA user_version").fetchone()
+                rows = connection.execute(
+                    """
+                    SELECT schema_version, hex(session), mode, authority_epoch,
+                           hex(handoff), destination_epoch, barrier_phase,
+                           hex(barrier_token), barrier_remaining,
+                           hex(barrier_effect), completed_requests,
+                           (SELECT count(*) FROM effects)
+                    FROM meta WHERE singleton = 1
+                    """
+                ).fetchall()
+            finally:
+                connection.close()
+        except sqlite3.Error as error:
+            raise MatrixFailure(
+                f"source-abort provider capsule is not a readable SQLite state: {error}"
+            ) from error
+    if (
+        integrity != [("ok",)]
+        or version != (PROVIDER_SCHEMA_VERSION,)
+        or len(rows) != 1
+    ):
+        raise MatrixFailure("source-abort provider capsule failed independent integrity")
+    (
+        schema_version,
+        session_hex,
+        mode,
+        authority_epoch,
+        handoff_hex,
+        destination_epoch,
+        barrier_phase,
+        barrier_token_hex,
+        barrier_remaining,
+        barrier_effect_hex,
+        completed_requests,
+        effects,
+    ) = rows[0]
+    if (
+        schema_version != PROVIDER_SCHEMA_VERSION
+        or session_hex.lower() != manifest["session_hex"]
+        or mode != 1
+        or authority_epoch != manifest["source_epoch"]
+        or handoff_hex.lower() != manifest["handoff_hex"]
+        or destination_epoch != manifest["destination_epoch"]
+        or barrier_phase != 4
+        or barrier_token_hex.lower() != cut_token
+        or barrier_remaining is not None
+        or barrier_effect_hex.lower() != cut_effect
+        or not isinstance(completed_requests, int)
+        or not isinstance(effects, int)
+        or completed_requests != effects
+        or effects <= 0
+    ):
+        raise MatrixFailure("source-abort provider capsule state is detached from the cut")
+    return {
+        "mode": "frozen",
+        "authority_epoch": authority_epoch,
+        "barrier": "checkpoint_released",
+        "barrier_remaining": None,
+        "barrier_effect": barrier_effect_hex.lower(),
+        "effects": effects,
+        "completed_requests": completed_requests,
+    }
+
+
+def _validate_source_abort_manifest(
+    manifest: object,
+    intent: object,
+    *,
+    execution_inputs: Mapping[str, object],
+    abort: Mapping[str, object],
+    source_proof: Mapping[str, object],
+    cut_token: str,
+    migration_application: Mapping[str, object],
+    capsule_manifest: Mapping[str, object],
+    capsule_state: Mapping[str, object],
+    capsule_manifest_payload: bytes,
+    capsule_state_payload: bytes,
+    cut_effect: str,
+) -> dict[str, object]:
+    manifest_fields = {
+        "schema",
+        "application",
+        "compute_checkpoint",
+        "resource_capsule_manifest",
+        "resource_capsule_state",
+        "session_hex",
+        "stable_owner_hex",
+        "handoff_hex",
+        "checkpoint_barrier_hex",
+        "source_epoch",
+        "destination_epoch",
+        "clients",
+        "application_build",
+        "source_platform",
+        "destination_platform",
+    }
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != manifest_fields
+        or manifest["schema"] != MIGRATION_MANIFEST_SCHEMA
+    ):
+        raise MatrixFailure("source-abort migration manifest has the wrong schema or fields")
+    bound_application = _validate_bound_file(
+        manifest["application"],
+        semantic_path="artifacts/application.aot",
+        label="source-abort migration application",
+    )
+    bound_checkpoint = _validate_bound_file(
+        manifest["compute_checkpoint"],
+        semantic_path="artifacts/checkpoint.pb",
+        label="source-abort migration checkpoint",
+    )
+    bound_capsule_manifest = _validate_bound_file(
+        manifest["resource_capsule_manifest"],
+        semantic_path="capsule/manifest.json",
+        label="source-abort capsule manifest",
+    )
+    bound_capsule_state = _validate_bound_file(
+        manifest["resource_capsule_state"],
+        semantic_path="capsule/state.sqlite",
+        label="source-abort capsule state",
+    )
+    if (
+        bound_application != migration_application
+        or bound_application != execution_inputs["stock_sqlite_aot"]
+        or bound_checkpoint != abort["compute_checkpoint"]
+        or bound_capsule_manifest != capsule_manifest
+        or bound_capsule_state != capsule_state
+    ):
+        raise MatrixFailure("source-abort migration manifest is detached from retained bytes")
+
+    for field in (
+        "session_hex",
+        "stable_owner_hex",
+        "handoff_hex",
+        "checkpoint_barrier_hex",
+    ):
+        _require_hex(manifest[field], 16, f"source-abort manifest {field}")
+    if (
+        manifest["session_hex"] != source_proof["session_hex"]
+        or manifest["stable_owner_hex"] != source_proof["stable_owner_hex"]
+        or manifest["handoff_hex"] != source_proof["handoff_hex"]
+        or manifest["checkpoint_barrier_hex"] != cut_token
+        or manifest["source_epoch"] != source_proof["source_epoch"]
+        or manifest["destination_epoch"] != source_proof["destination_epoch"]
+        or manifest["destination_epoch"] != manifest["source_epoch"] + 1
+    ):
+        raise MatrixFailure("source-abort migration manifest authority binding differs")
+    clients = manifest["clients"]
+    if not isinstance(clients, dict) or set(clients) != {
+        "source_client_hex",
+        "source_restore_client_hex",
+        "destination_client_hex",
+    }:
+        raise MatrixFailure("source-abort migration client lineage is malformed")
+    for field in clients:
+        _require_hex(clients[field], 16, f"source-abort manifest {field}")
+    if (
+        clients["source_client_hex"] != abort["source_client"]
+        or clients["source_restore_client_hex"] != abort["source_restore_client"]
+        or len(set(clients.values())) != 3
+    ):
+        raise MatrixFailure("source-abort migration client lineage is detached")
+    _validate_build_identity(
+        manifest["application_build"], "source-abort migration application"
+    )
+    _validate_platform_identity(
+        manifest["source_platform"], "source-abort source"
+    )
+    _validate_platform_identity(
+        manifest["destination_platform"], "source-abort destination"
+    )
+
+    intent_fields = {
+        "files",
+        "session",
+        "stable_owner",
+        "handoff",
+        "checkpoint_barrier",
+        "source_epoch",
+        "destination_epoch",
+        "source_client",
+        "source_restore_client",
+        "destination_client",
+        "application_build",
+        "source_platform",
+        "destination_platform",
+    }
+    if not isinstance(intent, dict) or set(intent) != intent_fields:
+        raise MatrixFailure("source-abort migration intent has the wrong fields")
+    if intent["files"] != {
+        "application": "artifacts/application.aot",
+        "compute_checkpoint": "artifacts/checkpoint.pb",
+        "resource_capsule_manifest": "capsule/manifest.json",
+        "resource_capsule_state": "capsule/state.sqlite",
+    }:
+        raise MatrixFailure("source-abort migration intent file roles differ")
+    identity_bindings = (
+        ("session", "session_hex"),
+        ("stable_owner", "stable_owner_hex"),
+        ("handoff", "handoff_hex"),
+        ("checkpoint_barrier", "checkpoint_barrier_hex"),
+    )
+    for intent_field, manifest_field in identity_bindings:
+        if (
+            _identity_array_hex(
+                intent[intent_field], f"source-abort intent {intent_field}"
+            )
+            != manifest[manifest_field]
+        ):
+            raise MatrixFailure("source-abort migration intent identity differs")
+    client_bindings = (
+        ("source_client", "source_client_hex"),
+        ("source_restore_client", "source_restore_client_hex"),
+        ("destination_client", "destination_client_hex"),
+    )
+    for intent_field, manifest_field in client_bindings:
+        if (
+            _identity_array_hex(
+                intent[intent_field], f"source-abort intent {intent_field}"
+            )
+            != clients[manifest_field]
+        ):
+            raise MatrixFailure("source-abort migration intent client differs")
+    if (
+        intent["source_epoch"] != manifest["source_epoch"]
+        or intent["destination_epoch"] != manifest["destination_epoch"]
+        or intent["application_build"] != manifest["application_build"]
+        or intent["source_platform"] != manifest["source_platform"]
+        or intent["destination_platform"] != manifest["destination_platform"]
+    ):
+        raise MatrixFailure("source-abort migration intent projection differs")
+
+    descriptor = _parse_json_bytes(
+        capsule_manifest_payload, "source-abort retained capsule manifest"
+    )
+    expected_descriptor = {
+        "schema": "visa-wasi-filesystem-capsule-v2",
+        "session_hex": manifest["session_hex"],
+        "source_epoch": manifest["source_epoch"],
+        "destination_epoch": manifest["destination_epoch"],
+        "handoff_hex": manifest["handoff_hex"],
+        "state_file": "state.sqlite",
+        "state_size": bound_capsule_state["size"],
+        "state_sha256": bound_capsule_state["sha256"],
+    }
+    expected_capsule_bytes = json.dumps(
+        expected_descriptor,
+        ensure_ascii=False,
+        indent=2,
+        separators=(",", ": "),
+    ).encode("utf-8")
+    if (
+        descriptor != expected_descriptor
+        or capsule_manifest_payload != expected_capsule_bytes
+    ):
+        raise MatrixFailure("source-abort retained capsule descriptor is detached")
+    return _derive_provider_capsule_status(
+        capsule_state_payload,
+        manifest=manifest,
+        cut_token=cut_token,
+        cut_effect=cut_effect,
+    )
+
+
+def _recompute_source_abort(
+    abort: Mapping[str, object],
+    *,
+    workload: Mapping[str, object],
+    execution_inputs: Mapping[str, object],
+    artifact_root: Path,
+    oracle_binary: Path,
+    budget: ARTIFACTS.ReadBudget,
+) -> None:
+    _recompute_retained_observation(
+        abort,
+        label="source-abort",
+        workload=workload,
+        execution_inputs=execution_inputs,
+        artifact_root=artifact_root,
+        oracle_binary=oracle_binary,
+        budget=budget,
+        source_cursor_required=False,
+    )
+    retained = abort["retained_raw_evidence"]
+    assert isinstance(retained, dict)
+    checkpoint = _read_retained_reference(
+        artifact_root,
+        retained["compute_checkpoint"],
+        "source-abort compute checkpoint",
+        budget=budget,
+        max_bytes=MAX_SQLITE_SNAPSHOT_BYTES,
+    )
+    migration_application = _read_retained_reference(
+        artifact_root,
+        retained["migration_application"],
+        "source-abort retained migration application",
+        budget=budget,
+        max_bytes=MAX_SQLITE_SNAPSHOT_BYTES,
+    )
+    try:
+        TYPED_CORPUS.derive_checkpoint_application_compatibility(
+            migration_application,
+            checkpoint,
+            "source-abort",
+        )
+    except TYPED_CORPUS.CorpusFailure as error:
+        raise MatrixFailure(
+            "source-abort checkpoint/application compatibility is invalid: "
+            f"{error}"
+        ) from error
+    capsule_manifest_payload = _read_retained_reference(
+        artifact_root,
+        retained["resource_capsule_manifest"],
+        "source-abort retained resource capsule manifest",
+        budget=budget,
+        max_bytes=MAX_SQLITE_JSON_BYTES,
+    )
+    capsule_state_payload = _read_retained_reference(
+        artifact_root,
+        retained["resource_capsule_state"],
+        "source-abort retained resource capsule state",
+        budget=budget,
+        max_bytes=MAX_SQLITE_SNAPSHOT_BYTES,
+    )
+    document_names = (
+        "integrated_driver_report",
+        "crash_marker",
+        "wanco_restore_started",
+        "wanco_restore_completion",
+        "source_exit_receipt",
+        "source_authority_state",
+        "committed_authority_state",
+        "source_adapter_binding",
+        "committed_adapter_binding",
+        "source_retained_receipt",
+    )
+    documents = {
+        name: _read_canonical_retained_json(
+            artifact_root,
+            retained[name],
+            f"source-abort retained {name}",
+            budget=budget,
+        )
+        for name in document_names
+    }
+    documents["pending_driver_record"] = _read_bare_canonical_retained_json(
+        artifact_root,
+        retained["pending_driver_record"],
+        "source-abort retained pending_driver_record",
+        budget=budget,
+    )
+    documents["final_driver_record"] = _read_bare_canonical_retained_json(
+        artifact_root,
+        retained["final_driver_record"],
+        "source-abort retained final_driver_record",
+        budget=budget,
+    )
+    report = documents["integrated_driver_report"]
+    cut = report.get("cut")
+    if not isinstance(cut, dict) or set(cut) != {
+        "barrier",
+        "compute_checkpoint",
+    }:
+        raise MatrixFailure("source-abort integrated cut has the wrong fields")
+    if cut["compute_checkpoint"] != abort["compute_checkpoint"]:
+        raise MatrixFailure("source-abort cut is detached from its compute checkpoint")
+    plan_entry = cell_plan(DEFAULT_DATABASE_PATH, "partial-journal")
+    cut_effect = _validate_capture(
+        cut["barrier"],
+        plan_entry["predicate"],
+        target_phase="held",
+        release_phase="checkpoint_released",
+    )
+    barrier = cut["barrier"]
+    assert isinstance(barrier, dict)
+    cut_token = _require_hex(
+        barrier["token"], 16, "source-abort checkpoint barrier token"
+    )
+    source_terminal = abort["source_retained_terminal"]
+    committed_terminal = abort["committed_probe_terminal"]
+    assert isinstance(source_terminal, dict)
+    assert isinstance(committed_terminal, dict)
+    source_proof = source_terminal["proof"]
+    committed_proof = committed_terminal["proof"]
+    assert isinstance(source_proof, dict)
+    assert isinstance(committed_proof, dict)
+    expected_source_authority = {
+        "schema": CANONICAL_AUTHORITY_STATE_SCHEMA,
+        "generation": 2,
+        "migration_manifest_sha256": abort["migration_manifest_sha256"],
+        "decision": "source_retained",
+        "source_retained_proof": source_proof,
+        "ownership_commit_proof": None,
+        "source_fence_proof": None,
+    }
+    expected_committed_authority = {
+        "schema": CANONICAL_AUTHORITY_STATE_SCHEMA,
+        "generation": 2,
+        "migration_manifest_sha256": abort["migration_manifest_sha256"],
+        "decision": "ownership_committed",
+        "source_retained_proof": None,
+        "ownership_commit_proof": committed_proof,
+        "source_fence_proof": None,
+    }
+    if (
+        documents["source_authority_state"] != expected_source_authority
+        or documents["committed_authority_state"] != expected_committed_authority
+        or documents["source_adapter_binding"] != abort["adapter_binding_document"]
+        or documents["committed_adapter_binding"]
+        != committed_terminal["adapter_binding_document"]
+        or documents["source_retained_receipt"]
+        != source_terminal["receipt_document"]
+    ):
+        raise MatrixFailure("source-abort retained authority documents diverged")
+    pending = documents["pending_driver_record"]
+    final = documents["final_driver_record"]
+    driver_record_fields = {
+        "schema",
+        "generation",
+        "phase",
+        "pending_action",
+        "intent",
+        "migration_manifest",
+        "source_retained_proof",
+        "ownership_commit_proof",
+        "source_fence_proof",
+    }
+    for record, label in ((pending, "pending"), (final, "final")):
+        generation = record.get("generation")
+        if (
+            set(record) != driver_record_fields
+            or record.get("schema") != DRIVER_RECORD_SCHEMA
+            or not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation <= 0
+            or not isinstance(record.get("intent"), dict)
+            or not isinstance(record.get("migration_manifest"), dict)
+        ):
+            raise MatrixFailure(f"source-abort retained {label} driver record is invalid")
+    manifest = pending["migration_manifest"]
+    capsule_status = _validate_source_abort_manifest(
+        manifest,
+        pending["intent"],
+        execution_inputs=execution_inputs,
+        abort=abort,
+        source_proof=source_proof,
+        cut_token=cut_token,
+        migration_application=_artifact_identity(
+            retained["migration_application"],
+            "source-abort retained migration application",
+        ),
+        capsule_manifest=_artifact_identity(
+            retained["resource_capsule_manifest"],
+            "source-abort retained resource capsule manifest",
+        ),
+        capsule_state=_artifact_identity(
+            retained["resource_capsule_state"],
+            "source-abort retained resource capsule state",
+        ),
+        capsule_manifest_payload=capsule_manifest_payload,
+        capsule_state_payload=capsule_state_payload,
+        cut_effect=cut_effect,
+    )
+    if (
+        pending.get("phase") != "source_retained"
+        or pending.get("pending_action") != "resume_source_provider"
+        or pending.get("source_retained_proof") != source_proof
+        or pending.get("ownership_commit_proof") is not None
+        or pending.get("source_fence_proof") is not None
+        or pending["generation"] != 11
+        or final.get("phase") != "source_resumed"
+        or final.get("pending_action") is not None
+        or final.get("source_retained_proof") != source_proof
+        or final.get("ownership_commit_proof") is not None
+        or final.get("source_fence_proof") is not None
+        or final["generation"] != 14
+        or pending.get("intent") != final.get("intent")
+        or pending.get("migration_manifest") != final.get("migration_manifest")
+        or final["generation"] != pending["generation"] + 3
+        or canonical_sha256(final.get("migration_manifest"))
+        != abort["migration_manifest_sha256"]
+    ):
+        raise MatrixFailure("source-abort retained driver records do not reconcile")
+    crash = documents["crash_marker"]
+    if (
+        set(crash)
+        != {"schema", "injected_after", "session_hex", "authority_epoch"}
+        or crash["schema"] != "visa-wasi-coordinator-crash-marker-v1"
+        or crash["injected_after"] != "resume_source_provider"
+        or crash["session_hex"] != source_proof["session_hex"]
+        or crash["authority_epoch"] != source_proof["source_epoch"]
+    ):
+        raise MatrixFailure("source-abort retained crash marker is invalid")
+    started = documents["wanco_restore_started"]
+    completion = documents["wanco_restore_completion"]
+    if (
+        set(started)
+        != {"schema", "command_fingerprint", "attempt", "supervisor_pid"}
+        or set(completion)
+        != {
+            "schema",
+            "operation",
+            "command_fingerprint",
+            "attempt",
+            "exit_status",
+            "stdout",
+            "stderr",
+        }
+        or started["schema"] != "visa-wanco-supervisor-started-v1"
+        or completion["schema"] != "visa-wanco-restore-completion-v1"
+        or completion["operation"] != "restore_source"
+        or completion["exit_status"] != 0
+        or completion["command_fingerprint"] != started["command_fingerprint"]
+        or completion["attempt"] != started["attempt"]
+        or not isinstance(started["attempt"], int)
+        or isinstance(started["attempt"], bool)
+        or started["attempt"] <= 0
+        or not isinstance(started["supervisor_pid"], int)
+        or isinstance(started["supervisor_pid"], bool)
+        or started["supervisor_pid"] <= 0
+    ):
+        raise MatrixFailure("source-abort retained Wanco restore receipts diverged")
+    _require_hex(
+        started["command_fingerprint"],
+        32,
+        "source-abort Wanco command fingerprint",
+    )
+    runs = retained["application_runs"]
+    assert isinstance(runs, list)
+    destination = runs[1]
+    assert isinstance(destination, dict)
+    if (
+        completion["stdout"]
+        != _artifact_identity(destination["stdout"], "source-abort restore stdout")
+        or completion["stderr"]
+        != _artifact_identity(destination["stderr"], "source-abort restore stderr")
+    ):
+        raise MatrixFailure("source-abort Wanco completion is detached from its output")
+    source_exit = documents["source_exit_receipt"]
+    if source_exit != {
+        "schema": "visa-wanco-source-exit-v1",
+        "exit_status": 0,
+        "checkpoint": abort["compute_checkpoint"],
+    }:
+        raise MatrixFailure("source-abort source-exit receipt is detached from the checkpoint")
+    report_fields = {
+        "schema",
+        "cut",
+        "source_frozen",
+        "source_provider_resumed_before_restart",
+        "source_provider_after_recovery",
+        "source_client",
+        "source_restore_client",
+        "clients_pairwise_distinct",
+        "manifest_sha256",
+        "adapter_configuration_sha256",
+        "adapter_binding_receipt",
+        "adapter_binding_document",
+        "source_retained_terminal",
+        "committed_probe_terminal",
+        "driver_record",
+        "compute_checkpoint",
+        "source_exit_receipt",
+        "wanco_restore_completion",
+        "wanco_restore_started",
+        "coordinator_restart",
+        "raw_client_observation",
+        "namespace_snapshot",
+        "external_oracle",
+    }
+    if set(report) != report_fields or report["schema"] != (
+        "visa-sqlite-source-abort-real-driver-v4"
+    ):
+        raise MatrixFailure("source-abort integrated driver report has the wrong fields")
+    restart = report["coordinator_restart"]
+    if not isinstance(restart, dict) or set(restart) != {
+        "init_exit_status",
+        "injected_exit_status",
+        "injected_after",
+        "durable_pending_action",
+        "pending_record",
+        "recovery_exit_status",
+        "final_phase",
+        "crash_marker",
+        "canonical_commit_abort_exit_status",
+        "authority_init_exit_status",
+        "commit_probe_init_exit_status",
+        "commit_probe_commit_exit_status",
+        "canonical_commit_abort_stdout",
+        "canonical_commit_abort_stderr",
+        "init_stdout",
+        "init_stderr",
+        "authority_init_stdout",
+        "authority_init_stderr",
+        "commit_probe_init_stdout",
+        "commit_probe_init_stderr",
+        "commit_probe_commit_stdout",
+        "commit_probe_commit_stderr",
+        "injected_stdout",
+        "injected_stderr",
+        "recovered_stdout",
+        "recovered_stderr",
+    }:
+        raise MatrixFailure("source-abort restart report has the wrong fields")
+    if (
+        report["source_client"] != abort["source_client"]
+        or report["source_restore_client"] != abort["source_restore_client"]
+        or report["clients_pairwise_distinct"] is not True
+        or report["manifest_sha256"] != abort["migration_manifest_sha256"]
+        or report["adapter_configuration_sha256"]
+        != abort["adapter_configuration_sha256"]
+        or report["adapter_binding_receipt"] != abort["adapter_binding_receipt"]
+        or report["adapter_binding_document"] != abort["adapter_binding_document"]
+        or report["source_retained_terminal"] != source_terminal
+        or report["committed_probe_terminal"] != committed_terminal
+        or report["driver_record"]
+        != _artifact_identity(
+            retained["final_driver_record"], "source-abort final driver record"
+        )
+        or report["compute_checkpoint"] != abort["compute_checkpoint"]
+        or report["source_exit_receipt"]
+        != _artifact_identity(
+            retained["source_exit_receipt"], "source-abort source-exit receipt"
+        )
+        or report["wanco_restore_completion"] != abort["wanco_restore_completion"]
+        or report["wanco_restore_started"] != abort["wanco_restore_started"]
+        or report["raw_client_observation"] != abort["raw_client_observation"]
+        or report["namespace_snapshot"] != abort["namespace_snapshot"]
+        or report["external_oracle"] != abort["external_oracle"]
+        or restart["injected_exit_status"] != 75
+        or restart["injected_after"] != "resume_source_provider"
+        or restart["durable_pending_action"] != "resume_source_provider"
+        or restart["pending_record"] != abort["pending_driver_record"]
+        or restart["recovery_exit_status"] != 0
+        or restart["final_phase"] != "source_resumed"
+        or restart["crash_marker"]
+        != _artifact_identity(retained["crash_marker"], "source-abort crash marker")
+        or restart["canonical_commit_abort_exit_status"] == 0
+        or restart["authority_init_exit_status"] != 0
+        or restart["commit_probe_init_exit_status"] != 0
+        or restart["commit_probe_commit_exit_status"] != 0
+        or restart["init_exit_status"] != 0
+        or restart["injected_exit_status"]
+        != abort["coordinator_crash_exit_status"]
+        or restart["authority_init_exit_status"]
+        != abort["authority_init_exit_status"]
+        or restart["commit_probe_init_exit_status"]
+        != abort["commit_probe_init_exit_status"]
+        or restart["commit_probe_commit_exit_status"]
+        != abort["commit_probe_commit_exit_status"]
+        or restart["canonical_commit_abort_exit_status"]
+        != abort["canonical_commit_abort_exit_status"]
+        or restart["recovery_exit_status"] != abort["recovery_exit_status"]
+    ):
+        raise MatrixFailure("source-abort integrated report differs from retained evidence")
+
+    driver_runs = retained["driver_runs"]
+    assert isinstance(driver_runs, list)
+    driver_payloads: dict[str, tuple[bytes, bytes]] = {}
+    for raw_run, (role, report_prefix, status_field, expected_status) in zip(
+        driver_runs, SOURCE_ABORT_DRIVER_RUNS, strict=True
+    ):
+        assert isinstance(raw_run, dict)
+        streams: dict[str, bytes] = {}
+        for stream in ("stdout", "stderr"):
+            streams[stream] = _read_retained_reference(
+                artifact_root,
+                raw_run[stream],
+                f"source-abort retained {role} driver {stream}",
+                budget=budget,
+                max_bytes=MAX_SQLITE_STDERR_BYTES,
+            )
+            if restart[f"{report_prefix}_{stream}"] != _artifact_identity(
+                raw_run[stream],
+                f"source-abort {role} driver {stream}",
+                allow_empty=True,
+            ):
+                raise MatrixFailure(
+                    f"source-abort {role} driver output is detached from retained bytes"
+                )
+        status = raw_run["exit_status"]
+        if (
+            status != restart[status_field]
+            or status != expected_status
+        ):
+            raise MatrixFailure(f"source-abort {role} driver exit status differs")
+        driver_payloads[role] = (streams["stdout"], streams["stderr"])
+
+    init_stdout, init_stderr = driver_payloads["init"]
+    init_record = _parse_pretty_json_line(
+        init_stdout, "source-abort init driver stdout"
+    )
+    if (
+        set(init_record) != driver_record_fields
+        or init_record.get("schema") != DRIVER_RECORD_SCHEMA
+        or init_record.get("generation") != 8
+        or init_record.get("phase") != "manifest_sealed"
+        or init_record.get("pending_action") is not None
+        or init_record.get("intent") != pending["intent"]
+        or init_record.get("migration_manifest") != pending["migration_manifest"]
+        or init_record.get("source_retained_proof") is not None
+        or init_record.get("ownership_commit_proof") is not None
+        or init_record.get("source_fence_proof") is not None
+        or init_stderr
+    ):
+        raise MatrixFailure("source-abort init process did not emit generation 8")
+
+    recovered_stdout, recovered_stderr = driver_payloads["restart-recovery"]
+    if (
+        _parse_pretty_json_line(
+            recovered_stdout, "source-abort restart driver stdout"
+        )
+        != final
+        or recovered_stderr
+    ):
+        raise MatrixFailure("source-abort restart output differs from generation 14")
+
+    for role in (
+        "authority-init",
+        "commit-probe-init",
+        "commit-probe-commit",
+        "injected-recovery",
+    ):
+        if driver_payloads[role] != (b"", b""):
+            raise MatrixFailure(f"source-abort {role} emitted unexpected process output")
+    if driver_payloads["committed-probe-abort"] != (
+        b"",
+        CANONICAL_COMMIT_ABORT_STDERR,
+    ):
+        raise MatrixFailure(
+            "source-abort committed probe did not emit the exact fail-closed diagnostic"
+        )
+
+    status_fields = {
+        "mode",
+        "authority_epoch",
+        "barrier",
+        "barrier_remaining",
+        "barrier_effect",
+        "effects",
+        "completed_requests",
+    }
+    status_values: dict[str, dict[str, object]] = {}
+    for name in (
+        "source_frozen",
+        "source_provider_resumed_before_restart",
+        "source_provider_after_recovery",
+    ):
+        raw_status = report[name]
+        if not isinstance(raw_status, dict) or set(raw_status) != status_fields:
+            raise MatrixFailure(f"source-abort {name} status has the wrong fields")
+        status_values[name] = status_projection(raw_status)
+    frozen = status_values["source_frozen"]
+    resumed = status_values["source_provider_resumed_before_restart"]
+    recovered = status_values["source_provider_after_recovery"]
+    source_epoch = source_proof["source_epoch"]
+    released = status_projection(barrier["checkpoint_released"])
+    if (
+        frozen["mode"] != "frozen"
+        or frozen["authority_epoch"] != source_epoch
+        or frozen["barrier"] != "checkpoint_released"
+        or frozen["barrier_remaining"] is not None
+        or frozen["barrier_effect"] != cut_effect
+        or frozen != capsule_status
+        or resumed["mode"] != "active"
+        or resumed["authority_epoch"] != source_epoch
+        or resumed["barrier"] != "open"
+        or resumed["barrier_remaining"] is not None
+        or resumed["barrier_effect"] is not None
+        or recovered["mode"] != "active"
+        or recovered["authority_epoch"] != source_epoch
+        or recovered["barrier"] != "open"
+        or recovered["barrier_remaining"] is not None
+        or recovered["barrier_effect"] is not None
+        or frozen["effects"] != released["effects"]
+        or frozen["completed_requests"] != released["completed_requests"]
+        or resumed["effects"] != frozen["effects"]
+        or resumed["completed_requests"] != frozen["completed_requests"]
+        or recovered["effects"] <= resumed["effects"]
+        or recovered["completed_requests"] <= resumed["completed_requests"]
+        or recovered["effects"] != abort["namespace_snapshot"]["effects"]
+    ):
+        raise MatrixFailure("source-abort provider state chain is invalid")
 
 
 def validate_retained_evidence(
@@ -1224,6 +2599,23 @@ def validate_retained_evidence(
     }:
         raise MatrixFailure("retained typed restore manifest identity is invalid")
     budget = ARTIFACTS.ReadBudget(MAX_SQLITE_RETAINED_BYTES)
+    recovery = receipt["process_recovery_qualification"]
+    assert isinstance(recovery, dict)
+    _recompute_process_recovery(
+        recovery,
+        artifact_root=artifact_root,
+        budget=budget,
+    )
+    abort = receipt["source_abort_reconciliation_qualification"]
+    assert isinstance(abort, dict)
+    _recompute_source_abort(
+        abort,
+        workload=workload,
+        execution_inputs=execution_inputs,
+        artifact_root=artifact_root,
+        oracle_binary=oracle_binary,
+        budget=budget,
+    )
     control = receipt["uninterrupted_control"]
     assert isinstance(control, dict)
     _recompute_retained_observation(
@@ -1546,8 +2938,15 @@ def _validate_capture(
     armed = status_projection(value["armed"])
     target = status_projection(value["target"])
     if (
-        armed["barrier"] != "armed"
+        armed["mode"] != "active"
+        or armed["barrier"] != "armed"
         or armed["barrier_remaining"] != expected_predicate["occurrence"]
+        or armed["barrier_effect"] is not None
+        or target["mode"] != "active"
+        or target["authority_epoch"] != armed["authority_epoch"]
+        or target["barrier_remaining"] is not None
+        or target["effects"] <= armed["effects"]
+        or target["completed_requests"] <= armed["completed_requests"]
     ):
         raise MatrixFailure("barrier capture lacks the exact armed occurrence")
     if target["barrier"] != target_phase or target["barrier_effect"] is None:
@@ -1555,7 +2954,14 @@ def _validate_capture(
     effect = str(target["barrier_effect"])
     if release_field is not None:
         released = status_projection(value[release_field])
-        if released["barrier"] != release_phase:
+        if (
+            released["mode"] != "active"
+            or released["authority_epoch"] != target["authority_epoch"]
+            or released["barrier"] != release_phase
+            or released["barrier_remaining"] is not None
+            or released["effects"] != target["effects"]
+            or released["completed_requests"] != target["completed_requests"]
+        ):
             raise MatrixFailure("barrier capture lacks its required release phase")
         if release_phase == "checkpoint_released":
             if released["barrier_effect"] != effect:
@@ -1735,25 +3141,14 @@ def validate_matrix_receipt(
         receipt["uninterrupted_control"], workload, execution_inputs
     )
     recovery = receipt["process_recovery_qualification"]
-    if not isinstance(recovery, dict) or set(recovery) != {
-        "scope",
-        "report",
-        "exit_status",
-        "qualified_tests",
-    }:
-        raise MatrixFailure("provider process-recovery qualification has the wrong fields")
-    if recovery["scope"] != "provider-process-kill-reopen":
-        raise MatrixFailure("provider process-recovery qualification has the wrong scope")
-    _validate_file_identity(recovery["report"], "provider process-recovery report")
-    if recovery["exit_status"] != 0 or recovery["qualified_tests"] != [
-        "response_loss_then_provider_kill_reopen_replays_exactly_once",
-        "fd_sync_and_datasync_survive_provider_kill_reopen_in_process_crash_model",
-    ]:
-        raise MatrixFailure("provider kill/reopen qualification did not pass both required cases")
+    _validate_process_recovery_qualification(recovery)
+    assert isinstance(recovery, dict)
     abort = receipt["source_abort_reconciliation_qualification"]
     if not isinstance(abort, dict) or set(abort) != {
+        "schema",
         "scope",
         "integrated_driver_report",
+        "compute_checkpoint",
         "coordinator_crash_exit_status",
         "durable_pending_action",
         "pending_driver_record",
@@ -1772,15 +3167,27 @@ def validate_matrix_receipt(
         "wanco_restore_completion",
         "wanco_restore_started",
         "external_oracle_report",
+        "raw_client_observation",
+        "expected_acknowledgements",
+        "namespace_snapshot",
+        "external_oracle",
+        "equivalence_projection",
         "accepted",
         "source_client",
         "source_restore_client",
+        "retained_raw_evidence",
     }:
         raise MatrixFailure("source-abort reconciliation qualification has the wrong fields")
-    if abort["scope"] != "pre-commit-source-compute-abort":
+    if (
+        abort["schema"] != SOURCE_ABORT_SCHEMA
+        or abort["scope"] != "pre-commit-source-compute-abort"
+    ):
         raise MatrixFailure("source-abort reconciliation qualification has the wrong scope")
     _validate_file_identity(
         abort["integrated_driver_report"], "source-abort integrated driver report"
+    )
+    _validate_file_identity(
+        abort["compute_checkpoint"], "source-abort compute checkpoint"
     )
     _validate_file_identity(abort["pending_driver_record"], "source-abort pending driver record")
     source_adapter = _validate_adapter_binding(
@@ -1826,6 +3233,38 @@ def validate_matrix_receipt(
     _validate_file_identity(abort["wanco_restore_started"], "source-abort Wanco started receipt")
     _validate_file_identity(
         abort["external_oracle_report"], "source-abort SQLite oracle report"
+    )
+    if abort["expected_acknowledgements"] != workload["expected_acknowledgements"]:
+        raise MatrixFailure("source-abort uses a different ACK input")
+    _validate_namespace_snapshot(abort["namespace_snapshot"], "source-abort")
+    abort_oracle = _validate_external_oracle(
+        abort["external_oracle"],
+        workload,
+        execution_inputs,
+        "source-abort",
+    )
+    abort_observation = _validate_raw_client_observation(
+        abort["raw_client_observation"],
+        workload,
+        label="source-abort",
+        migrated_cursor=False,
+    )
+    abort_equivalence = _derive_equivalence_projection(
+        abort_oracle,
+        abort_observation,
+        "source-abort",
+    )
+    if (
+        abort["external_oracle_report"]
+        != abort["external_oracle"]["report"]
+        or abort["equivalence_projection"]
+        != abort_equivalence
+        or abort_equivalence != control_projection
+    ):
+        raise MatrixFailure("source-abort semantic projection differs from its control")
+    _validate_source_abort_retained_references(
+        abort["retained_raw_evidence"],
+        abort,
     )
     if (
         abort["coordinator_crash_exit_status"] != 75

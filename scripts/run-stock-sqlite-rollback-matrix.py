@@ -253,6 +253,203 @@ def retain_raw_evidence(
     record["retained_raw_evidence"] = references
 
 
+def retain_provider_process_recovery_evidence(
+    qualification: dict[str, object],
+    *,
+    artifact_root: Path,
+) -> None:
+    raw_paths = qualification.pop("_raw_paths", None)
+    if not isinstance(raw_paths, dict) or set(raw_paths) != {
+        "report",
+        "stdout",
+        "stderr",
+    }:
+        raise MatrixFailure(
+            "provider process-recovery qualification omitted its raw evidence paths"
+        )
+    if (
+        not isinstance(raw_paths["report"], Path)
+        or not isinstance(raw_paths["stdout"], Path)
+        or not isinstance(raw_paths["stderr"], Path)
+    ):
+        raise MatrixFailure(
+            "provider process-recovery qualification has invalid raw evidence paths"
+        )
+    try:
+        qualification["retained_raw_evidence"] = {
+            "report": ARTIFACTS.publish_reference(
+                raw_paths["report"],
+                artifact_root,
+                "observations/provider-process-recovery/report.json",
+            ),
+            "process": {
+                "command": (
+                    "cargo test --locked -p visa_wasi_host "
+                    "--test provider_process_recovery -- --nocapture"
+                ),
+                "exit_status": 0,
+                "stdout": ARTIFACTS.publish_reference(
+                    raw_paths["stdout"],
+                    artifact_root,
+                    "observations/provider-process-recovery/process.stdout",
+                ),
+                "stderr": ARTIFACTS.publish_reference(
+                    raw_paths["stderr"],
+                    artifact_root,
+                    "observations/provider-process-recovery/process.stderr",
+                ),
+            },
+        }
+    except ARTIFACTS.ArtifactError as error:
+        raise MatrixFailure(str(error)) from error
+
+
+def retain_source_abort_evidence(
+    qualification: dict[str, object],
+    *,
+    artifact_root: Path,
+) -> None:
+    raw_paths = qualification.pop("_raw_paths", None)
+    expected_paths = {
+        "application_runs",
+        "client_stdout",
+        "expected_acknowledgements",
+        "namespace_snapshot",
+        "oracle_report",
+        "compute_checkpoint",
+        "migration_application",
+        "resource_capsule_manifest",
+        "resource_capsule_state",
+        "driver_runs",
+        "integrated_driver_report",
+        "pending_driver_record",
+        "final_driver_record",
+        "crash_marker",
+        "wanco_restore_started",
+        "wanco_restore_completion",
+        "source_exit_receipt",
+        "source_authority_state",
+        "committed_authority_state",
+        "source_adapter_binding",
+        "committed_adapter_binding",
+        "source_retained_receipt",
+    }
+    if not isinstance(raw_paths, dict) or set(raw_paths) != expected_paths:
+        raise MatrixFailure(
+            "source-abort reconciliation omitted its raw evidence paths"
+        )
+    application_runs = raw_paths["application_runs"]
+    if not isinstance(application_runs, tuple):
+        raise MatrixFailure(
+            "source-abort reconciliation application run inventory is invalid"
+        )
+    driver_runs = raw_paths["driver_runs"]
+    if not isinstance(driver_runs, tuple):
+        raise MatrixFailure(
+            "source-abort reconciliation driver run inventory is invalid"
+        )
+    published_runs: list[dict[str, object]] = []
+    try:
+        for entry in application_runs:
+            if (
+                not isinstance(entry, tuple)
+                or len(entry) != 4
+                or not isinstance(entry[0], str)
+                or not isinstance(entry[1], Path)
+                or not isinstance(entry[2], Path)
+                or not isinstance(entry[3], int)
+                or isinstance(entry[3], bool)
+            ):
+                raise MatrixFailure(
+                    "source-abort reconciliation application run entry is invalid"
+                )
+            role, stdout_path, stderr_path, exit_status = entry
+            prefix = f"observations/source-abort/runs/{role}"
+            published_runs.append(
+                {
+                    "role": role,
+                    "exit_status": exit_status,
+                    "stdout": ARTIFACTS.publish_reference(
+                        stdout_path, artifact_root, prefix + ".stdout"
+                    ),
+                    "stderr": ARTIFACTS.publish_reference(
+                        stderr_path, artifact_root, prefix + ".stderr"
+                    ),
+                }
+            )
+        published_driver_runs: list[dict[str, object]] = []
+        for entry, spec in zip(
+            driver_runs, CONTRACT.SOURCE_ABORT_DRIVER_RUNS, strict=True
+        ):
+            if (
+                not isinstance(entry, tuple)
+                or len(entry) != 4
+                or not isinstance(entry[0], str)
+                or not isinstance(entry[1], Path)
+                or not isinstance(entry[2], Path)
+                or not isinstance(entry[3], int)
+                or isinstance(entry[3], bool)
+                or entry[0] != spec[0]
+            ):
+                raise MatrixFailure(
+                    "source-abort reconciliation driver run entry is invalid"
+                )
+            role, stdout_path, stderr_path, exit_status = entry
+            prefix = f"observations/source-abort/driver-runs/{role}"
+            published_driver_runs.append(
+                {
+                    "role": role,
+                    "exit_status": exit_status,
+                    "stdout": ARTIFACTS.publish_reference(
+                        stdout_path, artifact_root, prefix + ".stdout"
+                    ),
+                    "stderr": ARTIFACTS.publish_reference(
+                        stderr_path, artifact_root, prefix + ".stderr"
+                    ),
+                }
+            )
+        references: dict[str, object] = {
+            "application_runs": published_runs,
+            "driver_runs": published_driver_runs,
+        }
+        filenames = {
+            "client_stdout": "raw-client.stdout",
+            "expected_acknowledgements": "expected-acks.json",
+            "namespace_snapshot": "namespace.snapshot",
+            "oracle_report": "oracle-report.json",
+            "compute_checkpoint": "compute-checkpoint.pb",
+            "migration_application": "migration/application.aot",
+            "resource_capsule_manifest": "migration/capsule-manifest.json",
+            "resource_capsule_state": "migration/capsule-state.sqlite",
+            "integrated_driver_report": "integrated-driver-report.json",
+            "pending_driver_record": "pending-driver-record.json",
+            "final_driver_record": "final-driver-record.json",
+            "crash_marker": "crash-marker.json",
+            "wanco_restore_started": "wanco-restore-started.json",
+            "wanco_restore_completion": "wanco-restore-completion.json",
+            "source_exit_receipt": "source-exit-receipt.json",
+            "source_authority_state": "source-authority-state.json",
+            "committed_authority_state": "committed-authority-state.json",
+            "source_adapter_binding": "source-adapter-binding.json",
+            "committed_adapter_binding": "committed-adapter-binding.json",
+            "source_retained_receipt": "source-retained-receipt.json",
+        }
+        for name, filename in filenames.items():
+            source = raw_paths[name]
+            if not isinstance(source, Path):
+                raise MatrixFailure(
+                    f"source-abort reconciliation raw evidence path {name} is invalid"
+                )
+            references[name] = ARTIFACTS.publish_reference(
+                source,
+                artifact_root,
+                f"observations/source-abort/{filename}",
+            )
+        qualification["retained_raw_evidence"] = references
+    except ARTIFACTS.ArtifactError as error:
+        raise MatrixFailure(str(error)) from error
+
+
 class ShortSocketRoot:
     """Own short-lived socket and coordinator-private paths outside evidence."""
 
@@ -1343,6 +1540,10 @@ def build_runtime_binaries(repository: Path) -> None:
 
 
 def qualify_provider_process_recovery(repository: Path, root: Path) -> dict[str, object]:
+    command = (
+        "cargo test --locked -p visa_wasi_host "
+        "--test provider_process_recovery -- --nocapture"
+    )
     completed = run(
         [
             "cargo",
@@ -1361,8 +1562,8 @@ def qualify_provider_process_recovery(repository: Path, root: Path) -> dict[str,
     )
     stdout_path = root / "provider-process-recovery.stdout"
     stderr_path = root / "provider-process-recovery.stderr"
-    write_new(stdout_path, completed.stdout or b"(no stdout)\n")
-    write_new(stderr_path, completed.stderr or b"(no stderr)\n")
+    write_new(stdout_path, completed.stdout)
+    write_new(stderr_path, completed.stderr)
     names = [
         "response_loss_then_provider_kill_reopen_replays_exactly_once",
         "fd_sync_and_datasync_survive_provider_kill_reopen_in_process_crash_model",
@@ -1376,11 +1577,11 @@ def qualify_provider_process_recovery(repository: Path, root: Path) -> dict[str,
         canonical_bytes(
             {
                 "schema": "visa-sqlite-provider-process-recovery-v1",
-                "command": "cargo test --locked -p visa_wasi_host --test provider_process_recovery -- --nocapture",
+                "command": command,
                 "exit_status": completed.returncode,
                 "qualified_tests": names,
-                "stdout": CONTRACT.file_identity(stdout_path),
-                "stderr": CONTRACT.file_identity(stderr_path),
+                "stdout": CONTRACT.file_identity(stdout_path, allow_empty=True),
+                "stderr": CONTRACT.file_identity(stderr_path, allow_empty=True),
                 "scope": "provider-process-kill-reopen",
                 "nonclaims": [
                     "power-loss",
@@ -1392,10 +1593,19 @@ def qualify_provider_process_recovery(repository: Path, root: Path) -> dict[str,
         + b"\n",
     )
     return {
+        "schema": "visa-sqlite-provider-process-recovery-v2",
         "scope": "provider-process-kill-reopen",
-        "report": CONTRACT.file_identity(report_path),
-        "exit_status": completed.returncode,
         "qualified_tests": names,
+        "nonclaims": [
+            "power-loss",
+            "torn-sector",
+            "device-write-reordering",
+        ],
+        "_raw_paths": {
+            "report": report_path,
+            "stdout": stdout_path,
+            "stderr": stderr_path,
+        },
     }
 
 
@@ -2093,7 +2303,7 @@ def run_sqlite_oracle(
     report_path = cwd / "sqlite-oracle-report.json"
     write_new(report_path, completed.stdout or b"{}\n")
     stderr_path = cwd / "sqlite-oracle.stderr"
-    write_new(stderr_path, completed.stderr or b"(no stderr)\n")
+    write_new(stderr_path, completed.stderr)
     try:
         report = json.loads(completed.stdout)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -2636,6 +2846,7 @@ def qualify_source_abort_reconciliation(
     source_client = stable_id("source-abort-source-client")
     source_restore_client = stable_id("source-abort-source-restore-client")
     destination_client = stable_id("source-abort-unused-destination-client")
+    readback_client = stable_id("source-abort-readback-client")
     snapshot_client = stable_id("source-abort-snapshot-client")
     token = stable_id("source-abort-barrier")
     handoff = stable_id("source-abort-handoff")
@@ -2816,8 +3027,8 @@ def qualify_source_abort_reconciliation(
         )
         init_stdout = driver_root / "init.stdout"
         init_stderr = driver_root / "init.stderr"
-        write_new(init_stdout, init.stdout or b"(no stdout)\n")
-        write_new(init_stderr, init.stderr or b"(no stderr)\n")
+        write_new(init_stdout, init.stdout)
+        write_new(init_stderr, init.stderr)
         if init.returncode != 0:
             raise MatrixFailure(
                 "real migration driver failed before pre-commit abort: "
@@ -2884,8 +3095,8 @@ def qualify_source_abort_reconciliation(
         )
         authority_init_stdout = driver_root / "authority-init.stdout"
         authority_init_stderr = driver_root / "authority-init.stderr"
-        write_new(authority_init_stdout, authority_init.stdout or b"(no stdout)\n")
-        write_new(authority_init_stderr, authority_init.stderr or b"(no stderr)\n")
+        write_new(authority_init_stdout, authority_init.stdout)
+        write_new(authority_init_stderr, authority_init.stderr)
         if authority_init.returncode != 0:
             raise MatrixFailure(
                 "canonical authority initialization failed: "
@@ -2962,11 +3173,11 @@ def qualify_source_abort_reconciliation(
         authority_probe_init_stderr = driver_root / "authority-probe-init.stderr"
         write_new(
             authority_probe_init_stdout,
-            authority_probe_init.stdout or b"(no stdout)\n",
+            authority_probe_init.stdout,
         )
         write_new(
             authority_probe_init_stderr,
-            authority_probe_init.stderr or b"(no stderr)\n",
+            authority_probe_init.stderr,
         )
         if authority_probe_init.returncode != 0:
             raise MatrixFailure(
@@ -2998,11 +3209,11 @@ def qualify_source_abort_reconciliation(
         authority_probe_commit_stderr = driver_root / "authority-probe-commit.stderr"
         write_new(
             authority_probe_commit_stdout,
-            authority_probe_commit.stdout or b"(no stdout)\n",
+            authority_probe_commit.stdout,
         )
         write_new(
             authority_probe_commit_stderr,
-            authority_probe_commit.stderr or b"(no stderr)\n",
+            authority_probe_commit.stderr,
         )
         if authority_probe_commit.returncode != 0:
             raise MatrixFailure(
@@ -3040,8 +3251,8 @@ def qualify_source_abort_reconciliation(
         )
         authority_probe_stdout = driver_root / "authority-probe.stdout"
         authority_probe_stderr = driver_root / "authority-probe.stderr"
-        write_new(authority_probe_stdout, authority_probe.stdout or b"(no stdout)\n")
-        write_new(authority_probe_stderr, authority_probe.stderr or b"(no stderr)\n")
+        write_new(authority_probe_stdout, authority_probe.stdout)
+        write_new(authority_probe_stderr, authority_probe.stderr)
         if authority_probe.returncode == 0:
             raise MatrixFailure("canonical ownership commit did not block source abort")
         frozen = CONTRACT.status_projection(provider.status())
@@ -3064,8 +3275,8 @@ def qualify_source_abort_reconciliation(
         )
         injected_stdout = driver_root / "injected.stdout"
         injected_stderr = driver_root / "injected.stderr"
-        write_new(injected_stdout, injected.stdout or b"(no stdout)\n")
-        write_new(injected_stderr, injected.stderr or b"(no stderr)\n")
+        write_new(injected_stdout, injected.stdout)
+        write_new(injected_stderr, injected.stderr)
         if injected.returncode != 75:
             raise MatrixFailure(
                 "coordinator did not die at the injected provider-resume boundary: "
@@ -3107,8 +3318,8 @@ def qualify_source_abort_reconciliation(
         )
         recovered_stdout = driver_root / "recovered.stdout"
         recovered_stderr = driver_root / "recovered.stderr"
-        write_new(recovered_stdout, recovered.stdout or b"(no stdout)\n")
-        write_new(recovered_stderr, recovered.stderr or b"(no stderr)\n")
+        write_new(recovered_stdout, recovered.stdout)
+        write_new(recovered_stderr, recovered.stderr)
         if recovered.returncode != 0:
             raise MatrixFailure(
                 "migration driver recovery did not restore source compute: "
@@ -3133,14 +3344,34 @@ def qualify_source_abort_reconciliation(
             or completion.get("exit_status") != 0
         ):
             raise MatrixFailure("real Wanco restore did not publish a valid completion")
+        readback = run_script(
+            bound_runtime,
+            case_root=case,
+            cwd=case,
+            environment=guest_environment(
+                socket_path,
+                session=session,
+                owner=owner,
+                client=readback_client,
+                guest_capability=guest,
+                epoch=1,
+            ),
+            label="source-abort-readback",
+            script_path=CURSOR_GUEST_PATH,
+        )
         final_provider = CONTRACT.status_projection(provider.status())
         observation, txids = strict_stdout_observation(
             transcript=case / "raw-client.stdout",
-            components=[source_process.stdout_path, case / "source-restore.stdout"],
+            components=[
+                source_process.stdout_path,
+                case / "source-restore.stdout",
+                readback.stdout_path,
+            ],
             source_cursor_stdout=None,
+            expect_cursor=True,
         )
         expected_path = case / "expected-acks.json"
-        write_expected_acks(expected_path, txids)
+        expected_identity = write_expected_acks(expected_path, txids)
         namespace = snapshot_namespace(
             bound_runtime,
             case_root=case,
@@ -3156,11 +3387,23 @@ def qualify_source_abort_reconciliation(
             ),
             cell_id="source-abort",
         )
+        snapshot_path = namespace.pop("path")
         oracle = run_sqlite_oracle(
             oracle_binary=oracle_binary,
-            snapshot=namespace.pop("path"),
+            snapshot=snapshot_path,
             expected_acks=expected_path,
             cwd=case,
+        )
+        oracle_report_path = oracle.pop("_report_path")
+        application_runs = (
+            completed_application_run("source", source_process),
+            (
+                "destination",
+                case / "source-restore.stdout",
+                case / "source-restore.stderr",
+                0,
+            ),
+            completed_application_run("readback", readback),
         )
         migration_manifest = require_object(
             final_record.get("migration_manifest"), "driver migration manifest"
@@ -3221,7 +3464,7 @@ def qualify_source_abort_reconciliation(
         report_path,
         canonical_bytes(
             {
-                "schema": "visa-sqlite-source-abort-real-driver-v3",
+                "schema": "visa-sqlite-source-abort-real-driver-v4",
                 "cut": capture,
                 "source_frozen": frozen,
                 "source_provider_resumed_before_restart": resumed,
@@ -3239,6 +3482,9 @@ def qualify_source_abort_reconciliation(
                 "source_retained_terminal": source_retained_terminal,
                 "committed_probe_terminal": committed_probe_terminal,
                 "driver_record": CONTRACT.file_identity(record_path),
+                "compute_checkpoint": CONTRACT.file_identity(
+                    binding_root / "artifacts" / "checkpoint.pb"
+                ),
                 "source_exit_receipt": CONTRACT.file_identity(source_exit_path),
                 "wanco_restore_completion": CONTRACT.file_identity(completion_path),
                 "wanco_restore_started": CONTRACT.file_identity(supervisor_started_path),
@@ -3256,35 +3502,47 @@ def qualify_source_abort_reconciliation(
                     "commit_probe_init_exit_status": authority_probe_init.returncode,
                     "commit_probe_commit_exit_status": authority_probe_commit.returncode,
                     "canonical_commit_abort_stdout": CONTRACT.file_identity(
-                        authority_probe_stdout
+                        authority_probe_stdout, allow_empty=True
                     ),
                     "canonical_commit_abort_stderr": CONTRACT.file_identity(
-                        authority_probe_stderr
+                        authority_probe_stderr, allow_empty=True
                     ),
-                    "init_stdout": CONTRACT.file_identity(init_stdout),
-                    "init_stderr": CONTRACT.file_identity(init_stderr),
+                    "init_stdout": CONTRACT.file_identity(
+                        init_stdout, allow_empty=True
+                    ),
+                    "init_stderr": CONTRACT.file_identity(
+                        init_stderr, allow_empty=True
+                    ),
                     "authority_init_stdout": CONTRACT.file_identity(
-                        authority_init_stdout
+                        authority_init_stdout, allow_empty=True
                     ),
                     "authority_init_stderr": CONTRACT.file_identity(
-                        authority_init_stderr
+                        authority_init_stderr, allow_empty=True
                     ),
                     "commit_probe_init_stdout": CONTRACT.file_identity(
-                        authority_probe_init_stdout
+                        authority_probe_init_stdout, allow_empty=True
                     ),
                     "commit_probe_init_stderr": CONTRACT.file_identity(
-                        authority_probe_init_stderr
+                        authority_probe_init_stderr, allow_empty=True
                     ),
                     "commit_probe_commit_stdout": CONTRACT.file_identity(
-                        authority_probe_commit_stdout
+                        authority_probe_commit_stdout, allow_empty=True
                     ),
                     "commit_probe_commit_stderr": CONTRACT.file_identity(
-                        authority_probe_commit_stderr
+                        authority_probe_commit_stderr, allow_empty=True
                     ),
-                    "injected_stdout": CONTRACT.file_identity(injected_stdout),
-                    "injected_stderr": CONTRACT.file_identity(injected_stderr),
-                    "recovered_stdout": CONTRACT.file_identity(recovered_stdout),
-                    "recovered_stderr": CONTRACT.file_identity(recovered_stderr),
+                    "injected_stdout": CONTRACT.file_identity(
+                        injected_stdout, allow_empty=True
+                    ),
+                    "injected_stderr": CONTRACT.file_identity(
+                        injected_stderr, allow_empty=True
+                    ),
+                    "recovered_stdout": CONTRACT.file_identity(
+                        recovered_stdout, allow_empty=True
+                    ),
+                    "recovered_stderr": CONTRACT.file_identity(
+                        recovered_stderr, allow_empty=True
+                    ),
                 },
                 "raw_client_observation": observation,
                 "namespace_snapshot": namespace,
@@ -3294,8 +3552,12 @@ def qualify_source_abort_reconciliation(
         + b"\n",
     )
     return {
+        "schema": CONTRACT.SOURCE_ABORT_SCHEMA,
         "scope": "pre-commit-source-compute-abort",
         "integrated_driver_report": CONTRACT.file_identity(report_path),
+        "compute_checkpoint": CONTRACT.file_identity(
+            binding_root / "artifacts" / "checkpoint.pb"
+        ),
         "coordinator_crash_exit_status": injected.returncode,
         "durable_pending_action": "resume_source_provider",
         "pending_driver_record": CONTRACT.file_identity(pending_record_path),
@@ -3314,9 +3576,76 @@ def qualify_source_abort_reconciliation(
         "wanco_restore_completion": CONTRACT.file_identity(completion_path),
         "wanco_restore_started": CONTRACT.file_identity(supervisor_started_path),
         "external_oracle_report": oracle["report"],
+        "raw_client_observation": observation,
+        "expected_acknowledgements": expected_identity,
+        "namespace_snapshot": namespace,
+        "external_oracle": oracle,
+        "equivalence_projection": build_equivalence_projection(oracle, observation),
         "accepted": True,
         "source_client": source_client,
         "source_restore_client": source_restore_client,
+        "_raw_paths": {
+            "application_runs": application_runs,
+            "client_stdout": case / "raw-client.stdout",
+            "expected_acknowledgements": expected_path,
+            "namespace_snapshot": snapshot_path,
+            "oracle_report": oracle_report_path,
+            "compute_checkpoint": binding_root / "artifacts" / "checkpoint.pb",
+            "migration_application": binding_root / "artifacts" / "application.aot",
+            "resource_capsule_manifest": binding_root / "capsule" / "manifest.json",
+            "resource_capsule_state": binding_root / "capsule" / "state.sqlite",
+            "driver_runs": (
+                ("init", init_stdout, init_stderr, init.returncode),
+                (
+                    "authority-init",
+                    authority_init_stdout,
+                    authority_init_stderr,
+                    authority_init.returncode,
+                ),
+                (
+                    "commit-probe-init",
+                    authority_probe_init_stdout,
+                    authority_probe_init_stderr,
+                    authority_probe_init.returncode,
+                ),
+                (
+                    "commit-probe-commit",
+                    authority_probe_commit_stdout,
+                    authority_probe_commit_stderr,
+                    authority_probe_commit.returncode,
+                ),
+                (
+                    "committed-probe-abort",
+                    authority_probe_stdout,
+                    authority_probe_stderr,
+                    authority_probe.returncode,
+                ),
+                (
+                    "injected-recovery",
+                    injected_stdout,
+                    injected_stderr,
+                    injected.returncode,
+                ),
+                (
+                    "restart-recovery",
+                    recovered_stdout,
+                    recovered_stderr,
+                    recovered.returncode,
+                ),
+            ),
+            "integrated_driver_report": report_path,
+            "pending_driver_record": pending_record_path,
+            "final_driver_record": record_path,
+            "crash_marker": crash_marker_path,
+            "wanco_restore_started": supervisor_started_path,
+            "wanco_restore_completion": completion_path,
+            "source_exit_receipt": source_exit_path,
+            "source_authority_state": authority_snapshot_path,
+            "committed_authority_state": authority_probe_snapshot_path,
+            "source_adapter_binding": adapter_binding_path,
+            "committed_adapter_binding": authority_probe_binding,
+            "source_retained_receipt": source_retained_receipt_path,
+        },
     }
 
 
@@ -3490,12 +3819,19 @@ def run_matrix(
         )
         if arguments.only_source_abort:
             development = work_root / "development-source-abort.json"
+            development_qualification = {
+                key: value
+                for key, value in source_abort.items()
+                if key != "_raw_paths"
+            }
             write_new(
                 development,
                 canonical_bytes(
                     {
                         "artifact_class": "partial-development-run-not-matrix-evidence",
-                        "source_abort_reconciliation_qualification": source_abort,
+                        "source_abort_reconciliation_qualification": (
+                            development_qualification
+                        ),
                     }
                 )
                 + b"\n",
@@ -3568,6 +3904,14 @@ def run_matrix(
         uninterrupted_control,
         artifact_root=output.parent,
         label="uninterrupted-control",
+    )
+    retain_provider_process_recovery_evidence(
+        process_recovery,
+        artifact_root=output.parent,
+    )
+    retain_source_abort_evidence(
+        source_abort,
+        artifact_root=output.parent,
     )
     for cell in cells:
         cell_id = cell["cell_id"]

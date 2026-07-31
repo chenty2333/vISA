@@ -843,9 +843,19 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
     zstd_validator = (ROOT / "scripts/stock_zstd_matrix.py").read_text(
         encoding="utf-8"
     )
+    sqlite_runner = (
+        ROOT / "scripts/run-stock-sqlite-rollback-matrix.py"
+    ).read_text(encoding="utf-8")
+    sqlite_validator = (
+        ROOT / "scripts/sqlite_rollback_matrix.py"
+    ).read_text(encoding="utf-8")
     require(
         '"schema": "visa-wanco-carrier-build-receipt-v5"' in wanco_build
-        and 'SCHEMA = "visa-wanco-typed-checkpoint-corpus-v4"' in typed_corpus
+        and 'SCHEMA = "visa-wanco-typed-checkpoint-corpus-v5"' in typed_corpus
+        and 'PROCESS_OBSERVATION_SCHEMA = "visa-wanco-typed-process-observation-v1"'
+        in typed_corpus
+        and 'CHECKPOINT_ENVELOPE_SCHEMA = "visa-wanco-checkpoint-envelope-v1"'
+        in typed_corpus
         and "nonce-gated-hostcall-v1" in typed_corpus,
         "Wanco build and raw typed-corpus schemas must retain the post-import witness",
     )
@@ -877,6 +887,16 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
         and "raw_fault_artifacts_retained" in zstd_validator
         and "FAULT_PROCESS_OBSERVATION_SCHEMA" in zstd_validator,
         "stock zstd v6 must retain and independently rederive raw fault evidence",
+    )
+    require(
+        'MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v9"'
+        in sqlite_validator
+        and "retain_provider_process_recovery_evidence" in sqlite_runner
+        and "retain_source_abort_evidence" in sqlite_runner
+        and "_recompute_process_recovery" in sqlite_validator
+        and "_recompute_source_abort" in sqlite_validator
+        and "compute-checkpoint.pb" in sqlite_runner,
+        "stock SQLite v9 must retain and independently rederive recovery evidence",
     )
     require(
         "gate_system_stock_sqlite()" in gate

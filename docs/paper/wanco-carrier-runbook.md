@@ -60,7 +60,7 @@ before hostcall release; fresh-process capture then occurs at the exact
 post-import callsite.
 
 The typed-restore qualification is a retained-raw-evidence result, not an
-inline capability assertion. Its v4 manifest contains canonical relative
+inline capability assertion. Its v5 manifest contains canonical relative
 references to every stdout/stderr stream used by the checker, each checkpoint,
 all five post-import witness files, and the locked Wanco build receipt. The
 standalone checker safely rereads those bytes and derives output continuity,

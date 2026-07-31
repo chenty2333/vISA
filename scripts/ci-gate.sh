@@ -789,7 +789,11 @@ gate_system_stock_zstd() {
             "$repository_revision" "$GITHUB_SHA" >&2
         return 1
     fi
-    stock_zstd=$(command -v zstd)
+    if [[ -x /usr/bin/zstd ]]; then
+        stock_zstd=/usr/bin/zstd
+    else
+        stock_zstd=$(command -v zstd)
+    fi
     if [[ -z "$stock_zstd" ]]; then
         printf 'stock zstd verifier executable is unavailable\n' >&2
         return 1
@@ -889,33 +893,6 @@ gate_system_stock_sqlite() {
     run_gate "system-stock-sqlite: retained Wanco raw corpus validation" \
         python3 scripts/wanco_typed_corpus.py validate \
             "$system_artifact_root/wanco-typed-corpus/receipt.json"
-    run_gate "system-stock-sqlite: matrix inventory assertions" \
-        python3 - "$system_bundle_path" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-receipt = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert receipt["repository_source_snapshot"]["clean"] is True
-assert len(receipt["cells"]) == 8
-assert len(receipt["typed_restore_corpus_qualification"]["cases"]) == 12
-control = receipt["uninterrupted_control"]
-assert control["external_oracle"]["accepted"] is True
-assert control["raw_client_observation"]["cursor_total_rows"] == 512
-assert control["raw_client_observation"]["cursor_done_count"] == 1
-assert all(cell["external_oracle"]["accepted"] is True for cell in receipt["cells"])
-assert all(
-    cell["equivalence_projection"] == control["equivalence_projection"]
-    for cell in receipt["cells"]
-)
-assert all(
-    cell["raw_client_observation"]["cursor_total_rows"] == 512
-    and cell["raw_client_observation"]["cursor_done_count"] == 1
-    for cell in receipt["cells"]
-)
-assert receipt["source_abort_reconciliation_qualification"]["accepted"] is True
-assert receipt["process_recovery_qualification"]["exit_status"] == 0
-PY
 
     install -m 0644 "$build_root/receipt.json" \
         "$system_artifact_root/stock-sqlite-build-receipt.json"

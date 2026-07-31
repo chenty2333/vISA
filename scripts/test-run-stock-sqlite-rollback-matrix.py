@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -66,6 +67,90 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(
                 run["stderr"]["path"],
                 "observations/fixture/runs/source.stderr",
+            )
+
+    def test_source_abort_retains_driver_runs_and_all_manifest_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sqlite-source-abort-retained-") as raw:
+            root = Path(raw)
+            source = root / "source"
+            artifact = root / "artifact"
+            source.mkdir()
+            artifact.mkdir()
+
+            def materialize(name: str) -> Path:
+                path = source / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((name + "\n").encode())
+                return path
+
+            document_names = (
+                "client_stdout",
+                "expected_acknowledgements",
+                "namespace_snapshot",
+                "oracle_report",
+                "compute_checkpoint",
+                "migration_application",
+                "resource_capsule_manifest",
+                "resource_capsule_state",
+                "integrated_driver_report",
+                "pending_driver_record",
+                "final_driver_record",
+                "crash_marker",
+                "wanco_restore_started",
+                "wanco_restore_completion",
+                "source_exit_receipt",
+                "source_authority_state",
+                "committed_authority_state",
+                "source_adapter_binding",
+                "committed_adapter_binding",
+                "source_retained_receipt",
+            )
+            raw_paths: dict[str, object] = {
+                name: materialize(name) for name in document_names
+            }
+            raw_paths["application_runs"] = (
+                (
+                    "source",
+                    materialize("application-source.stdout"),
+                    materialize("application-source.stderr"),
+                    0,
+                ),
+                (
+                    "destination",
+                    materialize("application-destination.stdout"),
+                    materialize("application-destination.stderr"),
+                    0,
+                ),
+            )
+            raw_paths["driver_runs"] = tuple(
+                (
+                    role,
+                    materialize(f"{role}.stdout"),
+                    materialize(f"{role}.stderr"),
+                    expected_status if expected_status is not None else 1,
+                )
+                for role, _, _, expected_status in RUNNER.CONTRACT.SOURCE_ABORT_DRIVER_RUNS
+            )
+            qualification = {"_raw_paths": raw_paths}
+            RUNNER.retain_source_abort_evidence(
+                qualification,
+                artifact_root=artifact,
+            )
+            retained = qualification["retained_raw_evidence"]
+            self.assertEqual(
+                [run["role"] for run in retained["driver_runs"]],
+                [
+                    spec[0]
+                    for spec in RUNNER.CONTRACT.SOURCE_ABORT_DRIVER_RUNS
+                ],
+            )
+            self.assertEqual(
+                retained["migration_application"]["path"],
+                "observations/source-abort/migration/application.aot",
+            )
+            self.assertEqual(
+                retained["resource_capsule_state"]["path"],
+                "observations/source-abort/migration/capsule-state.sqlite",
             )
 
     def test_completed_application_run_requires_zero_exit(self) -> None:
@@ -358,10 +443,38 @@ class RunnerTests(unittest.TestCase):
         source = RUNNER_PATH.read_text(encoding="utf-8")
         self.assertNotIn("def qualify_driver_source_abort", source)
         self.assertNotIn("def qualify_real_wanco_source_abort", source)
+        source_abort = source.split(
+            "def qualify_source_abort_reconciliation(", maxsplit=1
+        )[1].split("def absolute_from(", maxsplit=1)[0]
+        self.assertIn('oracle.pop("_report_path")', source_abort)
         self.assertIn('"init-precommit"', source)
-        self.assertEqual(source.count('"authority-init"'), 2)
-        self.assertEqual(source.count('"authority-commit"'), 1)
-        self.assertEqual(source.count('"recover-abort"'), 3)
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"driver_binary,\s*\n\s*\"authority-init\"",
+                    source_abort,
+                )
+            ),
+            2,
+        )
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"driver_binary,\s*\n\s*\"authority-commit\"",
+                    source_abort,
+                )
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"driver_binary,\s*\n\s*\"recover-abort\"",
+                    source_abort,
+                )
+            ),
+            3,
+        )
         self.assertIn('"ownership_committed"', source)
         self.assertIn('"source_retained"', source)
         self.assertIn("authority-probe-record.json", source)

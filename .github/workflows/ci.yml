@@ -263,6 +263,14 @@ jobs:
             "$VISA_DEV_IMAGE")"
           test "$actual_revision" = "$GITHUB_SHA"
 
+      - name: Install packaged native zstd oracle
+        if: ${{ matrix.lane == 'stock-zstd' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zstd
+          test -x /usr/bin/zstd
+          dpkg-query --search /usr/bin/zstd
+
       - name: Run ${{ matrix.label }} gate
         id: claim_gate
         env:

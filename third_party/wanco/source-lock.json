@@ -65,7 +65,7 @@
     }
   ],
   "qualification": {
-    "schema": "visa-wanco-typed-checkpoint-corpus-v4",
+    "schema": "visa-wanco-typed-checkpoint-corpus-v5",
     "case_count": 12,
     "profiles": [
       "direct",
@@ -80,11 +80,15 @@
     ],
     "runner": {
       "path": "third_party/wanco/corpus/run-typed-checkpoint-corpus.sh",
-      "sha256": "0dbe566ab40c231754fad5de99b9999fc1b4e2836f31f51cbd9f3ed31dc46968"
+      "sha256": "6a21685c59f24eb54e8aa8f6c5cc30aa03faea8203fe032604ae33f71a7412ee"
     },
     "validator": {
       "path": "scripts/wanco_typed_corpus.py",
-      "sha256": "163c675146b2624cb7d095e91e844007451c5fee55a15e43e9ab8cd637c01b58"
+      "sha256": "b96ded3fd83b88526f4763a594fb12c87202082156e5633eee039518365b16ef"
+    },
+    "diagnostics": {
+      "path": "scripts/wanco_process_diagnostics.py",
+      "sha256": "32c688f4d33e6618c76b12e57cf8aec9b8549bc4f92ce787fd481e1fb6a138e6"
     },
     "artifact_reader": {
       "path": "scripts/receipt_artifacts.py",
