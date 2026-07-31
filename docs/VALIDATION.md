@@ -659,7 +659,13 @@ opens the source-abort provider capsule as the current schema-5 SQLite state to
 rederive its frozen cut status. Protocol v3.0 status carries
 `completed_barrier` and `completed_barrier_effect`; the validator requires both
 to be empty at every frozen checkpoint and requires the exact checkpoint
-token/effect after destination activation and source-abort resume.
+token/effect after destination activation and source-abort resume. For
+source-abort recovery it keeps the application recovery terminal separate from
+the later namespace-oracle observation: the recovered provider must advance
+strictly beyond the resumed cut, and the independently decoded namespace
+snapshot must advance strictly beyond recovery because its stock-SQLite
+snapshot-gate workload executes afterward. The gate does not hard-code that
+observer workload's current hostcall count.
 
 The same gate proves `fd_sync`/`fd_datasync` and response replay across provider
 `SIGKILL` plus reopen, rejects migration while response delivery is uncertain,

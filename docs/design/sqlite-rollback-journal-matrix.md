@@ -231,6 +231,12 @@ destination and source-abort resume to the exact checkpoint token/effect, and
 binds each continuation witness to the exact token/effect returned by its
 atomic `BarrierRelease(continue)` response. It rejects a release observation
 reconstructed from a later `status` request.
+Source-abort evidence distinguishes the application recovery terminal from the
+subsequent namespace-oracle cut. Frozen and provider-resumed counters are
+equal; completed source restore plus readback advances both counters; the
+stock-SQLite snapshot-gate workload then advances the independently decoded
+namespace snapshot beyond that recovery terminal. No fixed observer-hostcall
+delta is part of the contract.
 The typed-corpus v5 manifest contains no observed values or verdict. It
 references retained process observations, control/checkpoint/restore stdout
 and stderr, protobuf checkpoints, the locked source/build receipts, and

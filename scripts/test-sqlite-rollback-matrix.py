@@ -1061,11 +1061,23 @@ def materialize_retained_receipt(
         "findings": [],
     }
     report_bytes = json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
+    source_abort_report = copy.deepcopy(report)
+    source_abort_report["snapshot"]["effects"] = 22
+    source_abort_report_bytes = (
+        json.dumps(source_abort_report, indent=2, sort_keys=True).encode() + b"\n"
+    )
     oracle_path = root / "fixture-sqlite-oracle"
     oracle_path.write_text(
         "#!/usr/bin/env python3\n"
+        "import pathlib\n"
         "import sys\n"
-        f"sys.stdout.buffer.write({report_bytes!r})\n",
+        "snapshot = pathlib.Path(sys.argv[1]).read_bytes()\n"
+        f"control_report = {report_bytes!r}\n"
+        f"source_abort_report = {source_abort_report_bytes!r}\n"
+        "sys.stdout.buffer.write(\n"
+        "    source_abort_report if snapshot == b'namespace:source-abort' "
+        "else control_report\n"
+        ")\n",
         encoding="utf-8",
     )
     oracle_path.chmod(0o700)
@@ -1101,7 +1113,7 @@ def materialize_retained_receipt(
     ]
     for label, record, source_cursor_required in records:
         record["namespace_snapshot"]["effect_frontier"] = "c4" * 32
-        record["namespace_snapshot"]["effects"] = 21
+        record["namespace_snapshot"]["effects"] = 22 if label == "source-abort" else 21
         transaction_bytes = b"delete\nVISA_ACK|tx-000001\n"
         cursor_bytes = ("\n".join([*row_lines, "VISA_CURSOR_DONE|5"]) + "\n").encode()
         if label == "uninterrupted-control":
@@ -1163,8 +1175,11 @@ def materialize_retained_receipt(
         snapshot = write_reference(
             f"observations/{label}/namespace.snapshot", snapshot_bytes
         )
+        retained_report_bytes = (
+            source_abort_report_bytes if label == "source-abort" else report_bytes
+        )
         oracle_report = write_reference(
-            f"observations/{label}/oracle-report.json", report_bytes
+            f"observations/{label}/oracle-report.json", retained_report_bytes
         )
         observation = {
             "stdout": {
@@ -1933,6 +1948,7 @@ class MatrixContractTests(unittest.TestCase):
             "pending-commit-proof",
             "coordinated-status-counters",
             "recovered-only-status-counters",
+            "recovered-counter-pair-drift",
             "final-phase",
             "checkpoint",
             "valid-unrelated-checkpoint",
@@ -2151,12 +2167,28 @@ class MatrixContractTests(unittest.TestCase):
                         *report_reference["path"].split("/")
                     )
                     report = json.loads(report_path.read_bytes())
-                    report["source_provider_after_recovery"]["effects"] = 77
+                    report["source_provider_after_recovery"]["effects"] = 20
                     report["source_provider_after_recovery"][
                         "completed_requests"
-                    ] = 77
-                    report["namespace_snapshot"]["effects"] = 77
-                    abort["namespace_snapshot"]["effects"] = 77
+                    ] = 20
+                    report["namespace_snapshot"]["effects"] = 21
+                    abort["namespace_snapshot"]["effects"] = 21
+                    rewrite(
+                        report_reference,
+                        MATRIX.canonical_bytes(report) + b"\n",
+                    )
+                    abort["integrated_driver_report"] = reference_identity(
+                        report_reference
+                    )
+                elif scenario == "recovered-counter-pair-drift":
+                    report_reference = retained_raw["integrated_driver_report"]
+                    report_path = root.joinpath(
+                        *report_reference["path"].split("/")
+                    )
+                    report = json.loads(report_path.read_bytes())
+                    report["source_provider_after_recovery"][
+                        "completed_requests"
+                    ] += 1
                     rewrite(
                         report_reference,
                         MATRIX.canonical_bytes(report) + b"\n",

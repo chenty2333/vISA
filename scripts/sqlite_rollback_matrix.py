@@ -2598,29 +2598,39 @@ def _recompute_source_abort(
         or frozen["completed_barrier"] is not None
         or frozen["completed_barrier_effect"] is not None
         or frozen != capsule_status
-        or resumed["mode"] != "active"
+        or frozen["effects"] != released["effects"]
+        or frozen["completed_requests"] != released["completed_requests"]
+    ):
+        raise MatrixFailure("source-abort frozen provider state is invalid")
+    if (
+        resumed["mode"] != "active"
         or resumed["authority_epoch"] != source_epoch
         or resumed["barrier"] != "open"
         or resumed["barrier_remaining"] is not None
         or resumed["barrier_effect"] is not None
         or resumed["completed_barrier"] != cut_token
         or resumed["completed_barrier_effect"] != cut_effect
-        or recovered["mode"] != "active"
+        or resumed["effects"] != frozen["effects"]
+        or resumed["completed_requests"] != frozen["completed_requests"]
+    ):
+        raise MatrixFailure("source-abort resumed provider state is invalid")
+    if (
+        recovered["mode"] != "active"
         or recovered["authority_epoch"] != source_epoch
         or recovered["barrier"] != "open"
         or recovered["barrier_remaining"] is not None
         or recovered["barrier_effect"] is not None
         or recovered["completed_barrier"] != cut_token
         or recovered["completed_barrier_effect"] != cut_effect
-        or frozen["effects"] != released["effects"]
-        or frozen["completed_requests"] != released["completed_requests"]
-        or resumed["effects"] != frozen["effects"]
-        or resumed["completed_requests"] != frozen["completed_requests"]
         or recovered["effects"] <= resumed["effects"]
         or recovered["completed_requests"] <= resumed["completed_requests"]
-        or recovered["effects"] != abort["namespace_snapshot"]["effects"]
+        or recovered["effects"] != recovered["completed_requests"]
     ):
-        raise MatrixFailure("source-abort provider state chain is invalid")
+        raise MatrixFailure("source-abort recovered provider state is invalid")
+    if abort["namespace_snapshot"]["effects"] <= recovered["effects"]:
+        raise MatrixFailure(
+            "source-abort namespace snapshot did not follow its observation workload"
+        )
 
 
 def validate_retained_evidence(
