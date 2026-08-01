@@ -121,6 +121,64 @@ def require_timing(value: object, label: str) -> None:
             fail(f"{label}.phases[{index}].exit_status is invalid")
 
 
+def require_workload_metrics(value: object, workload: str, label: str) -> None:
+    metrics = require_object(value, label)
+    if workload == "zstd":
+        if set(metrics) != {
+            "kind",
+            "input_sha256",
+            "compressed_sha256",
+            "native_decompression_accepted",
+            "application_elapsed_ns",
+            "throughput_bytes_per_second",
+            "source_quiesce_ns",
+            "compute_checkpoint_ns",
+        }:
+            fail(f"{label} has unexpected zstd fields")
+        if metrics["kind"] != "zstd" or metrics["native_decompression_accepted"] is not True:
+            fail(f"{label} does not bind an accepted native-zstd oracle")
+        for name in ("input_sha256", "compressed_sha256"):
+            digest = metrics[name]
+            if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+                fail(f"{label}.{name} is invalid")
+        for name in ("application_elapsed_ns", "throughput_bytes_per_second"):
+            item = metrics[name]
+            if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+                fail(f"{label}.{name} is invalid")
+        for name in ("source_quiesce_ns", "compute_checkpoint_ns"):
+            item = metrics[name]
+            if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+                fail(f"{label}.{name} is invalid")
+        return
+    if set(metrics) != {
+        "kind",
+        "ack_count",
+        "integrity_ok",
+        "foreign_keys_ok",
+        "account_rows",
+        "transaction_rows",
+        "accounts_sha256",
+        "transactions_sha256",
+        "unique_txids",
+    }:
+        fail(f"{label} has unexpected SQLite fields")
+    if (
+        metrics["kind"] != "sqlite"
+        or metrics["integrity_ok"] is not True
+        or metrics["foreign_keys_ok"] is not True
+        or metrics["unique_txids"] is not True
+    ):
+        fail(f"{label} does not bind accepted SQLite invariants")
+    for name in ("ack_count", "account_rows", "transaction_rows"):
+        item = metrics[name]
+        if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+            fail(f"{label}.{name} is invalid")
+    for name in ("accounts_sha256", "transactions_sha256"):
+        digest = metrics[name]
+        if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+            fail(f"{label}.{name} is invalid")
+
+
 def require_sample(value: object, index: int) -> tuple[str, int, str | None, str]:
     sample = require_object(value, f"samples[{index}]")
     expected_fields = {
@@ -136,6 +194,7 @@ def require_sample(value: object, index: int) -> tuple[str, int, str | None, str
         "sizes",
         "oracle",
         "detector",
+        "workload_metrics",
     }
     if set(sample) - expected_fields - {"reason"}:
         fail(f"samples[{index}] has unexpected fields")
@@ -207,8 +266,12 @@ def require_sample(value: object, index: int) -> tuple[str, int, str | None, str
             or oracle["accepted"] is not True
             or detector is not None
             or reason is not None
+            or "workload_metrics" not in sample
         ):
             fail(f"samples[{index}] positive arm is not an accepted equivalence")
+        require_workload_metrics(
+            sample["workload_metrics"], str(workload), f"samples[{index}].workload_metrics"
+        )
     elif sample["expectation"] == "unsupported":
         if (
             arm not in NEGATIVE_ARMS
@@ -223,6 +286,8 @@ def require_sample(value: object, index: int) -> tuple[str, int, str | None, str
         ):
             fail(f"samples[{index}] unsupported arm lacks an explicit capability reason")
     else:
+        if "workload_metrics" in sample:
+            fail(f"samples[{index}] negative arm must not publish positive metrics")
         if (
             sample["expectation"] != "negative-control"
             or sample["outcome"] not in {"rejected", "diverged"}

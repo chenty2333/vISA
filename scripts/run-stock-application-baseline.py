@@ -114,6 +114,93 @@ def timing_from_file(path: Path, *, interval_kind: str) -> dict[str, object]:
     }
 
 
+def lifecycle_events(path: Path) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                f"invalid lifecycle event JSON at {path}:{line_number}"
+            ) from error
+        if (
+            not isinstance(event, dict)
+            or event.get("schema") != "visa-application-cost-event-v1"
+            or not isinstance(event.get("label"), str)
+            or not isinstance(event.get("monotonic_ns"), int)
+        ):
+            raise RuntimeError(f"malformed lifecycle event at {path}:{line_number}")
+        events.append(event)
+    if not events:
+        raise RuntimeError(f"lifecycle event stream is empty: {path}")
+    return events
+
+
+def event_time(
+    events: list[dict[str, object]], *, label: str, cell: str
+) -> int:
+    matches = [
+        int(event["monotonic_ns"])
+        for event in events
+        if event.get("label") == label and event.get("cell") == cell
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected one lifecycle event {label} for {cell}, observed {len(matches)}"
+        )
+    return matches[0]
+
+
+def lifecycle_timing(
+    path: Path, *, cell: str, interval_kind: str
+) -> dict[str, object]:
+    events = lifecycle_events(path)
+    if cell == "uninterrupted-control":
+        markers = [
+            ("sqlite.control.start", "application"),
+            ("sqlite.control.application_complete", "namespace-snapshot-and-oracle"),
+            ("sqlite.control.oracle_complete", None),
+        ]
+    else:
+        markers = [
+            ("sqlite.cut.checkpoint_start", "source-quiesce-and-checkpoint"),
+            ("sqlite.cut.checkpoint_complete", "source-freeze"),
+            ("sqlite.cut.source_frozen", "resource-export-and-destination-restore"),
+            ("sqlite.cut.destination_prepared", "authority-fence-activate-and-pre-exec-verify"),
+            (
+                "sqlite.cut.destination_resume_start",
+                "resume-to-first-observable-completion",
+            ),
+            (
+                "sqlite.cut.destination_first_observable_completion",
+                "destination-to-completion",
+            ),
+            ("sqlite.cut.destination_complete", "readback-namespace-snapshot-and-oracle"),
+            ("sqlite.cut.oracle_complete", None),
+        ]
+    observed = [
+        (event_time(events, label=label, cell=cell), role)
+        for label, role in markers
+    ]
+    phases: list[dict[str, object]] = []
+    for (start, role), (end, _) in zip(observed, observed[1:]):
+        if role is None:
+            raise RuntimeError("lifecycle phase unexpectedly lacks a role")
+        phases.append(
+            {
+                "role": role,
+                **timing_interval(start, end),
+                "exit_status": 0,
+            }
+        )
+    return {
+        "clock": CONTRACT.CLOCK,
+        "interval": timing_interval(observed[0][0], observed[-1][0]),
+        "interval_kind": interval_kind,
+        "phases": phases,
+    }
+
+
 def process_from_runs(
     runs: list[Mapping[str, object]], *, root: Path
 ) -> dict[str, object]:
@@ -657,12 +744,42 @@ def run_zstd_fixture(
     }
 
 
+def sqlite_workload_metrics(projection: Mapping[str, object]) -> dict[str, object]:
+    acknowledgements = projection.get("acknowledgements")
+    logical = projection.get("logical_contents")
+    transactions = projection.get("transactions")
+    if (
+        not isinstance(acknowledgements, dict)
+        or not isinstance(logical, dict)
+        or not isinstance(transactions, dict)
+    ):
+        raise RuntimeError("SQLite semantic projection is incomplete")
+    observed_txids = acknowledgements.get("observed_txids")
+    if not isinstance(observed_txids, list) or not observed_txids:
+        raise RuntimeError("SQLite semantic projection has no acknowledged transaction")
+    return {
+        "kind": "sqlite",
+        "ack_count": len(observed_txids),
+        "integrity_ok": projection.get("integrity_ok"),
+        "foreign_keys_ok": projection.get("foreign_keys_ok"),
+        "account_rows": logical.get("account_rows"),
+        "transaction_rows": logical.get("transaction_rows"),
+        "accounts_sha256": logical.get("accounts_sha256"),
+        "transactions_sha256": logical.get("transactions_sha256"),
+        "unique_txids": transactions.get("unique_txids"),
+    }
+
+
 def sqlite_positive_sample(
-    *, receipt: Mapping[str, object], fixture: int, cut: str, root: Path
+    *,
+    receipt: Mapping[str, object],
+    fixture: int,
+    cut: str,
+    root: Path,
+    lifecycle_path: Path,
 ) -> dict[str, object]:
     cell = next(item for item in receipt["cells"] if item["cell_id"] == cut)
     raw = cell["retained_raw_evidence"]
-    timing_path = root / str(raw["application_timing"]["path"])
     runs = raw["application_runs"]
     output = cell["external_oracle"]["semantic_projection"]
     snapshot_bytes = int(cell["namespace_snapshot"]["artifact"]["size"])
@@ -677,7 +794,11 @@ def sqlite_positive_sample(
         "outcome": "equivalent",
         "throughput_eligible": True,
         "process": process_from_runs(runs, root=root),
-        "timing": timing_from_file(timing_path, interval_kind="source-freeze-to-external-oracle"),
+        "timing": lifecycle_timing(
+            lifecycle_path,
+            cell=cut,
+            interval_kind="checkpoint-start-to-external-oracle",
+        ),
         "sizes": {
             "input_bytes": input_bytes,
             "output_bytes": snapshot_bytes,
@@ -691,19 +812,27 @@ def sqlite_positive_sample(
         },
         "detector": None,
         "reason": None,
+        "workload_metrics": sqlite_workload_metrics(output),
     }
 
 
 def sqlite_control_sample(
-    *, receipt: Mapping[str, object], fixture: int, root: Path, interval_kind: str
+    *,
+    receipt: Mapping[str, object],
+    fixture: int,
+    root: Path,
+    interval_kind: str,
+    lifecycle_path: Path,
 ) -> dict[str, object]:
     control = receipt["uninterrupted_control"]
-    control_root = root / "observations/uninterrupted-control"
-    timing = timing_from_file(
-        control_root / "application-timing.json", interval_kind=interval_kind
+    timing = lifecycle_timing(
+        lifecycle_path,
+        cell="uninterrupted-control",
+        interval_kind=interval_kind,
     )
     raw = control["retained_raw_evidence"]
     projection = control["equivalence_projection"]
+    oracle_projection = control["external_oracle"]["semantic_projection"]
     snapshot = int(control["namespace_snapshot"]["artifact"]["size"])
     return {
         "workload": "sqlite",
@@ -730,6 +859,7 @@ def sqlite_control_sample(
         },
         "detector": None,
         "reason": None,
+        "workload_metrics": sqlite_workload_metrics(oracle_projection),
     }
 
 
@@ -747,6 +877,7 @@ def run_sqlite_fixture(
     output_root = root / f"sqlite-{fixture}"
     output_root.mkdir(mode=0o700)
     matrix_output = output_root / "matrix.json"
+    lifecycle_path = output_root / "lifecycle-events.jsonl"
     command = [
         sys.executable,
         str(SQLITE_RUNNER),
@@ -782,7 +913,11 @@ def run_sqlite_fixture(
         command,
         cwd=RUN_REPOSITORY,
         timeout=3600,
-        env={**os.environ, "VISA_BASELINE_SOURCE_CONTROLS": "1"},
+        env={
+            **os.environ,
+            "VISA_BASELINE_SOURCE_CONTROLS": "1",
+            "VISA_APPLICATION_COST_EVENTS": str(lifecycle_path),
+        },
     )
     if completed.returncode != 0:
         raise RuntimeError(
@@ -794,6 +929,7 @@ def run_sqlite_fixture(
     # SQLite runner.  It is intentionally not derived from the first control.
     restart_root = output_root / "fresh-process-rerun"
     restart_root.mkdir(mode=0o700)
+    restart_lifecycle_path = restart_root / "lifecycle-events.jsonl"
     restart_command = list(command)
     restart_command[restart_command.index("--output") + 1] = str(
         restart_root / "matrix.json"
@@ -801,7 +937,15 @@ def run_sqlite_fixture(
     restart_command[restart_command.index("--work-root") + 1] = str(
         restart_root / "work"
     )
-    restart_completed = run(restart_command, cwd=RUN_REPOSITORY, timeout=3600)
+    restart_completed = run(
+        restart_command,
+        cwd=RUN_REPOSITORY,
+        timeout=3600,
+        env={
+            **os.environ,
+            "VISA_APPLICATION_COST_EVENTS": str(restart_lifecycle_path),
+        },
+    )
     if restart_completed.returncode != 0:
         raise RuntimeError(
             "SQLite fresh-process rerun failed: "
@@ -820,6 +964,7 @@ def run_sqlite_fixture(
             fixture=fixture,
             root=output_root,
             interval_kind="uninterrupted-control",
+            lifecycle_path=lifecycle_path,
         )
     )
     samples.append(
@@ -828,10 +973,19 @@ def run_sqlite_fixture(
             fixture=fixture,
             root=restart_root,
             interval_kind="fresh-process-full-rerun",
+            lifecycle_path=restart_lifecycle_path,
         )
     )
     for cut in CONTRACT.SQLITE_CUTS:
-        samples.append(sqlite_positive_sample(receipt=receipt, fixture=fixture, cut=cut, root=output_root))
+        samples.append(
+            sqlite_positive_sample(
+                receipt=receipt,
+                fixture=fixture,
+                cut=cut,
+                root=output_root,
+                lifecycle_path=lifecycle_path,
+            )
+        )
         samples.append(
             run_sqlite_carrier_only(
                 sqlite_runner=sqlite_runner,

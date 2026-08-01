@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
@@ -51,7 +52,7 @@ ZSTD_CLI_VERSION_RE = re.compile(
 )
 
 
-def cost_event(label: str, **fields: object) -> None:
+def cost_event(label: str, **fields: object) -> int | None:
     """Optionally emit lifecycle events for the application-cost harness.
 
     The normal evidence lane is unchanged.  A caller that sets
@@ -61,11 +62,12 @@ def cost_event(label: str, **fields: object) -> None:
     """
     target = os.environ.get("VISA_APPLICATION_COST_EVENTS")
     if not target:
-        return
+        return None
+    observed_ns = time.monotonic_ns()
     event = {
         "schema": APPLICATION_COST_EVENT_SCHEMA,
         "label": label,
-        "monotonic_ns": time.monotonic_ns(),
+        "monotonic_ns": observed_ns,
         **fields,
     }
     path = Path(target)
@@ -73,6 +75,70 @@ def cost_event(label: str, **fields: object) -> None:
     with path.open("ab") as stream:
         stream.write(canonical_bytes(event) + b"\n")
         stream.flush()
+    return observed_ns
+
+
+class FirstCompletionObserver:
+    def __init__(self, provider: "Provider", *, cell: str, baseline: int) -> None:
+        self.provider = provider
+        self.cell = cell
+        self.baseline = baseline
+        self.stop_event = threading.Event()
+        self.observed_ns: int | None = None
+        self.failure: BaseException | None = None
+        self.thread = threading.Thread(
+            target=self._run,
+            name=f"zstd-first-completion-{cell}",
+            daemon=True,
+        )
+
+    def _run(self) -> None:
+        try:
+            while not self.stop_event.is_set():
+                status = read_status(self.provider.control("status"))
+                completed = status.get("completed_requests")
+                if not isinstance(completed, int) or isinstance(completed, bool):
+                    raise MatrixFailure("provider completion counter is malformed")
+                if completed > self.baseline:
+                    self.observed_ns = time.monotonic_ns()
+                    cost_event(
+                        "zstd.cut.destination_first_provider_completion",
+                        cell=self.cell,
+                        completed_requests=completed,
+                        observation="provider-status-poll",
+                    )
+                    return
+                self.stop_event.wait(0.001)
+        except BaseException as error:
+            self.failure = error
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def finish(self, *, completion_upper_bound_ns: int) -> int:
+        self.stop_event.set()
+        self.thread.join(timeout=5)
+        if self.thread.is_alive():
+            raise MatrixFailure("first-completion observer did not stop")
+        if self.failure is not None:
+            raise MatrixFailure(
+                f"first-completion observer failed: {self.failure}"
+            ) from self.failure
+        if self.observed_ns is None:
+            status = read_status(self.provider.control("status"))
+            completed = status.get("completed_requests")
+            if not isinstance(completed, int) or completed <= self.baseline:
+                raise MatrixFailure(
+                    "destination completed without an observed provider response"
+                )
+            self.observed_ns = completion_upper_bound_ns
+            cost_event(
+                "zstd.cut.destination_first_provider_completion",
+                cell=self.cell,
+                completed_requests=completed,
+                observation="destination-completion-upper-bound",
+            )
+        return min(self.observed_ns, completion_upper_bound_ns)
 
 
 class MatrixFailure(RuntimeError):
@@ -657,6 +723,7 @@ def checkpoint_source(
                 phase = current.get("barrier")
                 if phase == "held":
                     held_status = current
+                    held_observed_ns = time.monotonic_ns()
                     cost_event(
                         "zstd.cut.barrier_held",
                         cell=source_directory.parent.name,
@@ -678,6 +745,7 @@ def checkpoint_source(
             released_status = read_status(
                 provider.control("barrier-release", barrier_token, "checkpoint")
             )
+            release_completed_ns = time.monotonic_ns()
             cost_event(
                 "zstd.cut.checkpoint_release",
                 cell=source_directory.parent.name,
@@ -729,6 +797,8 @@ def checkpoint_source(
         "checkpoint": file_identity(checkpoint),
         "application_start_monotonic_ns": started_ns,
         "application_end_monotonic_ns": ended_ns,
+        "_baseline_barrier_held_monotonic_ns": held_observed_ns,
+        "_baseline_checkpoint_release_completed_monotonic_ns": release_completed_ns,
     }
 
 
@@ -828,6 +898,42 @@ def interval(start: int, end: int) -> dict[str, int]:
         "start_monotonic_ns": start,
         "end_monotonic_ns": end,
         "duration_ns": end - start,
+    }
+
+
+def zstd_workload_metrics(
+    oracle: Mapping[str, object],
+    *,
+    application_elapsed_ns: int,
+    source_quiesce_ns: int = 0,
+    compute_checkpoint_ns: int = 0,
+) -> dict[str, object]:
+    input_identity = oracle.get("input")
+    compressed_identity = oracle.get("compressed")
+    decoded_identity = oracle.get("decoded")
+    if (
+        not isinstance(input_identity, dict)
+        or not isinstance(compressed_identity, dict)
+        or decoded_identity != input_identity
+        or not isinstance(input_identity.get("size"), int)
+        or application_elapsed_ns <= 0
+        or source_quiesce_ns < 0
+        or compute_checkpoint_ns < 0
+    ):
+        raise MatrixFailure("native-zstd workload metrics are incomplete")
+    input_size = int(input_identity["size"])
+    throughput = input_size * 1_000_000_000 // application_elapsed_ns
+    if throughput <= 0:
+        raise MatrixFailure("zstd application throughput is not positive")
+    return {
+        "kind": "zstd",
+        "input_sha256": input_identity["sha256"],
+        "compressed_sha256": compressed_identity["sha256"],
+        "native_decompression_accepted": True,
+        "application_elapsed_ns": application_elapsed_ns,
+        "throughput_bytes_per_second": throughput,
+        "source_quiesce_ns": source_quiesce_ns,
+        "compute_checkpoint_ns": compute_checkpoint_ns,
     }
 
 
@@ -937,6 +1043,9 @@ def positive_process_baseline(
             "stdout": bytes_identity(stdout_bytes),
             "stderr": bytes_identity(stderr_bytes),
         })
+    application_elapsed_ns = sum(
+        int(phase["duration_ns"]) for phase in normalized_phases
+    )
     return {
         "expectation": "observable-equivalence",
         "outcome": "equivalent",
@@ -967,6 +1076,10 @@ def positive_process_baseline(
         },
         "detector": None,
         "reason": None,
+        "workload_metrics": zstd_workload_metrics(
+            oracle_observation,
+            application_elapsed_ns=application_elapsed_ns,
+        ),
     }
 
 
@@ -1333,6 +1446,7 @@ def run_migrated_cell(
     control: dict[str, object],
     *,
     collect_baseline: bool = False,
+    execute_fault_registry: bool = True,
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
     label = f"cut-{index + 1}"
     case = root / label
@@ -1535,6 +1649,7 @@ def run_migrated_cell(
 
         freeze_start_ns = time.monotonic_ns()
         source_provider.control("freeze", checkpoint_barrier, handoff, "2")
+        freeze_end_ns = time.monotonic_ns()
         cost_event("zstd.cut.source_frozen", cell=label)
         source_frozen_status = read_status(source_provider.control("status"))
         require_status(
@@ -1583,67 +1698,69 @@ def run_migrated_cell(
             binding_root / "artifacts" / "application.aot",
         )
 
-        faults: list[dict[str, object]] = [carrier_only_fault]
+        faults: list[dict[str, object]] = []
+        if execute_fault_registry:
+            faults.append(carrier_only_fault)
 
-        checkpoint_tamper = case / "checkpoint-tamper"
-        copy_tree_hardlink(binding_root, checkpoint_tamper)
-        tampered_checkpoint = (
-            checkpoint_tamper / "artifacts" / "checkpoint.pb"
-        )
-        tampered_checkpoint.unlink()
-        shutil.copy2(
-            binding_root / "artifacts" / "checkpoint.pb",
-            tampered_checkpoint,
-        )
-        mutate_one_byte(tampered_checkpoint)
-        faults.append(
-            {
-                **expect_rejection(
-                    bind_command(
-                        bind_binary,
-                        "verify",
-                        checkpoint_tamper,
-                        "migration-manifest.json",
+            checkpoint_tamper = case / "checkpoint-tamper"
+            copy_tree_hardlink(binding_root, checkpoint_tamper)
+            tampered_checkpoint = (
+                checkpoint_tamper / "artifacts" / "checkpoint.pb"
+            )
+            tampered_checkpoint.unlink()
+            shutil.copy2(
+                binding_root / "artifacts" / "checkpoint.pb",
+                tampered_checkpoint,
+            )
+            mutate_one_byte(tampered_checkpoint)
+            faults.append(
+                {
+                    **expect_rejection(
+                        bind_command(
+                            bind_binary,
+                            "verify",
+                            checkpoint_tamper,
+                            "migration-manifest.json",
+                        ),
+                        f"{label}-compute-checkpoint-tamper",
+                        detector="migration-manifest-bound-file-digest",
+                        expected_stderr_any=(
+                            "migration integrity failure: bound file content differs",
+                        ),
+                        evidence_root=fault_evidence_root,
                     ),
-                    f"{label}-compute-checkpoint-tamper",
-                    detector="migration-manifest-bound-file-digest",
-                    expected_stderr_any=(
-                        "migration integrity failure: bound file content differs",
-                    ),
-                    evidence_root=fault_evidence_root,
-                ),
-                "scope": "manifest-verification-path",
-            }
-        )
+                    "scope": "manifest-verification-path",
+                }
+            )
 
-        capsule_tamper = case / "capsule-tamper"
-        copy_tree_hardlink(binding_root / "capsule", capsule_tamper)
-        tampered_state = capsule_tamper / "state.sqlite"
-        tampered_state.unlink()
-        shutil.copy2(binding_root / "capsule" / "state.sqlite", tampered_state)
-        mutate_one_byte(tampered_state)
-        tampered_restore = restore_provider(
-            host_binary,
-            capsule_tamper,
-            case / "tampered-provider" / "state.sqlite",
-            secrets.token_hex(32),
-            secrets.token_hex(32),
-            case,
-        )
-        faults.append(
-            {
-                **expect_rejection(
-                    tampered_restore,
-                    f"{label}-provider-capsule-tamper",
-                    detector="provider-capsule-state-digest",
-                    expected_stderr_any=(
-                        "provider integrity failure: capsule state digest",
+            capsule_tamper = case / "capsule-tamper"
+            copy_tree_hardlink(binding_root / "capsule", capsule_tamper)
+            tampered_state = capsule_tamper / "state.sqlite"
+            tampered_state.unlink()
+            shutil.copy2(binding_root / "capsule" / "state.sqlite", tampered_state)
+            mutate_one_byte(tampered_state)
+            tampered_restore = restore_provider(
+                host_binary,
+                capsule_tamper,
+                case / "tampered-provider" / "state.sqlite",
+                secrets.token_hex(32),
+                secrets.token_hex(32),
+                case,
+            )
+            faults.append(
+                {
+                    **expect_rejection(
+                        tampered_restore,
+                        f"{label}-provider-capsule-tamper",
+                        detector="provider-capsule-state-digest",
+                        expected_stderr_any=(
+                            "provider integrity failure: capsule state digest",
+                        ),
+                        evidence_root=fault_evidence_root,
                     ),
-                    evidence_root=fault_evidence_root,
-                ),
-                "scope": "provider-restore-path",
-            }
-        )
+                    "scope": "provider-restore-path",
+                }
+            )
 
         destination = case / "destination"
         destination_database = destination / "provider" / "state.sqlite"
@@ -1660,6 +1777,7 @@ def run_migrated_cell(
                 "destination provider restore failed: "
                 + restored.stderr.decode("utf-8", errors="replace")
             )
+        destination_prepared_ns = time.monotonic_ns()
         cost_event("zstd.cut.destination_prepared", cell=label)
         destination_socket = destination / "provider.sock"
         with Provider(
@@ -1729,50 +1847,51 @@ def run_migrated_cell(
                     + verified.stderr.decode("utf-8", errors="replace")
                 )
 
-            (binding_root / "proofs" / "alternate-commit.receipt").write_bytes(
-                canonical_bytes(
+            if execute_fault_registry:
+                (binding_root / "proofs" / "alternate-commit.receipt").write_bytes(
+                    canonical_bytes(
+                        {
+                            **commit_receipt,
+                            "authority_decision": "different-commit-instance",
+                        }
+                    )
+                )
+                alternate = bind_command(
+                    bind_binary,
+                    "bind-proofs",
+                    binding_root,
+                    "migration-manifest.json",
+                    "proofs/alternate-commit.receipt",
+                    "proofs/fence.receipt",
+                    "proofs/alternate-commit.json",
+                    "proofs/alternate-fence.json",
+                )
+                if alternate.returncode != 0:
+                    raise MatrixFailure(
+                        "alternate proof binding failed: "
+                        + alternate.stderr.decode("utf-8", errors="replace")
+                    )
+                faults.append(
                     {
-                        **commit_receipt,
-                        "authority_decision": "different-commit-instance",
+                        **expect_rejection(
+                            bind_command(
+                                bind_binary,
+                                "verify-proofs",
+                                binding_root,
+                                "migration-manifest.json",
+                                "proofs/alternate-commit.json",
+                                "proofs/fence.json",
+                            ),
+                            f"{label}-commit-fence-proof-pair-swap",
+                            detector="canonical-fence-to-commit-binding",
+                            expected_stderr_any=(
+                                "canonical proof rejected: source fence proof binding differs",
+                            ),
+                            evidence_root=fault_evidence_root,
+                        ),
+                        "scope": "canonical-proof-verification-path",
                     }
                 )
-            )
-            alternate = bind_command(
-                bind_binary,
-                "bind-proofs",
-                binding_root,
-                "migration-manifest.json",
-                "proofs/alternate-commit.receipt",
-                "proofs/fence.receipt",
-                "proofs/alternate-commit.json",
-                "proofs/alternate-fence.json",
-            )
-            if alternate.returncode != 0:
-                raise MatrixFailure(
-                    "alternate proof binding failed: "
-                    + alternate.stderr.decode("utf-8", errors="replace")
-                )
-            faults.append(
-                {
-                    **expect_rejection(
-                        bind_command(
-                            bind_binary,
-                            "verify-proofs",
-                            binding_root,
-                            "migration-manifest.json",
-                            "proofs/alternate-commit.json",
-                            "proofs/fence.json",
-                        ),
-                        f"{label}-commit-fence-proof-pair-swap",
-                        detector="canonical-fence-to-commit-binding",
-                        expected_stderr_any=(
-                            "canonical proof rejected: source fence proof binding differs",
-                        ),
-                        evidence_root=fault_evidence_root,
-                    ),
-                    "scope": "canonical-proof-verification-path",
-                }
-            )
 
             source_provider.control("fence", handoff, "2")
             cost_event("zstd.cut.source_fenced", cell=label)
@@ -1786,7 +1905,6 @@ def run_migrated_cell(
                 label=f"{label} fenced source",
             )
             destination_provider.control("activate", handoff, "2")
-            activation_end_ns = time.monotonic_ns()
             cost_event("zstd.cut.destination_activated", cell=label)
             active_status = read_status(destination_provider.control("status"))
             require_status(
@@ -1812,59 +1930,76 @@ def run_migrated_cell(
                         "utf-8", errors="replace"
                     )
                 )
-            spoof_before = read_status(destination_provider.control("status"))
-            require_status(
-                spoof_before,
-                mode="active",
-                epoch=2,
-                label=f"{label} destination before guest-capability spoof",
-            )
-            spoofed_destination = run_aot(
-                bound_runtime,
-                case,
-                destination,
-                guest_environment(
-                    destination_socket,
-                    session,
-                    owner,
-                    spoofed_client,
-                    source_guest_capability,
-                    2,
-                ),
-                "destination-spoofed-admission",
-                checkpoint=binding_root
-                / "artifacts"
-                / "checkpoint.pb",
-                check=False,
-            )
-            spoof_after = read_status(destination_provider.control("status"))
-            require_status(
-                spoof_after,
-                mode="active",
-                epoch=2,
-                label=f"{label} destination after guest-capability spoof",
-            )
-            if spoof_after != spoof_before:
-                raise MatrixFailure(
-                    "rejected destination admission changed provider semantic state"
+            if execute_fault_registry:
+                spoof_before = read_status(destination_provider.control("status"))
+                require_status(
+                    spoof_before,
+                    mode="active",
+                    epoch=2,
+                    label=f"{label} destination before guest-capability spoof",
                 )
-            faults.append(
-                {
-                    **expect_rejection(
-                        spoofed_destination,
-                        f"{label}-destination-guest-capability-spoof",
-                        detector="guest-capability-admission-before-provider-mutation",
-                        expected_stderr_any=(
-                            "Permission denied",
-                            "Read error",
-                            "Bad file descriptor",
-                        ),
-                        evidence_root=fault_evidence_root,
+                spoofed_destination = run_aot(
+                    bound_runtime,
+                    case,
+                    destination,
+                    guest_environment(
+                        destination_socket,
+                        session,
+                        owner,
+                        spoofed_client,
+                        source_guest_capability,
+                        2,
                     ),
-                    "scope": "end-to-end",
-                    "provider_state_unchanged": True,
-                }
-            )
+                    "destination-spoofed-admission",
+                    checkpoint=binding_root
+                    / "artifacts"
+                    / "checkpoint.pb",
+                    check=False,
+                )
+                spoof_after = read_status(destination_provider.control("status"))
+                require_status(
+                    spoof_after,
+                    mode="active",
+                    epoch=2,
+                    label=f"{label} destination after guest-capability spoof",
+                )
+                if spoof_after != spoof_before:
+                    raise MatrixFailure(
+                        "rejected destination admission changed provider semantic state"
+                    )
+                faults.append(
+                    {
+                        **expect_rejection(
+                            spoofed_destination,
+                            f"{label}-destination-guest-capability-spoof",
+                            detector="guest-capability-admission-before-provider-mutation",
+                            expected_stderr_any=(
+                                "Permission denied",
+                                "Read error",
+                                "Bad file descriptor",
+                            ),
+                            evidence_root=fault_evidence_root,
+                        ),
+                        "scope": "end-to-end",
+                        "provider_state_unchanged": True,
+                    }
+                )
+            first_completion_observer: FirstCompletionObserver | None = None
+            if collect_baseline:
+                baseline_completed = active_status.get("completed_requests")
+                if not isinstance(baseline_completed, int) or isinstance(
+                    baseline_completed, bool
+                ):
+                    raise MatrixFailure(
+                        "destination completion counter is malformed"
+                    )
+                cost_event("zstd.cut.destination_resume_start", cell=label)
+                first_completion_observer = FirstCompletionObserver(
+                    destination_provider,
+                    cell=label,
+                    baseline=baseline_completed,
+                )
+                first_completion_observer.start()
             destination_start_ns = time.monotonic_ns()
             destination_completed = run_aot(
                 bound_runtime,
@@ -1885,6 +2020,11 @@ def run_migrated_cell(
                 check=True,
             )
             destination_end_ns = time.monotonic_ns()
+            first_completion_ns: int | None = None
+            if first_completion_observer is not None:
+                first_completion_ns = first_completion_observer.finish(
+                    completion_upper_bound_ns=destination_end_ns
+                )
             cost_event("zstd.cut.destination_complete", cell=label)
             if destination_completed.returncode != 0:
                 raise MatrixFailure("restored destination did not exit cleanly")
@@ -1946,6 +2086,20 @@ def run_migrated_cell(
                     f"{label} compressed bytes differ from uninterrupted control"
                 )
             if collect_baseline:
+                held_ns = checkpoint_observation.get(
+                    "_baseline_barrier_held_monotonic_ns"
+                )
+                release_ns = checkpoint_observation.get(
+                    "_baseline_checkpoint_release_completed_monotonic_ns"
+                )
+                if (
+                    not isinstance(held_ns, int)
+                    or not isinstance(release_ns, int)
+                    or not held_ns < release_ns < source_end_ns
+                ):
+                    raise MatrixFailure(
+                        "clean baseline omitted checkpoint lifecycle markers"
+                    )
                 capsule_bytes = sum(
                     path.stat().st_size
                     for path in (binding_root / "capsule").rglob("*")
@@ -1953,6 +2107,34 @@ def run_migrated_cell(
                 )
                 destination_stdout = (destination / "destination.stdout").read_bytes()
                 destination_stderr = (destination / "destination.stderr").read_bytes()
+                if first_completion_ns is None:
+                    raise MatrixFailure(
+                        "clean baseline omitted first provider completion"
+                    )
+                continuation_phases: list[dict[str, object]] = []
+                if destination_start_ns < first_completion_ns < destination_end_ns:
+                    continuation_phases.extend(
+                        [
+                            {
+                                "role": "resume-to-first-provider-completion",
+                                **interval(destination_start_ns, first_completion_ns),
+                                "exit_status": 0,
+                            },
+                            {
+                                "role": "destination-to-completion",
+                                **interval(first_completion_ns, destination_end_ns),
+                                "exit_status": destination_completed.returncode,
+                            },
+                        ]
+                    )
+                else:
+                    continuation_phases.append(
+                        {
+                            "role": "resume-to-completion-first-provider-upper-bound",
+                            **interval(destination_start_ns, destination_end_ns),
+                            "exit_status": destination_completed.returncode,
+                        }
+                    )
                 baseline_arms["visa-plus-wanco"] = {
                     "expectation": "observable-equivalence",
                     "outcome": "equivalent",
@@ -1968,15 +2150,21 @@ def run_migrated_cell(
                         "interval_kind": "source-freeze-to-external-oracle",
                         "phases": [
                             {
-                                "role": "freeze-prepare-fence-activate",
-                                **interval(freeze_start_ns, activation_end_ns),
+                                "role": "source-freeze",
+                                **interval(freeze_start_ns, freeze_end_ns),
                                 "exit_status": 0,
                             },
                             {
-                                "role": "destination-continuation",
-                                **interval(destination_start_ns, destination_end_ns),
-                                "exit_status": destination_completed.returncode,
+                                "role": "resource-export-and-destination-restore",
+                                **interval(freeze_end_ns, destination_prepared_ns),
+                                "exit_status": 0,
                             },
+                            {
+                                "role": "authority-fence-activate-and-pre-exec-verify",
+                                **interval(destination_prepared_ns, destination_start_ns),
+                                "exit_status": 0,
+                            },
+                            *continuation_phases,
                             {
                                 "role": "external-oracle",
                                 **interval(destination_end_ns, oracle_end_ns),
@@ -1998,15 +2186,22 @@ def run_migrated_cell(
                         ).hexdigest(),
                     },
                     "detector": None,
+                    "reason": None,
+                    "workload_metrics": zstd_workload_metrics(
+                        oracle,
+                        application_elapsed_ns=(source_end_ns - source_start_ns)
+                        + (destination_end_ns - destination_start_ns),
+                        source_quiesce_ns=release_ns - held_ns,
+                        compute_checkpoint_ns=source_end_ns - release_ns,
+                    ),
                 }
 
     cut = {
         key: value
         for key, value in checkpoint_observation.items()
-        if key not in {
-            "application_start_monotonic_ns",
-            "application_end_monotonic_ns",
-        }
+        if key
+        not in {"application_start_monotonic_ns", "application_end_monotonic_ns"}
+        and not key.startswith("_baseline_")
     }
     cell = {
         "cell": f"{label}-visa-plus-carrier",
@@ -2700,13 +2895,40 @@ def main() -> int:
                 ],
                 runtime_sha256,
                 control,
-                collect_baseline=arguments.baseline_output is not None,
+                collect_baseline=False,
             )
             migrated_cells.append(cell)
             migrated_raw.append(raw)
             fault_cells.extend(faults)
-            if arguments.baseline_output is not None:
-                baseline_arms = raw.get("_baseline_arms")
+            if (
+                arguments.baseline_output is not None
+                and write_occurrence == 64
+            ):
+                clean_root = work / "baseline-clean"
+                clean_root.mkdir(mode=0o700, exist_ok=True)
+                _, clean_faults, clean_raw = run_migrated_cell(
+                    clean_root,
+                    index,
+                    write_occurrence,
+                    host_binary,
+                    bind_binary,
+                    runtime,
+                    input_path,
+                    zstd,
+                    build_receipt,
+                    execution_input_binding[
+                        "stock_zstd_source_lock_sha256"
+                    ],
+                    runtime_sha256,
+                    control,
+                    collect_baseline=True,
+                    execute_fault_registry=False,
+                )
+                if clean_faults:
+                    raise MatrixFailure(
+                        "clean application baseline unexpectedly executed fault cells"
+                    )
+                baseline_arms = clean_raw.get("_baseline_arms")
                 if not isinstance(baseline_arms, dict):
                     raise MatrixFailure("baseline output requested but runner omitted arms")
                 for arm, observation in baseline_arms.items():
@@ -2848,6 +3070,17 @@ def main() -> int:
             "raw_fault_artifacts_retained": True,
         }
         if arguments.baseline_output is not None:
+            control_timing_document = json.loads(
+                control_raw["application_timing"].read_bytes()
+            )
+            control_phases = control_timing_document.get("phases")
+            if not isinstance(control_phases, list) or not control_phases:
+                raise MatrixFailure("control baseline timing phases are absent")
+            control_application_elapsed_ns = sum(
+                int(phase["duration_ns"])
+                for phase in control_phases
+                if isinstance(phase, dict)
+            )
             baseline_path = arguments.baseline_output.resolve()
             if baseline_path.exists():
                 raise MatrixFailure(f"refusing to replace baseline sidecar: {baseline_path}")
@@ -2870,6 +3103,10 @@ def main() -> int:
                     "oracle": {"kind": "native-zstd-and-byte-identity", "accepted": True, "observation_sha256": hashlib.sha256(canonical_bytes(control["oracle"])).hexdigest()},
                     "detector": None,
                     "reason": None,
+                    "workload_metrics": zstd_workload_metrics(
+                        control["oracle"],
+                        application_elapsed_ns=control_application_elapsed_ns,
+                    ),
                 },
                 "observations": baseline_observations,
                 "scope": {

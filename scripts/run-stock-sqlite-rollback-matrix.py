@@ -67,15 +67,16 @@ CONTROL_SCHEMA = CONTRACT.CONTROL_SCHEMA
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 
 
-def cost_event(label: str, **fields: object) -> None:
+def cost_event(label: str, **fields: object) -> int | None:
     """Optionally emit lifecycle events for the application-cost harness."""
     target = os.environ.get("VISA_APPLICATION_COST_EVENTS")
     if not target:
-        return
+        return None
+    observed_ns = time.monotonic_ns()
     event = {
         "schema": APPLICATION_COST_EVENT_SCHEMA,
         "label": label,
-        "monotonic_ns": time.monotonic_ns(),
+        "monotonic_ns": observed_ns,
         **fields,
     }
     path = Path(target)
@@ -83,6 +84,90 @@ def cost_event(label: str, **fields: object) -> None:
     with path.open("ab") as stream:
         stream.write(canonical_bytes(event) + b"\n")
         stream.flush()
+    return observed_ns
+
+
+class FirstObservableCompletionObserver:
+    """Observe the first provider response or a response-free process completion."""
+
+    def __init__(self, provider: "Provider", *, cell: str, baseline: int) -> None:
+        self.provider = provider
+        self.cell = cell
+        self.baseline = baseline
+        self.stop_event = threading.Event()
+        self.observed_ns: int | None = None
+        self.observed_completed_requests: int | None = None
+        self.failure: BaseException | None = None
+        self.thread = threading.Thread(
+            target=self._run,
+            name=f"sqlite-first-completion-{cell}",
+            daemon=True,
+        )
+
+    def _run(self) -> None:
+        try:
+            while not self.stop_event.is_set():
+                status = CONTRACT.status_projection(self.provider.status())
+                completed = status["completed_requests"]
+                if not isinstance(completed, int) or isinstance(completed, bool):
+                    raise MatrixFailure("provider completion counter is malformed")
+                if completed > self.baseline:
+                    self.observed_completed_requests = completed
+                    self.observed_ns = cost_event(
+                        "sqlite.cut.destination_first_observable_completion",
+                        cell=self.cell,
+                        completed_requests=completed,
+                        observation="provider-status-poll",
+                    )
+                    return
+                self.stop_event.wait(0.001)
+        except BaseException as error:
+            self.failure = error
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def finish(self) -> int:
+        self.stop_event.set()
+        self.thread.join(timeout=5)
+        if self.thread.is_alive():
+            raise MatrixFailure("first-completion observer did not stop")
+        if self.failure is not None:
+            raise MatrixFailure(
+                f"first-completion observer failed: {self.failure}"
+            ) from self.failure
+        if self.observed_ns is None:
+            status = CONTRACT.status_projection(self.provider.status())
+            completed = status["completed_requests"]
+            if not isinstance(completed, int) or isinstance(completed, bool):
+                raise MatrixFailure("provider completion counter is malformed")
+            self.observed_completed_requests = completed
+            observed_ns = cost_event(
+                "sqlite.cut.destination_first_observable_completion",
+                cell=self.cell,
+                completed_requests=completed,
+                observation=(
+                    "post-completion-upper-bound"
+                    if completed > self.baseline
+                    else "post-completion-upper-bound-no-provider-response"
+                ),
+            )
+            if observed_ns is None:
+                raise MatrixFailure("application cost event stream disappeared")
+            self.observed_ns = observed_ns
+        return self.observed_ns
+
+
+def start_first_completion_observer(
+    provider: "Provider", *, cell: str, baseline: int
+) -> FirstObservableCompletionObserver | None:
+    if not os.environ.get("VISA_APPLICATION_COST_EVENTS"):
+        return None
+    observer = FirstObservableCompletionObserver(
+        provider, cell=cell, baseline=baseline
+    )
+    observer.start()
+    return observer
 
 
 MatrixFailure = CONTRACT.MatrixFailure
@@ -1748,7 +1833,7 @@ def checkpoint_regular_cut(
     predicate: Mapping[str, object],
     script_path: str,
 ) -> tuple[dict[str, object], AotProcess, Path]:
-    cost_event("sqlite.cut.checkpoint_start", cell=source.name)
+    cost_event("sqlite.cut.checkpoint_start", cell=source.parent.name)
     holder: dict[str, AotProcess] = {}
 
     def start_segment() -> None:
@@ -1782,7 +1867,7 @@ def checkpoint_regular_cut(
             holder["process"].kill()
         raise
     checkpoint = source / "checkpoint.pb"
-    cost_event("sqlite.cut.checkpoint_complete", cell=source.name)
+    cost_event("sqlite.cut.checkpoint_complete", cell=source.parent.name)
     return capture, holder["process"], checkpoint
 
 
@@ -1799,7 +1884,7 @@ def checkpoint_lost_response_cut(
     source_client: str,
     proxy_socket: Path,
 ) -> tuple[dict[str, object], dict[str, object], AotProcess, Path]:
-    cost_event("sqlite.cut.lost_response_start", cell=source.name)
+    cost_event("sqlite.cut.lost_response_start", cell=source.parent.name)
     holder: dict[str, AotProcess] = {}
     with LostResponseRelay(proxy_socket, provider.socket_path, provider) as relay:
 
@@ -1842,7 +1927,7 @@ def checkpoint_lost_response_cut(
             if replay_held["effects"] != effects_before:
                 raise MatrixFailure("lost response retry duplicated the durable effect")
             checkpoint_released = controller.release_checkpoint(token, replay_held)
-            cost_event("sqlite.cut.checkpoint_complete", cell=source.name)
+            cost_event("sqlite.cut.checkpoint_complete", cell=source.parent.name)
             process = holder["process"]
             process.wait(expect_checkpoint=True)
             replay_binding = request_binding_completed(source_database, effect)
@@ -2452,6 +2537,7 @@ def run_uninterrupted_control(
         cwd=execution,
     )
     with Provider(host_binary, database, socket_path, admin, execution) as provider:
+        cost_event("sqlite.control.start", cell="uninterrupted-control")
         seed_source(
             runtime,
             case_root=case,
@@ -2495,6 +2581,9 @@ def run_uninterrupted_control(
             label="uninterrupted-cursor",
             script_path=CURSOR_GUEST_PATH,
         )
+        cost_event(
+            "sqlite.control.application_complete", cell="uninterrupted-control"
+        )
         observation, txids = strict_stdout_observation(
             transcript=case / "raw-client.stdout",
             components=[transaction.stdout_path, cursor.stdout_path],
@@ -2529,6 +2618,7 @@ def run_uninterrupted_control(
             expected_acks=expected_path,
             cwd=execution,
         )
+        cost_event("sqlite.control.oracle_complete", cell="uninterrupted-control")
         oracle_report_path = external_oracle.pop("_report_path")
         timing_path = case / "application-timing.json"
         write_application_timing(
@@ -2794,24 +2884,39 @@ def run_matrix_cell(
                 binding_root / "artifacts" / "application.aot",
                 socket_root=runtime.socket_root,
             )
-            destination_process, continuation_witness = run_destination_continuation(
-                bound_runtime,
-                case_root=case,
-                destination=destination,
-                provider=destination_provider,
-                environment=guest_environment(
-                    destination_socket,
-                    session=session,
-                    owner=owner,
-                    client=destination_client,
-                    guest_capability=destination_guest,
-                    epoch=2,
-                ),
-                checkpoint=binding_root / "artifacts" / "checkpoint.pb",
-                script_path=script_path,
-                continuation=plan_entry.get("continuation_witness"),
-                cell_id=cell_id,
+            baseline_completed = destination_active["completed_requests"]
+            if not isinstance(baseline_completed, int) or isinstance(
+                baseline_completed, bool
+            ):
+                raise MatrixFailure("destination completion counter is malformed")
+            cost_event("sqlite.cut.destination_resume_start", cell=cell_id)
+            first_completion = start_first_completion_observer(
+                destination_provider,
+                cell=cell_id,
+                baseline=baseline_completed,
             )
+            try:
+                destination_process, continuation_witness = run_destination_continuation(
+                    bound_runtime,
+                    case_root=case,
+                    destination=destination,
+                    provider=destination_provider,
+                    environment=guest_environment(
+                        destination_socket,
+                        session=session,
+                        owner=owner,
+                        client=destination_client,
+                        guest_capability=destination_guest,
+                        epoch=2,
+                    ),
+                    checkpoint=binding_root / "artifacts" / "checkpoint.pb",
+                    script_path=script_path,
+                    continuation=plan_entry.get("continuation_witness"),
+                    cell_id=cell_id,
+                )
+            finally:
+                if first_completion is not None:
+                    first_completion.finish()
             cost_event("sqlite.cut.destination_complete", cell=cell_id)
             application_runs: list[tuple[str, Path, Path, int]] = [
                 completed_application_run("source", source_process),

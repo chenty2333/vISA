@@ -52,6 +52,30 @@ def timing(status: int = 0) -> dict[str, object]:
 
 def sample(workload: str, fixture: int, cut: str | None, arm: str) -> dict[str, object]:
     if arm in CONTRACT.POSITIVE_ARMS:
+        workload_metrics: dict[str, object]
+        if workload == "zstd":
+            workload_metrics = {
+                "kind": "zstd",
+                "input_sha256": "1" * 64,
+                "compressed_sha256": "2" * 64,
+                "native_decompression_accepted": True,
+                "application_elapsed_ns": 1,
+                "throughput_bytes_per_second": 1,
+                "source_quiesce_ns": 0,
+                "compute_checkpoint_ns": 0,
+            }
+        else:
+            workload_metrics = {
+                "kind": "sqlite",
+                "ack_count": 1,
+                "integrity_ok": True,
+                "foreign_keys_ok": True,
+                "account_rows": 1,
+                "transaction_rows": 1,
+                "accounts_sha256": "3" * 64,
+                "transactions_sha256": "4" * 64,
+                "unique_txids": True,
+            }
         return {
             "workload": workload,
             "fixture": fixture,
@@ -70,6 +94,7 @@ def sample(workload: str, fixture: int, cut: str | None, arm: str) -> dict[str, 
             },
             "oracle": {"kind": "test", "accepted": True, "observation_sha256": "0" * 64},
             "detector": None,
+            "workload_metrics": workload_metrics,
         }
     return RUNNER.negative_sample(
         workload=workload,
@@ -151,6 +176,17 @@ class StockApplicationBaselineTests(unittest.TestCase):
         value = receipt()
         candidate = next(item for item in value["samples"] if item["arm"] == "naive-raw-resource-reopen")
         candidate["throughput_eligible"] = True
+        with self.assertRaises(CONTRACT.BaselineError):
+            CONTRACT.validate_receipt(value)
+
+    def test_positive_arm_requires_workload_metrics(self) -> None:
+        value = receipt()
+        candidate = next(
+            item
+            for item in value["samples"]
+            if item["workload"] == "sqlite" and item["arm"] == "visa-plus-wanco"
+        )
+        candidate.pop("workload_metrics")
         with self.assertRaises(CONTRACT.BaselineError):
             CONTRACT.validate_receipt(value)
 
