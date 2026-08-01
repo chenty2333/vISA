@@ -53,6 +53,10 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stock-zstd", type=Path, default=Path("/usr/bin/zstd"))
+    parser.add_argument("--zstd-artifact-root", type=Path, required=True)
+    parser.add_argument("--sqlite-artifact-root", type=Path, required=True)
+    parser.add_argument("--sqlite-typed-corpus", type=Path, required=True)
+    parser.add_argument("--wanco-build-receipt", type=Path, required=True)
     args = parser.parse_args()
     if args.runs < 1 or args.runs > 20:
         raise SystemExit("--runs must be between 1 and 20")
@@ -75,14 +79,14 @@ def main() -> int:
                 arm_root = temporary_root / f"{workload}-{index}-artifact"
                 if workload == "zstd":
                     extra += [
-                        "--artifact-root", str(ROOT / "target/.ci-artifacts/stock-zstd-build"),
+                        "--artifact-root", str((ROOT / args.zstd_artifact_root).resolve()),
                         "--output", str(arm_root / "summary.json"),
                     ]
                 else:
                     extra += [
-                        "--artifact-root", str(ROOT / "target/.ci-artifacts/stock-sqlite-build"),
-                        "--typed-corpus-receipt", str(ROOT / "../vISA-paper/artifact-data/apps-09824c55/stock-sqlite/wanco-typed-corpus/receipt.json"),
-                        "--wanco-build-receipt", str(ROOT / "target/.ci-cache/wanco-carrier/build-receipt.json"),
+                        "--artifact-root", str((ROOT / args.sqlite_artifact_root).resolve()),
+                        "--typed-corpus-receipt", str((ROOT / args.sqlite_typed_corpus).resolve()),
+                        "--wanco-build-receipt", str((ROOT / args.wanco_build_receipt).resolve()),
                         "--output", str(arm_root / "receipt.json"),
                         "--work-root", str(arm_root / "work"),
                     ]
