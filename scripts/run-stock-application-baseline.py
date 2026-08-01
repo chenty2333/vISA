@@ -203,6 +203,7 @@ def run_zstd_fixture(
         "--baseline-output",
         str(baseline_output),
         "--cut-write-occurrence",
+        "8",
         "64",
         "--skip-build",
     ]
@@ -233,6 +234,13 @@ def run_zstd_fixture(
         raise RuntimeError("zstd sidecar omitted fresh-process restart")
     restart = dict(restart_raw)
     observation = {"control": control, "restart": restart, "observations": sidecar["observations"]}
+    selected = [
+        item
+        for item in sidecar["observations"]
+        if item.get("cut") == "write-occurrence-64"
+        or item.get("arm") == "fresh-process-restart"
+    ]
+    observation["observations"] = selected
     samples = zstd_sample_from_observation(observation, fixture=fixture, root=output_root)
     return samples, {
         "runner": {"sha256": sha256_bytes(ZSTD_RUNNER.read_bytes()), "size": ZSTD_RUNNER.stat().st_size},
