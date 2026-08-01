@@ -24,6 +24,26 @@ SPEC.loader.exec_module(MATRIX)
 
 
 class RunnerTests(unittest.TestCase):
+    def test_first_completion_observer_can_be_cancelled_after_destination_failure(
+        self,
+    ) -> None:
+        class ProviderFixture:
+            @staticmethod
+            def control(_: str) -> subprocess.CompletedProcess[bytes]:
+                return subprocess.CompletedProcess(
+                    ["provider", "status"],
+                    0,
+                    stdout=b'{"ok":true,"status":{"completed_requests":7}}',
+                    stderr=b"",
+                )
+
+        observer = MATRIX.FirstCompletionObserver(
+            ProviderFixture(), cell="fixture", baseline=7
+        )
+        observer.start()
+        observer.cancel()
+        self.assertFalse(observer.thread.is_alive())
+
     def test_native_oracle_accepts_package_owned_zstd_1_5_5(self) -> None:
         with tempfile.TemporaryDirectory(prefix="stock-zstd-oracle-test-") as raw:
             root = Path(raw)

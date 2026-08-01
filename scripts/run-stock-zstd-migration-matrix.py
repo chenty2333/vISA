@@ -115,11 +115,15 @@ class FirstCompletionObserver:
     def start(self) -> None:
         self.thread.start()
 
-    def finish(self, *, completion_upper_bound_ns: int) -> int:
+    def cancel(self) -> None:
+        """Stop observation when destination execution exits exceptionally."""
         self.stop_event.set()
         self.thread.join(timeout=5)
         if self.thread.is_alive():
             raise MatrixFailure("first-completion observer did not stop")
+
+    def finish(self, *, completion_upper_bound_ns: int) -> int:
+        self.cancel()
         if self.failure is not None:
             raise MatrixFailure(
                 f"first-completion observer failed: {self.failure}"
@@ -2001,24 +2005,29 @@ def run_migrated_cell(
                 )
                 first_completion_observer.start()
             destination_start_ns = time.monotonic_ns()
-            destination_completed = run_aot(
-                bound_runtime,
-                case,
-                destination,
-                guest_environment(
-                    destination_socket,
-                    session,
-                    owner,
-                    destination_client,
-                    destination_guest_capability,
-                    2,
-                ),
-                "destination",
-                checkpoint=binding_root
-                / "artifacts"
-                / "checkpoint.pb",
-                check=True,
-            )
+            try:
+                destination_completed = run_aot(
+                    bound_runtime,
+                    case,
+                    destination,
+                    guest_environment(
+                        destination_socket,
+                        session,
+                        owner,
+                        destination_client,
+                        destination_guest_capability,
+                        2,
+                    ),
+                    "destination",
+                    checkpoint=binding_root
+                    / "artifacts"
+                    / "checkpoint.pb",
+                    check=True,
+                )
+            except BaseException:
+                if first_completion_observer is not None:
+                    first_completion_observer.cancel()
+                raise
             destination_end_ns = time.monotonic_ns()
             first_completion_ns: int | None = None
             if first_completion_observer is not None:
