@@ -1591,10 +1591,18 @@ def run_migrated_cell(
                     f"{label} compressed bytes differ from uninterrupted control"
                 )
 
+    cut = {
+        key: value
+        for key, value in checkpoint_observation.items()
+        if key not in {
+            "application_start_monotonic_ns",
+            "application_end_monotonic_ns",
+        }
+    }
     cell = {
         "cell": f"{label}-visa-plus-carrier",
         "topology": "fresh-provider-fresh-process",
-        "cut": checkpoint_observation,
+        "cut": cut,
         "source_post_checkpoint_status": source_post_checkpoint_status,
         "source_frozen_status": source_frozen_status,
         "manifest_sha256": manifest_sha256,
