@@ -60,7 +60,7 @@ def sample(workload: str, fixture: int, cut: str | None, arm: str) -> dict[str, 
                 "compressed_sha256": "2" * 64,
                 "native_decompression_accepted": True,
                 "application_elapsed_ns": 1,
-                "throughput_bytes_per_second": 1,
+                "throughput_bytes_per_second": 1_000_000_000,
                 "source_quiesce_ns": 0,
                 "compute_checkpoint_ns": 0,
             }
@@ -187,6 +187,19 @@ class StockApplicationBaselineTests(unittest.TestCase):
             if item["workload"] == "sqlite" and item["arm"] == "visa-plus-wanco"
         )
         candidate.pop("workload_metrics")
+        with self.assertRaises(CONTRACT.BaselineError):
+            CONTRACT.validate_receipt(value)
+
+    def test_zstd_control_rejects_placeholder_timing(self) -> None:
+        value = receipt()
+        candidate = next(
+            item
+            for item in value["samples"]
+            if item["workload"] == "zstd"
+            and item["arm"] == "uninterrupted-control"
+        )
+        candidate["workload_metrics"]["application_elapsed_ns"] = 2
+        candidate["workload_metrics"]["throughput_bytes_per_second"] = 500_000_000
         with self.assertRaises(CONTRACT.BaselineError):
             CONTRACT.validate_receipt(value)
 

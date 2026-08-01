@@ -3079,16 +3079,14 @@ def main() -> int:
             "raw_fault_artifacts_retained": True,
         }
         if arguments.baseline_output is not None:
-            control_timing_document = json.loads(
-                control_raw["application_timing"].read_bytes()
-            )
-            control_phases = control_timing_document.get("phases")
-            if not isinstance(control_phases, list) or not control_phases:
-                raise MatrixFailure("control baseline timing phases are absent")
-            control_application_elapsed_ns = sum(
-                int(phase["duration_ns"])
-                for phase in control_phases
-                if isinstance(phase, dict)
+            control_baseline = positive_process_baseline(
+                raw=control_raw,
+                oracle_observation=control["oracle"],
+                input_bytes=input_path.stat().st_size,
+                output_bytes=int(control["oracle"]["compressed"]["size"]),
+                checkpoint_bytes=0,
+                resource_state_bytes=0,
+                interval_kind="uninterrupted-control",
             )
             baseline_path = arguments.baseline_output.resolve()
             if baseline_path.exists():
@@ -3103,19 +3101,7 @@ def main() -> int:
                     "fixture": 1,
                     "cut": None,
                     "arm": "uninterrupted-control",
-                    "expectation": "observable-equivalence",
-                    "outcome": "equivalent",
-                    "throughput_eligible": True,
-                    "process": {"exit_status": 0, "stdout": {"sha256": hashlib.sha256(b"").hexdigest(), "size": 0}, "stderr": {"sha256": hashlib.sha256(b"").hexdigest(), "size": 0}},
-                    "timing": {"clock": "python-time.monotonic_ns", "interval": {"start_monotonic_ns": 1, "end_monotonic_ns": 2, "duration_ns": 1}, "interval_kind": "uninterrupted-control", "phases": [{"role": "control", "start_monotonic_ns": 1, "end_monotonic_ns": 2, "duration_ns": 1, "exit_status": 0}]},
-                    "sizes": {"input_bytes": input_path.stat().st_size, "output_bytes": int(control["oracle"]["compressed"]["size"]), "checkpoint_bytes": 0, "resource_state_bytes": 0},
-                    "oracle": {"kind": "native-zstd-and-byte-identity", "accepted": True, "observation_sha256": hashlib.sha256(canonical_bytes(control["oracle"])).hexdigest()},
-                    "detector": None,
-                    "reason": None,
-                    "workload_metrics": zstd_workload_metrics(
-                        control["oracle"],
-                        application_elapsed_ns=control_application_elapsed_ns,
-                    ),
+                    **control_baseline,
                 },
                 "observations": baseline_observations,
                 "scope": {

@@ -272,6 +272,22 @@ def require_sample(value: object, index: int) -> tuple[str, int, str | None, str
         require_workload_metrics(
             sample["workload_metrics"], str(workload), f"samples[{index}].workload_metrics"
         )
+        if workload == "zstd":
+            metrics = sample["workload_metrics"]
+            input_bytes = sample["sizes"]["input_bytes"]
+            elapsed_ns = metrics["application_elapsed_ns"]
+            if metrics["throughput_bytes_per_second"] != (
+                input_bytes * 1_000_000_000 // elapsed_ns
+            ):
+                fail(f"samples[{index}] zstd throughput is not derived from elapsed time")
+            if arm in {"uninterrupted-control", "fresh-process-restart"}:
+                phase_elapsed_ns = sum(
+                    phase["duration_ns"] for phase in sample["timing"]["phases"]
+                )
+                if elapsed_ns != phase_elapsed_ns:
+                    fail(
+                        f"samples[{index}] zstd application timing and workload metrics differ"
+                    )
     elif sample["expectation"] == "unsupported":
         if (
             arm not in NEGATIVE_ARMS
