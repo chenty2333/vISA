@@ -31,6 +31,15 @@ def canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
+def logical_path(path: Path) -> str:
+    """Keep receipts portable while retaining enough context to resolve inputs."""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(Path("external") / resolved.name)
+
+
 def run(command: list[str], *, cwd: Path, env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -140,25 +149,25 @@ def main() -> int:
         "workload_counts": {key: len(value) for key, value in by_workload.items()},
         "inputs": {
             "zstd_build_receipt": {
-                "path": str((ROOT / args.zstd_artifact_root / "receipt.json").resolve()),
+                "path": logical_path(Path(args.zstd_artifact_root) / "receipt.json"),
                 "sha256": hashlib.sha256(
                     ((ROOT / args.zstd_artifact_root / "receipt.json").resolve()).read_bytes()
                 ).hexdigest(),
             },
             "sqlite_build_receipt": {
-                "path": str((ROOT / args.sqlite_artifact_root / "receipt.json").resolve()),
+                "path": logical_path(Path(args.sqlite_artifact_root) / "receipt.json"),
                 "sha256": hashlib.sha256(
                     ((ROOT / args.sqlite_artifact_root / "receipt.json").resolve()).read_bytes()
                 ).hexdigest(),
             },
             "typed_corpus_receipt": {
-                "path": str((ROOT / args.sqlite_typed_corpus).resolve()),
+                "path": logical_path(Path(args.sqlite_typed_corpus)),
                 "sha256": hashlib.sha256(
                     ((ROOT / args.sqlite_typed_corpus).resolve()).read_bytes()
                 ).hexdigest(),
             },
             "wanco_build_receipt": {
-                "path": str((ROOT / args.wanco_build_receipt).resolve()),
+                "path": logical_path(Path(args.wanco_build_receipt)),
                 "sha256": hashlib.sha256(
                     ((ROOT / args.wanco_build_receipt).resolve()).read_bytes()
                 ).hexdigest(),
