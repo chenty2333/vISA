@@ -77,6 +77,7 @@ def main() -> int:
                 # Each matrix runner refuses to overwrite a formal receipt. Use
                 # an isolated private output root for every timing arm.
                 arm_root = temporary_root / f"{workload}-{index}-artifact"
+                arm_root.mkdir(mode=0o700, parents=True, exist_ok=True)
                 if workload == "zstd":
                     extra += [
                         "--artifact-root", str((ROOT / args.zstd_artifact_root).resolve()),
