@@ -50,6 +50,29 @@ ZSTD_CLI_VERSION_RE = re.compile(
 )
 
 
+def cost_event(label: str, **fields: object) -> None:
+    """Optionally emit lifecycle events for the application-cost harness.
+
+    The normal evidence lane is unchanged.  A caller that sets
+    ``VISA_APPLICATION_COST_EVENTS`` receives an append-only, monotonic event
+    stream from the real runner, allowing end-to-end phase intervals to be
+    measured without treating runner summaries as semantic evidence.
+    """
+    target = os.environ.get("VISA_APPLICATION_COST_EVENTS")
+    if not target:
+        return
+    event = {
+        "label": label,
+        "monotonic_ns": time.monotonic_ns(),
+        **fields,
+    }
+    path = Path(target)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with path.open("ab") as stream:
+        stream.write(canonical_bytes(event) + b"\n")
+        stream.flush()
+
+
 class MatrixFailure(RuntimeError):
     """A matrix invariant failed."""
 
@@ -573,6 +596,11 @@ def checkpoint_source(
         "outcome": "success",
         "occurrence": write_occurrence,
     }
+    cost_event(
+        "zstd.cut.predicate_armed",
+        cell=source_directory.parent.name,
+        occurrence=write_occurrence,
+    )
     provider.control(
         "barrier-arm",
         barrier_token,
@@ -621,6 +649,11 @@ def checkpoint_source(
                 phase = current.get("barrier")
                 if phase == "held":
                     held_status = current
+                    cost_event(
+                        "zstd.cut.barrier_held",
+                        cell=source_directory.parent.name,
+                        occurrence=write_occurrence,
+                    )
                     break
                 if phase not in ("armed", "triggered"):
                     raise MatrixFailure(
@@ -636,6 +669,11 @@ def checkpoint_source(
                 raise MatrixFailure("held zstd barrier has no durable target effect")
             released_status = read_status(
                 provider.control("barrier-release", barrier_token, "checkpoint")
+            )
+            cost_event(
+                "zstd.cut.checkpoint_release",
+                cell=source_directory.parent.name,
+                occurrence=write_occurrence,
             )
             if (
                 released_status.get("barrier") != "checkpoint_released"
@@ -666,6 +704,11 @@ def checkpoint_source(
     checkpoint = source_directory / "checkpoint.pb"
     if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
         raise MatrixFailure("Wanco did not publish a non-empty checkpoint.pb")
+    cost_event(
+        "zstd.cut.checkpoint_complete",
+        cell=source_directory.parent.name,
+        occurrence=write_occurrence,
+    )
     return checkpoint, {
         "cut_location_source": "prearmed-post-hostcall-predicate",
         "byte_counter_trigger_used": False,
@@ -819,6 +862,7 @@ def run_control(
     with Provider(
         host_binary, database, socket, admin_capability, case
     ) as provider:
+        cost_event("zstd.control.start", cell="control")
         application_start_ns = time.monotonic_ns()
         completed = run_aot(
             runtime,
@@ -831,6 +875,7 @@ def run_control(
             check=True,
         )
         application_end_ns = time.monotonic_ns()
+        cost_event("zstd.control.complete", cell="control")
         timing_path = case / "application-timing.json"
         write_application_timing(
             timing_path,
@@ -1064,6 +1109,7 @@ def run_migrated_cell(
         source_admin_capability,
         source,
     ) as source_provider:
+        cost_event("zstd.cut.start", cell=label, occurrence=write_occurrence)
         checkpoint, checkpoint_observation = checkpoint_source(
             runtime,
             case,
@@ -1188,6 +1234,7 @@ def run_migrated_cell(
         )
 
         source_provider.control("freeze", checkpoint_barrier, handoff, "2")
+        cost_event("zstd.cut.source_frozen", cell=label)
         source_frozen_status = read_status(source_provider.control("status"))
         require_status(
             source_frozen_status,
@@ -1312,6 +1359,7 @@ def run_migrated_cell(
                 "destination provider restore failed: "
                 + restored.stderr.decode("utf-8", errors="replace")
             )
+        cost_event("zstd.cut.destination_prepared", cell=label)
         destination_socket = destination / "provider.sock"
         with Provider(
             host_binary,
@@ -1426,6 +1474,7 @@ def run_migrated_cell(
             )
 
             source_provider.control("fence", handoff, "2")
+            cost_event("zstd.cut.source_fenced", cell=label)
             source_fenced_status = read_status(
                 source_provider.control("status")
             )
@@ -1436,6 +1485,7 @@ def run_migrated_cell(
                 label=f"{label} fenced source",
             )
             destination_provider.control("activate", handoff, "2")
+            cost_event("zstd.cut.destination_activated", cell=label)
             active_status = read_status(destination_provider.control("status"))
             require_status(
                 active_status,
@@ -1533,6 +1583,7 @@ def run_migrated_cell(
                 check=True,
             )
             destination_end_ns = time.monotonic_ns()
+            cost_event("zstd.cut.destination_complete", cell=label)
             if destination_completed.returncode != 0:
                 raise MatrixFailure("restored destination did not exit cleanly")
             source_start_ns = checkpoint_observation.get("application_start_monotonic_ns")
@@ -1570,6 +1621,7 @@ def run_migrated_cell(
                 destination,
                 f"{label}-visa-plus-carrier",
             )
+            cost_event("zstd.cut.oracle_complete", cell=label)
             final_status = read_status(destination_provider.control("status"))
             require_status(
                 final_status,

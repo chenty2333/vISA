@@ -51,7 +51,7 @@ stdout, stderr, and exit status, the reconstructed client transcript,
 expected-acknowledgement inputs, namespace snapshots, native-oracle reports,
 and the complete raw Wanco typed-restore corpus needed for independent replay;
 provider databases, application checkpoints, and compiler scratch remain
-disposable. The v7 validator requires a clean exact repository SHA, securely
+disposable. The v11 validator requires a clean exact repository SHA, securely
 reads every retained reference, validates the closed Wanco
 checkpoint/restore diagnostic grammar, reconstructs and reparses the stock
 application output, and reruns the bound SQLite oracle. This is process-crash

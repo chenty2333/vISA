@@ -577,7 +577,7 @@ restore into an empty provider, compute-checkpoint tamper, provider-capsule
 tamper, commit/fence proof pairing tamper, and destination guest-capability
 spoof.
 
-The v7 formal lane retains the canonical receipt, one deduplicated `.zst` blob
+The v8 formal lane retains the canonical receipt, one deduplicated `.zst` blob
 shared only after all three positive outputs compare byte-identically, the
 positive application stdout/stderr streams and exit statuses, three raw
 native-zstd oracle reports, bounded raw stderr plus a verdict-free process
@@ -637,7 +637,7 @@ readback: the active-cursor cell completes its split source/destination cursor,
 while the other seven use a fresh post-handoff read client. The source-abort
 recovery likewise uses a third fresh client for a complete readback after the
 source compute and provider are resumed. Native oracle report v2 emits a
-domain-separated logical-content projection. Matrix receipt v10 contains
+domain-separated logical-content projection. Matrix receipt v11 contains
 eight `visa-stock-sqlite-rollback-journal-cell-v5` records and one
 `visa-sqlite-source-abort-reconciliation-v3` qualification. It
 retains, for the control and every cut, each role-ordered application segment's

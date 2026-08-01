@@ -127,7 +127,8 @@ baseline the positive composition must improve upon. Wanco's successful
 checkpoint/restore lifecycle is a compute-carrier fact; it is not evidence that
 the nine-action vISA resource-handoff lifecycle occurred. The carrier-only
 observation therefore intentionally contains no successful committed vISA
-lifecycle, while `visa-plus-carrier` records that lifecycle through the
+lifecycle; it is a semantic negative control rather than a performance
+baseline. `visa-plus-carrier` records that lifecycle through the
 canonical source and destination endpoints.
 
 ## Observation and independent verdict

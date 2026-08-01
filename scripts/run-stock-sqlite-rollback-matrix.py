@@ -66,6 +66,19 @@ CONTROL_SCHEMA = CONTRACT.CONTROL_SCHEMA
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 
 
+def cost_event(label: str, **fields: object) -> None:
+    """Optionally emit lifecycle events for the application-cost harness."""
+    target = os.environ.get("VISA_APPLICATION_COST_EVENTS")
+    if not target:
+        return
+    event = {"label": label, "monotonic_ns": time.monotonic_ns(), **fields}
+    path = Path(target)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with path.open("ab") as stream:
+        stream.write(canonical_bytes(event) + b"\n")
+        stream.flush()
+
+
 MatrixFailure = CONTRACT.MatrixFailure
 
 
@@ -1702,6 +1715,7 @@ def seed_source(
     cwd: Path,
     environment: Mapping[str, str],
 ) -> AotProcess:
+    cost_event("sqlite.seed.start")
     process = run_script(
         runtime,
         case_root=case_root,
@@ -1713,6 +1727,7 @@ def seed_source(
     lines = process.stdout_path.read_text(encoding="utf-8").splitlines()
     if lines.count("VISA_SEED|accounts=512|balance=512000") != 1:
         raise MatrixFailure("source-locked seed workload did not establish its exact baseline")
+    cost_event("sqlite.seed.complete")
     return process
 
 
@@ -1727,6 +1742,7 @@ def checkpoint_regular_cut(
     predicate: Mapping[str, object],
     script_path: str,
 ) -> tuple[dict[str, object], AotProcess, Path]:
+    cost_event("sqlite.cut.checkpoint_start", cell=source.name)
     holder: dict[str, AotProcess] = {}
 
     def start_segment() -> None:
@@ -1760,6 +1776,7 @@ def checkpoint_regular_cut(
             holder["process"].kill()
         raise
     checkpoint = source / "checkpoint.pb"
+    cost_event("sqlite.cut.checkpoint_complete", cell=source.name)
     return capture, holder["process"], checkpoint
 
 
@@ -1776,6 +1793,7 @@ def checkpoint_lost_response_cut(
     source_client: str,
     proxy_socket: Path,
 ) -> tuple[dict[str, object], dict[str, object], AotProcess, Path]:
+    cost_event("sqlite.cut.lost_response_start", cell=source.name)
     holder: dict[str, AotProcess] = {}
     with LostResponseRelay(proxy_socket, provider.socket_path, provider) as relay:
 
@@ -1818,6 +1836,7 @@ def checkpoint_lost_response_cut(
             if replay_held["effects"] != effects_before:
                 raise MatrixFailure("lost response retry duplicated the durable effect")
             checkpoint_released = controller.release_checkpoint(token, replay_held)
+            cost_event("sqlite.cut.checkpoint_complete", cell=source.name)
             process = holder["process"]
             process.wait(expect_checkpoint=True)
             replay_binding = request_binding_completed(source_database, effect)
@@ -2547,6 +2566,7 @@ def run_matrix_cell(
     source_lock_sha256: str,
 ) -> dict[str, object]:
     cell_id = str(spec.cell_id)
+    cost_event("sqlite.cut.start", cell=cell_id)
     case = root / "cells" / cell_id
     source = case / "source"
     destination = case / "destination"
@@ -2676,6 +2696,7 @@ def run_matrix_cell(
             checkpoint_identity = capture["compute_checkpoint"]
 
         source_provider.control("freeze", token, handoff, "2")
+        cost_event("sqlite.cut.source_frozen", cell=cell_id)
         source_frozen = CONTRACT.status_projection(source_provider.status())
         source_provider.control("export", binding_root / "capsule")
         copy_regular(runtime.executable, binding_root / "artifacts" / "application.aot")
@@ -2703,6 +2724,7 @@ def run_matrix_cell(
             destination_guest,
             destination,
         )
+        cost_event("sqlite.cut.destination_prepared", cell=cell_id)
         destination_socket = sockets.allocate()
         with Provider(
             host_binary,
@@ -2722,8 +2744,10 @@ def run_matrix_cell(
                 manifest_sha256=manifest_sha256,
             )
             source_provider.control("fence", handoff, "2")
+            cost_event("sqlite.cut.source_fenced", cell=cell_id)
             source_fenced = CONTRACT.status_projection(source_provider.status())
             destination_provider.control("activate", handoff, "2")
+            cost_event("sqlite.cut.destination_activated", cell=cell_id)
             destination_active = CONTRACT.status_projection(
                 destination_provider.status()
             )
@@ -2775,6 +2799,7 @@ def run_matrix_cell(
                 continuation=plan_entry.get("continuation_witness"),
                 cell_id=cell_id,
             )
+            cost_event("sqlite.cut.destination_complete", cell=cell_id)
             application_runs: list[tuple[str, Path, Path, int]] = [
                 completed_application_run("source", source_process),
                 completed_application_run("destination", destination_process),
@@ -2841,6 +2866,7 @@ def run_matrix_cell(
                 expected_acks=expected_path,
                 cwd=destination,
             )
+            cost_event("sqlite.cut.oracle_complete", cell=cell_id)
             oracle_report_path = external_oracle.pop("_report_path")
             timing_path = case / "application-timing.json"
             write_application_timing(

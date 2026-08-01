@@ -89,14 +89,14 @@ stack-adjustment fix for that defect and validated exact-length LZ4 checkpoint
 decoding.  This source lock therefore selects only the content-pinned Wanco v2
 `-O1` carrier.  That carrier qualification is not itself an application-level
 migration result: stock zstd is qualified separately by the transparent
-migration matrix. The v6 runner pre-arms exact successful `fd_write`
+migration matrix. The v8 runner pre-arms exact successful `fd_write`
 occurrences on `output.zst`, waits until the durable response has been written
 back into guest memory, releases Wanco to checkpoint, and binds that barrier
 token into the provider freeze. It does not poll byte counters or signal the
 container to choose a cut. The matrix also uses a fresh provider/process,
 external native-zstd byte comparison, and negative cells. The build script
 rejects optimization overrides so an `-O0` diagnostic cannot be mislabeled as
-the qualified matrix input. The matrix v7 runner also resolves the live Wanco
+the qualified matrix input. The matrix v8 runner also resolves the live Wanco
 Docker image ID and cross-checks it through both build receipts and both source
 locks before it is allowed to state that artifact bindings were verified.
 
@@ -114,8 +114,9 @@ verifier-selected stock-zstd identity, independently decompresses the shared
 blob for each cell, checks every raw report, recomputes each negative cell's
 exit-status binding, stderr digest/tail, and detector signature, and also checks
 the clean exact revision and fault inventory. The lane records correctness and
-falsification evidence; it does not collect or publish latency, downtime,
-throughput, or overhead measurements.
+falsification evidence; it retains single-run application process-phase timing
+for diagnosis, but does not report end-to-end latency, downtime, throughput, or
+overhead measurements.
 
 The migrated application remains the source-locked upstream zstd 1.5.7 build.
 The independent native decompression oracle may be a different packaged zstd
