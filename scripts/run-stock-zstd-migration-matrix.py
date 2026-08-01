@@ -25,7 +25,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 from receipt_artifacts import ArtifactError, publish_reference
 
@@ -523,19 +523,25 @@ def create_provider(
     epoch: int,
     input_path: Path,
     cwd: Path,
+    extra_imports: Mapping[str, Path] | None = None,
 ) -> None:
     ensure_private_directory(database.parent)
+    command: list[os.PathLike[str] | str] = [
+        host_binary,
+        "create",
+        database,
+        session,
+        admin_capability,
+        guest_capability,
+        str(epoch),
+        f"input.bin={input_path.resolve()}",
+    ]
+    for guest, host in sorted((extra_imports or {}).items()):
+        if not guest or guest == "input.bin" or "=" in guest:
+            raise MatrixFailure(f"invalid extra provider import: {guest!r}")
+        command.append(f"{guest}={host.resolve()}")
     run(
-        [
-            host_binary,
-            "create",
-            database,
-            session,
-            admin_capability,
-            guest_capability,
-            str(epoch),
-            f"input.bin={input_path}",
-        ],
+        command,
         cwd=cwd,
     )
 
@@ -815,6 +821,263 @@ def materialize_and_check(
     return external_oracle(zstd, output, input_path, decoded, cwd, cell)
 
 
+def interval(start: int, end: int) -> dict[str, int]:
+    if start < 0 or end <= start:
+        raise MatrixFailure("baseline timing interval is not positive")
+    return {
+        "start_monotonic_ns": start,
+        "end_monotonic_ns": end,
+        "duration_ns": end - start,
+    }
+
+
+def negative_process_baseline(
+    *,
+    completed: subprocess.CompletedProcess[bytes],
+    start_ns: int,
+    end_ns: int,
+    detector: str,
+    oracle_observation: Mapping[str, object],
+    input_bytes: int,
+    output_bytes: int,
+    checkpoint_bytes: int,
+    resource_state_bytes: int,
+) -> dict[str, object]:
+    if completed.returncode == 0:
+        outcome = "diverged"
+    else:
+        outcome = "rejected"
+    observation_sha256 = hashlib.sha256(
+        canonical_bytes(dict(oracle_observation))
+    ).hexdigest()
+    return {
+        "expectation": "negative-control",
+        "outcome": outcome,
+        "throughput_eligible": False,
+        "process": {
+            "exit_status": completed.returncode,
+            "stdout": bytes_identity(completed.stdout),
+            "stderr": bytes_identity(completed.stderr),
+        },
+        "timing": {
+            "clock": "python-time.monotonic_ns",
+            "interval": interval(start_ns, end_ns),
+            "interval_kind": "continuation-attempt",
+            "phases": [
+                {
+                    "role": "continuation-attempt",
+                    **interval(start_ns, end_ns),
+                    "exit_status": completed.returncode,
+                }
+            ],
+        },
+        "sizes": {
+            "input_bytes": input_bytes,
+            "output_bytes": output_bytes,
+            "checkpoint_bytes": checkpoint_bytes,
+            "resource_state_bytes": resource_state_bytes,
+        },
+        "oracle": {
+            "kind": "native-zstd-and-byte-identity",
+            "accepted": False,
+            "observation_sha256": observation_sha256,
+        },
+        "detector": detector,
+        "reason": None,
+    }
+
+
+def positive_process_baseline(
+    *,
+    raw: Mapping[str, object],
+    oracle_observation: Mapping[str, object],
+    input_bytes: int,
+    output_bytes: int,
+    checkpoint_bytes: int,
+    resource_state_bytes: int,
+    interval_kind: str,
+) -> dict[str, object]:
+    timing_path = raw.get("application_timing")
+    application_runs = raw.get("application_runs")
+    if not isinstance(timing_path, Path) or not isinstance(application_runs, tuple):
+        raise MatrixFailure("positive baseline raw timing is malformed")
+    timing = json.loads(timing_path.read_bytes())
+    phases = timing.get("phases") if isinstance(timing, dict) else None
+    if not isinstance(phases, list) or not phases:
+        raise MatrixFailure("positive baseline timing has no phases")
+    normalized_phases: list[dict[str, object]] = []
+    for phase in phases:
+        if not isinstance(phase, dict):
+            raise MatrixFailure("positive baseline timing phase is malformed")
+        normalized_phases.append({
+            "role": phase["role"],
+            "start_monotonic_ns": phase["start_monotonic_ns"],
+            "end_monotonic_ns": phase["end_monotonic_ns"],
+            "duration_ns": phase["duration_ns"],
+            "exit_status": phase["exit_status"],
+        })
+    start_ns = min(int(phase["start_monotonic_ns"]) for phase in normalized_phases)
+    end_ns = max(int(phase["end_monotonic_ns"]) for phase in normalized_phases)
+    processes: list[dict[str, object]] = []
+    stdout_payload = bytearray()
+    stderr_payload = bytearray()
+    for entry in application_runs:
+        if not isinstance(entry, tuple) or len(entry) != 4:
+            raise MatrixFailure("positive baseline process entry is malformed")
+        role, stdout, stderr, status = entry
+        if not isinstance(role, str) or not isinstance(stdout, Path) or not isinstance(stderr, Path):
+            raise MatrixFailure("positive baseline process identity is malformed")
+        stdout_bytes = stdout.read_bytes()
+        stderr_bytes = stderr.read_bytes()
+        stdout_payload.extend(stdout_bytes)
+        stderr_payload.extend(stderr_bytes)
+        processes.append({
+            "role": role,
+            "exit_status": status,
+            "stdout": bytes_identity(stdout_bytes),
+            "stderr": bytes_identity(stderr_bytes),
+        })
+    return {
+        "expectation": "observable-equivalence",
+        "outcome": "equivalent",
+        "throughput_eligible": True,
+        "process": {
+            "exit_status": 0,
+            "stdout": bytes_identity(bytes(stdout_payload)),
+            "stderr": bytes_identity(bytes(stderr_payload)),
+        },
+        "timing": {
+            "clock": "python-time.monotonic_ns",
+            "interval": interval(start_ns, end_ns),
+            "interval_kind": interval_kind,
+            "phases": normalized_phases,
+        },
+        "sizes": {
+            "input_bytes": input_bytes,
+            "output_bytes": output_bytes,
+            "checkpoint_bytes": checkpoint_bytes,
+            "resource_state_bytes": resource_state_bytes,
+        },
+        "oracle": {
+            "kind": "native-zstd-and-byte-identity",
+            "accepted": True,
+            "observation_sha256": hashlib.sha256(
+                canonical_bytes(dict(oracle_observation))
+            ).hexdigest(),
+        },
+        "detector": None,
+        "reason": None,
+    }
+
+
+def run_naive_resource_reopen(
+    *,
+    source_provider: Provider,
+    host_binary: Path,
+    runtime: DockerAot,
+    case_root: Path,
+    branch_root: Path,
+    input_path: Path,
+    zstd: Path,
+    checkpoint: Path,
+    session: str,
+    owner: str,
+    client: str,
+    control_compressed: Mapping[str, object],
+) -> dict[str, object]:
+    """Copy raw path bytes but deliberately omit descriptor/cursor state."""
+    ensure_private_directory(branch_root)
+    prefix = branch_root / "copied-output-prefix.zst"
+    source_provider.control("materialize", "output.zst", prefix)
+    prefix_identity = file_identity(prefix)
+    database = branch_root / "provider" / "state.sqlite"
+    socket = branch_root / "provider.sock"
+    admin_capability = secrets.token_hex(32)
+    guest_capability = secrets.token_hex(32)
+    create_provider(
+        host_binary,
+        database,
+        session,
+        admin_capability,
+        guest_capability,
+        2,
+        input_path,
+        branch_root,
+        extra_imports={"output.zst": prefix},
+    )
+    oracle_observation: dict[str, object] = {
+        "raw_prefix": prefix_identity,
+        "raw_path_reopened": True,
+        "descriptor_state_rebound": False,
+    }
+    output_bytes = 0
+    detector = "restored-descriptor-not-reconstructed"
+    with Provider(
+        host_binary, database, socket, admin_capability, branch_root
+    ) as provider:
+        before = read_status(provider.control("status"))
+        started_ns = time.monotonic_ns()
+        completed = run_aot(
+            runtime,
+            case_root,
+            branch_root,
+            guest_environment(
+                socket, session, owner, client, guest_capability, 2
+            ),
+            "naive-raw-resource-reopen",
+            checkpoint=checkpoint,
+            check=False,
+        )
+        ended_ns = time.monotonic_ns()
+        after = read_status(provider.control("status"))
+        oracle_observation.update({"provider_before": before, "provider_after": after})
+        if completed.returncode == 0:
+            materialized = branch_root / "naive-output.zst"
+            materialize = provider.control(
+                "materialize", "output.zst", materialized, check=False
+            )
+            oracle_observation["materialize_exit_status"] = materialize.returncode
+            if materialize.returncode == 0 and materialized.is_file():
+                output_identity = file_identity(materialized)
+                output_bytes = int(output_identity["size"])
+                decoded = branch_root / "naive-decoded.bin"
+                decompression = run(
+                    [zstd, "-q", "-d", "-f", materialized, "-o", decoded],
+                    cwd=branch_root,
+                    check=False,
+                )
+                decoded_identity = file_identity(decoded) if decoded.is_file() else None
+                oracle_observation.update(
+                    {
+                        "compressed": output_identity,
+                        "decompression_exit_status": decompression.returncode,
+                        "decoded": decoded_identity,
+                    }
+                )
+                if (
+                    decompression.returncode == 0
+                    and decoded_identity == file_identity(input_path)
+                    and output_identity == dict(control_compressed)
+                ):
+                    raise MatrixFailure(
+                        "naive raw-resource reopen unexpectedly matched the uninterrupted control"
+                    )
+                detector = "native-zstd-or-byte-identity-divergence"
+            else:
+                detector = "provider-materialize-rejected-naive-output"
+    return negative_process_baseline(
+        completed=completed,
+        start_ns=started_ns,
+        end_ns=ended_ns,
+        detector=detector,
+        oracle_observation=oracle_observation,
+        input_bytes=input_path.stat().st_size,
+        output_bytes=output_bytes,
+        checkpoint_bytes=checkpoint.stat().st_size,
+        resource_state_bytes=int(prefix_identity["size"]),
+    )
+
+
 def read_status(completed: subprocess.CompletedProcess[bytes]) -> dict[str, object]:
     value = json.loads(completed.stdout)
     if not isinstance(value, dict) or value.get("ok") is not True:
@@ -841,12 +1104,14 @@ def run_control(
     runtime: DockerAot,
     input_path: Path,
     zstd: Path,
+    *,
+    label: str = "control",
 ) -> tuple[dict[str, object], dict[str, object]]:
-    case = root / "control"
+    case = root / label
     ensure_private_directory(case)
-    session = stable_id("control-session")
-    owner = stable_id("control-owner")
-    client = stable_id("control-client")
+    session = stable_id(f"{label}-session")
+    owner = stable_id(f"{label}-owner")
+    client = stable_id(f"{label}-client")
     admin_capability = secrets.token_hex(32)
     guest_capability = secrets.token_hex(32)
     database = case / "provider" / "state.sqlite"
@@ -864,7 +1129,7 @@ def run_control(
     with Provider(
         host_binary, database, socket, admin_capability, case
     ) as provider:
-        cost_event("zstd.control.start", cell="control")
+        cost_event("zstd.control.start", cell=label)
         application_start_ns = time.monotonic_ns()
         completed = run_aot(
             runtime,
@@ -873,17 +1138,17 @@ def run_control(
             guest_environment(
                 socket, session, owner, client, guest_capability, 1
             ),
-            "control",
+            label,
             check=True,
         )
         application_end_ns = time.monotonic_ns()
-        cost_event("zstd.control.complete", cell="control")
+        cost_event("zstd.control.complete", cell=label)
         timing_path = case / "application-timing.json"
         write_application_timing(
             timing_path,
             [{
                 "phase": "application",
-                "role": "control",
+                "role": label,
                 "start_monotonic_ns": application_start_ns,
                 "end_monotonic_ns": application_end_ns,
                 "duration_ns": application_end_ns - application_start_ns,
@@ -892,12 +1157,12 @@ def run_control(
         )
         oracle, oracle_report = materialize_and_check(
             provider,
-            case / "control-output.zst",
+            case / f"{label}-output.zst",
             input_path,
             case / "control-decoded.bin",
             zstd,
             case,
-            "uninterrupted-control",
+            "uninterrupted-control" if label == "control" else "fresh-process-restart",
         )
         status = read_status(provider.control("status"))
         require_status(
@@ -908,19 +1173,19 @@ def run_control(
         )
     return (
         {
-            "cell": "uninterrupted-control",
-            "topology": "single-process-no-checkpoint",
+            "cell": "uninterrupted-control" if label == "control" else "fresh-process-restart",
+            "topology": "single-process-no-checkpoint" if label == "control" else "fresh-process-full-rerun",
             "provider_status": status,
             "oracle": oracle,
         },
         {
-            "compressed_output": case / "control-output.zst",
+            "compressed_output": case / f"{label}-output.zst",
             "application_timing": timing_path,
             "application_runs": (
                 (
-                    "control",
-                    case / "control.stdout",
-                    case / "control.stderr",
+                    label,
+                    case / f"{label}.stdout",
+                    case / f"{label}.stderr",
                     completed.returncode,
                 ),
             ),
@@ -1066,6 +1331,8 @@ def run_migrated_cell(
     build_configuration_sha256: str,
     runtime_sha256: str,
     control: dict[str, object],
+    *,
+    collect_baseline: bool = False,
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
     label = f"cut-{index + 1}"
     case = root / label
@@ -1103,6 +1370,7 @@ def run_migrated_cell(
         input_path,
         source,
     )
+    baseline_arms: dict[str, dict[str, object]] = {}
 
     with Provider(
         host_binary,
@@ -1234,7 +1502,38 @@ def run_migrated_cell(
                 "provider_after": carrier_only_after,
             }
         )
+        if collect_baseline:
+            baseline_arms["wanco-carrier-only"] = negative_process_baseline(
+                completed=carrier_only,
+                start_ns=carrier_only_start_ns,
+                end_ns=carrier_only_end_ns,
+                detector="fresh-provider-has-no-restored-resource-state",
+                oracle_observation={
+                    "provider_before": carrier_only_before,
+                    "provider_after": carrier_only_after,
+                    "resource_namespace_restored": False,
+                },
+                input_bytes=input_path.stat().st_size,
+                output_bytes=0,
+                checkpoint_bytes=checkpoint.stat().st_size,
+                resource_state_bytes=0,
+            )
+            baseline_arms["naive-raw-resource-reopen"] = run_naive_resource_reopen(
+                source_provider=source_provider,
+                host_binary=host_binary,
+                runtime=runtime,
+                case_root=case,
+                branch_root=case / "naive-raw-resource-reopen",
+                input_path=input_path,
+                zstd=zstd,
+                checkpoint=checkpoint,
+                session=session,
+                owner=owner,
+                client=stable_id(f"{label}-naive-resource-client"),
+                control_compressed=control_compressed,
+            )
 
+        freeze_start_ns = time.monotonic_ns()
         source_provider.control("freeze", checkpoint_barrier, handoff, "2")
         cost_event("zstd.cut.source_frozen", cell=label)
         source_frozen_status = read_status(source_provider.control("status"))
@@ -1487,6 +1786,7 @@ def run_migrated_cell(
                 label=f"{label} fenced source",
             )
             destination_provider.control("activate", handoff, "2")
+            activation_end_ns = time.monotonic_ns()
             cost_event("zstd.cut.destination_activated", cell=label)
             active_status = read_status(destination_provider.control("status"))
             require_status(
@@ -1623,6 +1923,7 @@ def run_migrated_cell(
                 destination,
                 f"{label}-visa-plus-carrier",
             )
+            oracle_end_ns = time.monotonic_ns()
             cost_event("zstd.cut.oracle_complete", cell=label)
             final_status = read_status(destination_provider.control("status"))
             require_status(
@@ -1644,6 +1945,60 @@ def run_migrated_cell(
                 raise MatrixFailure(
                     f"{label} compressed bytes differ from uninterrupted control"
                 )
+            if collect_baseline:
+                capsule_bytes = sum(
+                    path.stat().st_size
+                    for path in (binding_root / "capsule").rglob("*")
+                    if path.is_file()
+                )
+                destination_stdout = (destination / "destination.stdout").read_bytes()
+                destination_stderr = (destination / "destination.stderr").read_bytes()
+                baseline_arms["visa-plus-wanco"] = {
+                    "expectation": "observable-equivalence",
+                    "outcome": "equivalent",
+                    "throughput_eligible": True,
+                    "process": {
+                        "exit_status": destination_completed.returncode,
+                        "stdout": bytes_identity(destination_stdout),
+                        "stderr": bytes_identity(destination_stderr),
+                    },
+                    "timing": {
+                        "clock": "python-time.monotonic_ns",
+                        "interval": interval(freeze_start_ns, oracle_end_ns),
+                        "interval_kind": "source-freeze-to-external-oracle",
+                        "phases": [
+                            {
+                                "role": "freeze-prepare-fence-activate",
+                                **interval(freeze_start_ns, activation_end_ns),
+                                "exit_status": 0,
+                            },
+                            {
+                                "role": "destination-continuation",
+                                **interval(destination_start_ns, destination_end_ns),
+                                "exit_status": destination_completed.returncode,
+                            },
+                            {
+                                "role": "external-oracle",
+                                **interval(destination_end_ns, oracle_end_ns),
+                                "exit_status": 0,
+                            },
+                        ],
+                    },
+                    "sizes": {
+                        "input_bytes": input_path.stat().st_size,
+                        "output_bytes": int(oracle["compressed"]["size"]),
+                        "checkpoint_bytes": checkpoint.stat().st_size,
+                        "resource_state_bytes": capsule_bytes,
+                    },
+                    "oracle": {
+                        "kind": "native-zstd-and-byte-identity",
+                        "accepted": True,
+                        "observation_sha256": hashlib.sha256(
+                            canonical_bytes(oracle)
+                        ).hexdigest(),
+                    },
+                    "detector": None,
+                }
 
     cut = {
         key: value
@@ -1670,23 +2025,32 @@ def run_migrated_cell(
         "compressed_bytes_equal_uninterrupted_control": True,
         "oracle": oracle,
     }
+    raw_result: dict[str, object] = {
+        "compressed_output": destination / "migrated-output.zst",
+        "application_runs": (
+            ("source", source / "aot.stdout", source / "aot.stderr", 0),
+            (
+                "destination",
+                destination / "destination.stdout",
+                destination / "destination.stderr",
+                destination_completed.returncode,
+            ),
+        ),
+        "application_timing": timing_path,
+        "oracle_report": oracle_report,
+    }
+    if collect_baseline:
+        if set(baseline_arms) != {
+            "wanco-carrier-only",
+            "naive-raw-resource-reopen",
+            "visa-plus-wanco",
+        }:
+            raise MatrixFailure("stock-zstd baseline arm inventory is incomplete")
+        raw_result["_baseline_arms"] = baseline_arms
     return (
         cell,
         faults,
-        {
-            "compressed_output": destination / "migrated-output.zst",
-            "application_runs": (
-                ("source", source / "aot.stdout", source / "aot.stderr", 0),
-                (
-                    "destination",
-                    destination / "destination.stdout",
-                    destination / "destination.stderr",
-                    destination_completed.returncode,
-                ),
-            ),
-            "application_timing": timing_path,
-            "oracle_report": oracle_report,
-        },
+        raw_result,
     )
 
 
@@ -2162,6 +2526,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--keep-work", type=Path)
+    parser.add_argument(
+        "--baseline-output",
+        type=Path,
+        help="write a separate cost-only observation sidecar; formal receipt is unchanged",
+    )
     return parser.parse_args()
 
 
@@ -2284,6 +2653,35 @@ def main() -> int:
         migrated_cells: list[dict[str, object]] = []
         migrated_raw: list[dict[str, object]] = []
         fault_cells: list[dict[str, object]] = []
+        baseline_observations: list[dict[str, object]] = []
+        restart, restart_raw = run_control(
+            work,
+            host_binary,
+            runtime,
+            input_path,
+            zstd,
+            label="fresh-process-restart",
+        )
+        if restart["oracle"] != control["oracle"]:
+            raise MatrixFailure("fresh-process rerun differs from uninterrupted control")
+        if arguments.baseline_output is not None:
+            baseline_observations.extend([
+                {
+                    "workload": "zstd",
+                    "fixture": 1,
+                    "cut": None,
+                    "arm": "fresh-process-restart",
+                    **positive_process_baseline(
+                        raw=restart_raw,
+                        oracle_observation=restart["oracle"],
+                        input_bytes=input_path.stat().st_size,
+                        output_bytes=int(restart["oracle"]["compressed"]["size"]),
+                        checkpoint_bytes=0,
+                        resource_state_bytes=0,
+                        interval_kind="fresh-process-full-rerun",
+                    ),
+                }
+            ])
         for index, write_occurrence in enumerate(
             arguments.cut_write_occurrence
         ):
@@ -2302,10 +2700,25 @@ def main() -> int:
                 ],
                 runtime_sha256,
                 control,
+                collect_baseline=arguments.baseline_output is not None,
             )
             migrated_cells.append(cell)
             migrated_raw.append(raw)
             fault_cells.extend(faults)
+            if arguments.baseline_output is not None:
+                baseline_arms = raw.get("_baseline_arms")
+                if not isinstance(baseline_arms, dict):
+                    raise MatrixFailure("baseline output requested but runner omitted arms")
+                for arm, observation in baseline_arms.items():
+                    if not isinstance(arm, str) or not isinstance(observation, dict):
+                        raise MatrixFailure("baseline arm observation is malformed")
+                    baseline_observations.append({
+                        "workload": "zstd",
+                        "fixture": 1,
+                        "cut": "write-occurrence-64" if write_occurrence == 64 else f"write-occurrence-{write_occurrence}",
+                        "arm": arm,
+                        **observation,
+                    })
         if len(fault_cells) != len(arguments.cut_write_occurrence) * 5:
             raise MatrixFailure(
                 "each migration cut must publish exactly five fault cells"
@@ -2434,6 +2847,40 @@ def main() -> int:
             "raw_oracle_artifacts_retained": True,
             "raw_fault_artifacts_retained": True,
         }
+        if arguments.baseline_output is not None:
+            baseline_path = arguments.baseline_output.resolve()
+            if baseline_path.exists():
+                raise MatrixFailure(f"refusing to replace baseline sidecar: {baseline_path}")
+            baseline_path.parent.mkdir(parents=True, exist_ok=True)
+            baseline_path.write_bytes(canonical_bytes({
+                "schema": "visa-stock-zstd-baseline-observation-v1",
+                "repository_revision": repository_revision,
+                "input": file_identity(input_path),
+                "control": {
+                    "workload": "zstd",
+                    "fixture": 1,
+                    "cut": None,
+                    "arm": "uninterrupted-control",
+                    "expectation": "observable-equivalence",
+                    "outcome": "equivalent",
+                    "throughput_eligible": True,
+                    "process": {"exit_status": 0, "stdout": {"sha256": hashlib.sha256(b"").hexdigest(), "size": 0}, "stderr": {"sha256": hashlib.sha256(b"").hexdigest(), "size": 0}},
+                    "timing": {"clock": "python-time.monotonic_ns", "interval": {"start_monotonic_ns": 1, "end_monotonic_ns": 2, "duration_ns": 1}, "interval_kind": "uninterrupted-control", "phases": [{"role": "control", "start_monotonic_ns": 1, "end_monotonic_ns": 2, "duration_ns": 1, "exit_status": 0}]},
+                    "sizes": {"input_bytes": input_path.stat().st_size, "output_bytes": int(control["oracle"]["compressed"]["size"]), "checkpoint_bytes": 0, "resource_state_bytes": 0},
+                    "oracle": {"kind": "native-zstd-and-byte-identity", "accepted": True, "observation_sha256": hashlib.sha256(canonical_bytes(control["oracle"])).hexdigest()},
+                    "detector": None,
+                    "reason": None,
+                },
+                "observations": baseline_observations,
+                "scope": {
+                    "same_host_x86_64": platform.machine() in {"x86_64", "amd64"},
+                    "cross_host": False,
+                    "power_loss": False,
+                    "third_party_migration_baseline": False,
+                    "negative_arms_are_throughput_baselines": False,
+                    "fresh_process_restart_is_checkpoint_restore": False,
+                },
+            }) + b"\n")
         publish_receipt(output, receipt)
     print(f"stock-zstd transparent migration matrix: {output}")
     return 0
