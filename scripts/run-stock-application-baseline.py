@@ -257,14 +257,18 @@ def require_detected_divergence(
     completed: subprocess.CompletedProcess[bytes],
     expected_destination_stdout: bytes,
     label: str,
+    resource_equivalent: bool = True,
 ) -> tuple[str, str]:
     if completed.returncode != 0:
         return "rejected", f"{label}-rejected"
-    if completed.stdout == expected_destination_stdout:
-        raise RuntimeError(
-            f"{label} unexpectedly reproduced the exact destination continuation"
-        )
-    return "diverged", f"{label}-lost-compute-continuation"
+    if completed.stdout != expected_destination_stdout:
+        return "diverged", f"{label}-lost-compute-continuation"
+    if not resource_equivalent:
+        return "diverged", f"{label}-resource-state-diverged"
+    raise RuntimeError(
+        f"{label} unexpectedly reproduced both the destination continuation "
+        "and final resource semantics"
+    )
 
 
 def run_sqlite_carrier_only(
@@ -275,6 +279,7 @@ def run_sqlite_carrier_only(
     output_root: Path,
     receipt: Mapping[str, object],
     sqlite_artifact: Path,
+    oracle_binary: Path,
     docker: str,
 ) -> dict[str, object]:
     case = output_root / "controls" / cut / "wanco-carrier-only"
@@ -345,10 +350,37 @@ def run_sqlite_carrier_only(
             completed = run(command, cwd=case, timeout=300)
             end_ns = time.monotonic_ns()
             status_after = sqlite_runner.CONTRACT.status_projection(provider.status())
+            fresh_snapshot = case / "fresh-provider.snapshot"
+            provider.control("snapshot-namespace", fresh_snapshot)
+    cell = next(item for item in receipt["cells"] if item["cell_id"] == cut)
+    expected_reference = cell["retained_raw_evidence"]["expected_acknowledgements"]
+    expected_acks = output_root / str(expected_reference["path"])
+    resource_oracle = run(
+        [
+            str(oracle_binary),
+            str(fresh_snapshot),
+            str(expected_acks),
+            sqlite_runner.DATABASE_PATH,
+        ],
+        cwd=case,
+        timeout=300,
+    )
+    fresh_projection: Mapping[str, object] | None = None
+    resource_equivalent = False
+    if resource_oracle.returncode == 0:
+        try:
+            fresh_report = json.loads(resource_oracle.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("fresh-provider SQLite oracle returned invalid JSON") from error
+        fresh_projection = sqlite_runner.native_oracle_semantic_projection(fresh_report)
+        resource_equivalent = (
+            fresh_projection == cell["external_oracle"]["semantic_projection"]
+        )
     _, detector = require_detected_divergence(
         completed=completed,
         expected_destination_stdout=destination_stdout,
         label="fresh-provider-carrier-restore",
+        resource_equivalent=resource_equivalent,
     )
     observation = {
         "schema": "visa-sqlite-negative-control-observation-v1",
@@ -357,6 +389,19 @@ def run_sqlite_carrier_only(
         "source_checkpoint": identity(checkpoint),
         "fresh_provider_status_before": status_before,
         "fresh_provider_status_after": status_after,
+        "fresh_provider_namespace": identity(fresh_snapshot),
+        "fresh_provider_oracle": {
+            "exit_status": resource_oracle.returncode,
+            "stdout": {
+                "sha256": sha256_bytes(resource_oracle.stdout),
+                "size": len(resource_oracle.stdout),
+            },
+            "stderr": {
+                "sha256": sha256_bytes(resource_oracle.stderr),
+                "size": len(resource_oracle.stderr),
+            },
+            "semantic_projection": fresh_projection,
+        },
         "source_stdout": {"sha256": sha256_bytes(source_stdout), "size": len(source_stdout)},
         "expected_destination_stdout": {
             "sha256": sha256_bytes(destination_stdout),
@@ -391,7 +436,7 @@ def run_sqlite_carrier_only(
         input_bytes=int(receipt["execution_inputs"]["stock_sqlite_wasm"]["size"]),
         output_bytes=len(completed.stdout),
         checkpoint_bytes=checkpoint.stat().st_size,
-        resource_state_bytes=database.stat().st_size,
+        resource_state_bytes=fresh_snapshot.stat().st_size,
     )
 
 
@@ -777,6 +822,7 @@ def run_sqlite_fixture(
                 output_root=output_root,
                 receipt=receipt,
                 sqlite_artifact=sqlite_artifact,
+                oracle_binary=oracle_binary,
                 docker=docker,
             )
         )

@@ -178,6 +178,20 @@ class StockApplicationBaselineTests(unittest.TestCase):
                 label="test-control",
             )
 
+    def test_matching_stdout_with_divergent_resources_is_detected(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["control"], 0, stdout=b"same", stderr=b""
+        )
+        self.assertEqual(
+            RUNNER.require_detected_divergence(
+                completed=completed,
+                expected_destination_stdout=b"same",
+                label="test-control",
+                resource_equivalent=False,
+            ),
+            ("diverged", "test-control-resource-state-diverged"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
