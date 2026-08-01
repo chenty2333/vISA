@@ -2704,6 +2704,13 @@ def run_matrix_cell(
         source_provider.control("freeze", token, handoff, "2")
         cost_event("sqlite.cut.source_frozen", cell=cell_id)
         source_frozen = CONTRACT.status_projection(source_provider.status())
+        # The stock-application baseline needs a source-side raw namespace
+        # control at the same compute cut.  Keep this opt-in and outside the
+        # formal receipt: it is an experimental negative-control input, not a
+        # new SQLite claim or a producer-generated verdict.
+        if os.environ.get("VISA_BASELINE_SOURCE_CONTROLS") == "1":
+            source_snapshot_path = source / "source-namespace.snapshot"
+            source_provider.control("snapshot-namespace", source_snapshot_path)
         source_provider.control("export", binding_root / "capsule")
         copy_regular(runtime.executable, binding_root / "artifacts" / "application.aot")
         copy_regular(checkpoint, binding_root / "artifacts" / "checkpoint.pb")

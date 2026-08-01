@@ -4,8 +4,8 @@
 This driver is independent of the semantic matrix receipts.  It invokes the
 real stock-zstd and stock-SQLite runners in fresh private roots, retains the
 runner hashes and raw observations, and emits only timing/size/oracle records.
-Unsupported arms are explicit capability records (exit 125), never synthetic
-successes or throughput points.
+Every canonical arm is a real execution; negative controls are never promoted
+to throughput points merely because they reject quickly.
 """
 
 from __future__ import annotations
@@ -36,7 +36,8 @@ DEFAULT_ZSTD_ARTIFACT = ROOT / "target/final-stock-zstd-build"
 DEFAULT_SQLITE_ARTIFACT = ROOT / "target/final-stock-sqlite-build"
 DEFAULT_TYPED_CORPUS = PAPER_REPOSITORY / "artifact-data/apps-8a6d8533/stock-sqlite/wanco-typed-corpus/receipt.json"
 DEFAULT_WANCO_RECEIPT = ROOT / "target/.ci-cache/wanco-carrier/build-receipt.json"
-UNSUPPORTED = 125
+DEFAULT_SQLITE_ORACLE = ROOT / "target/debug/visa-sqlite-oracle"
+DEFAULT_NATIVE_SQLITE = Path("/usr/bin/sqlite3")
 
 
 def canonical(value: object) -> bytes:
@@ -54,10 +55,17 @@ def identity(path: Path, *, allow_empty: bool = False) -> dict[str, object]:
     return {"sha256": sha256_bytes(payload), "size": len(payload)}
 
 
-def run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[bytes]:
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: int,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         command,
         cwd=cwd,
+        env=None if env is None else dict(env),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -127,36 +135,374 @@ def process_from_runs(
     }
 
 
-def unsupported_sample(
-    *, workload: str, fixture: int, cut: str, arm: str, reason: str
+def timing_interval(start: int, end: int) -> dict[str, int]:
+    if start < 0 or end <= start:
+        raise RuntimeError("baseline timing interval is not positive")
+    return {
+        "start_monotonic_ns": start,
+        "end_monotonic_ns": end,
+        "duration_ns": end - start,
+    }
+
+
+def negative_sample(
+    *,
+    workload: str,
+    fixture: int,
+    cut: str,
+    arm: str,
+    completed: subprocess.CompletedProcess[bytes],
+    start_ns: int,
+    end_ns: int,
+    detector: str,
+    oracle_kind: str,
+    oracle_observation: Mapping[str, object],
+    input_bytes: int,
+    output_bytes: int,
+    checkpoint_bytes: int,
+    resource_state_bytes: int,
 ) -> dict[str, object]:
-    zero = {"sha256": sha256_bytes(b""), "size": 0}
     return {
         "workload": workload,
         "fixture": fixture,
         "cut": cut,
         "arm": arm,
-        "expectation": "unsupported",
-        "outcome": "unsupported",
+        "expectation": "negative-control",
+        "outcome": "diverged" if completed.returncode == 0 else "rejected",
         "throughput_eligible": False,
-        "process": {"exit_status": UNSUPPORTED, "stdout": zero, "stderr": zero},
+        "process": {
+            "exit_status": completed.returncode,
+            "stdout": {
+                "sha256": sha256_bytes(completed.stdout),
+                "size": len(completed.stdout),
+            },
+            "stderr": {
+                "sha256": sha256_bytes(completed.stderr),
+                "size": len(completed.stderr),
+            },
+        },
         "timing": {
             "clock": CONTRACT.CLOCK,
-            "interval": {"start_monotonic_ns": 1, "end_monotonic_ns": 2, "duration_ns": 1},
-            "interval_kind": "unsupported-capability",
+            "interval": timing_interval(start_ns, end_ns),
+            "interval_kind": "negative-control-execution",
             "phases": [{
-                "role": "unsupported",
-                "start_monotonic_ns": 1,
-                "end_monotonic_ns": 2,
-                "duration_ns": 1,
-                "exit_status": UNSUPPORTED,
+                "role": arm,
+                **timing_interval(start_ns, end_ns),
+                "exit_status": completed.returncode,
             }],
         },
-        "sizes": {"input_bytes": 0, "output_bytes": 0, "checkpoint_bytes": 0, "resource_state_bytes": 0},
-        "oracle": {"kind": "not-run", "accepted": False, "observation_sha256": None},
-        "detector": "capability-not-implemented",
-        "reason": reason,
+        "sizes": {
+            "input_bytes": input_bytes,
+            "output_bytes": output_bytes,
+            "checkpoint_bytes": checkpoint_bytes,
+            "resource_state_bytes": resource_state_bytes,
+        },
+        "oracle": {
+            "kind": oracle_kind,
+            "accepted": False,
+            "observation_sha256": sha256_bytes(canonical(dict(oracle_observation))),
+        },
+        "detector": detector,
+        "reason": None,
     }
+
+
+def tree_size(root: Path) -> int:
+    return sum(
+        path.stat().st_size
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    )
+
+
+def sqlite_artifact_runtime(
+    sqlite_runner: Any,
+    *,
+    artifact_root: Path,
+    socket_root: Path,
+    docker: str,
+) -> Any:
+    build_receipt = json.loads(
+        (artifact_root / "receipt.json").read_text(encoding="utf-8")
+    )
+    artifacts = build_receipt.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise RuntimeError("SQLite build receipt omitted its artifact inventory")
+    candidates = [name for name in artifacts if name.endswith("-wanco-o1")]
+    if len(candidates) != 1:
+        raise RuntimeError("SQLite build receipt does not bind exactly one Wanco AOT")
+    image = build_receipt.get("wanco_image")
+    if not isinstance(image, str) or not image:
+        raise RuntimeError("SQLite build receipt omitted its Wanco image")
+    executable = artifact_root / candidates[0]
+    expected = artifacts[candidates[0]]
+    if identity(executable) != expected:
+        raise RuntimeError("SQLite Wanco AOT differs from its build receipt")
+    return sqlite_runner.DockerAot(
+        docker, image, executable, socket_root=socket_root
+    )
+
+
+def sqlite_run_stream(
+    receipt: Mapping[str, object], root: Path, cut: str, role: str
+) -> bytes:
+    cell = next(item for item in receipt["cells"] if item["cell_id"] == cut)
+    runs = cell["retained_raw_evidence"]["application_runs"]
+    entry = next(item for item in runs if item["role"] == role)
+    return (root / str(entry["stdout"]["path"])).read_bytes()
+
+
+def require_detected_divergence(
+    *,
+    completed: subprocess.CompletedProcess[bytes],
+    expected_destination_stdout: bytes,
+    label: str,
+) -> tuple[str, str]:
+    if completed.returncode != 0:
+        return "rejected", f"{label}-rejected"
+    if completed.stdout == expected_destination_stdout:
+        raise RuntimeError(
+            f"{label} unexpectedly reproduced the exact destination continuation"
+        )
+    return "diverged", f"{label}-lost-compute-continuation"
+
+
+def run_sqlite_carrier_only(
+    *,
+    sqlite_runner: Any,
+    fixture: int,
+    cut: str,
+    output_root: Path,
+    receipt: Mapping[str, object],
+    sqlite_artifact: Path,
+    docker: str,
+) -> dict[str, object]:
+    case = output_root / "controls" / cut / "wanco-carrier-only"
+    case.mkdir(mode=0o700, parents=True)
+    checkpoint = output_root / "work" / "cells" / cut / "source" / "checkpoint.pb"
+    if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
+        raise RuntimeError(f"SQLite source checkpoint is missing for {cut}")
+    source_stdout = sqlite_run_stream(receipt, output_root, cut, "source")
+    destination_stdout = sqlite_run_stream(receipt, output_root, cut, "destination")
+    imports = {
+        sqlite_runner.SEED_GUEST_PATH: RUN_REPOSITORY / "third_party/sqlite/workload/seed.sql",
+        sqlite_runner.TRANSACTION_GUEST_PATH: RUN_REPOSITORY / "third_party/sqlite/workload/transaction.sql",
+        sqlite_runner.CURSOR_GUEST_PATH: RUN_REPOSITORY / "third_party/sqlite/workload/cursor.sql",
+    }
+    session = sqlite_runner.stable_id(cut + "-session")
+    owner = sqlite_runner.stable_id(cut + "-owner")
+    client = sqlite_runner.stable_id(cut + "-carrier-only-client")
+    admin = os.urandom(32).hex()
+    guest = os.urandom(32).hex()
+    database = case / "provider" / "state.sqlite"
+    script_path = (
+        sqlite_runner.CURSOR_GUEST_PATH
+        if cut == "active-read-cursor"
+        else sqlite_runner.TRANSACTION_GUEST_PATH
+    )
+    with sqlite_runner.ShortSocketRoot() as sockets:
+        socket_path = sockets.allocate()
+        sqlite_runner.create_provider(
+            RUN_REPOSITORY / "target/debug/visa_wasi_host",
+            database,
+            session=session,
+            admin_capability=admin,
+            guest_capability=guest,
+            epoch=2,
+            imports=imports,
+            cwd=case,
+        )
+        runtime = sqlite_artifact_runtime(
+            sqlite_runner,
+            artifact_root=sqlite_artifact,
+            socket_root=sockets.path,
+            docker=docker,
+        )
+        with sqlite_runner.Provider(
+            RUN_REPOSITORY / "target/debug/visa_wasi_host",
+            database,
+            socket_path,
+            admin,
+            case,
+        ) as provider:
+            status_before = sqlite_runner.CONTRACT.status_projection(provider.status())
+            _, command = runtime.build_command(
+                case_root=output_root,
+                cwd=case,
+                environment=sqlite_runner.guest_environment(
+                    socket_path,
+                    session=session,
+                    owner=owner,
+                    client=client,
+                    guest_capability=guest,
+                    epoch=2,
+                ),
+                label=f"carrier-only-{fixture}-{cut}",
+                script_path=script_path,
+                checkpoint=checkpoint,
+            )
+            start_ns = time.monotonic_ns()
+            completed = run(command, cwd=case, timeout=300)
+            end_ns = time.monotonic_ns()
+            status_after = sqlite_runner.CONTRACT.status_projection(provider.status())
+    _, detector = require_detected_divergence(
+        completed=completed,
+        expected_destination_stdout=destination_stdout,
+        label="fresh-provider-carrier-restore",
+    )
+    observation = {
+        "schema": "visa-sqlite-negative-control-observation-v1",
+        "arm": "wanco-carrier-only",
+        "cut": cut,
+        "source_checkpoint": identity(checkpoint),
+        "fresh_provider_status_before": status_before,
+        "fresh_provider_status_after": status_after,
+        "source_stdout": {"sha256": sha256_bytes(source_stdout), "size": len(source_stdout)},
+        "expected_destination_stdout": {
+            "sha256": sha256_bytes(destination_stdout),
+            "size": len(destination_stdout),
+        },
+        "actual_restore_stdout": {
+            "sha256": sha256_bytes(completed.stdout),
+            "size": len(completed.stdout),
+        },
+        "expected_complete_stdout": {
+            "sha256": sha256_bytes(source_stdout + destination_stdout),
+            "size": len(source_stdout + destination_stdout),
+        },
+        "actual_complete_stdout": {
+            "sha256": sha256_bytes(source_stdout + completed.stdout),
+            "size": len(source_stdout + completed.stdout),
+        },
+        "resource_state_rebound": False,
+        "compute_continuation_resumed": completed.returncode == 0,
+    }
+    return negative_sample(
+        workload="sqlite",
+        fixture=fixture,
+        cut=cut,
+        arm="wanco-carrier-only",
+        completed=completed,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        detector=detector,
+        oracle_kind="external-continuation-output-comparison",
+        oracle_observation=observation,
+        input_bytes=int(receipt["execution_inputs"]["stock_sqlite_wasm"]["size"]),
+        output_bytes=len(completed.stdout),
+        checkpoint_bytes=checkpoint.stat().st_size,
+        resource_state_bytes=database.stat().st_size,
+    )
+
+
+def run_sqlite_raw_reopen(
+    *,
+    fixture: int,
+    cut: str,
+    output_root: Path,
+    receipt: Mapping[str, object],
+    oracle_binary: Path,
+    native_sqlite: Path,
+) -> dict[str, object]:
+    case = output_root / "controls" / cut / "naive-raw-resource-reopen"
+    case.mkdir(mode=0o700, parents=True)
+    snapshot = output_root / "work" / "cells" / cut / "source" / "source-namespace.snapshot"
+    checkpoint = output_root / "work" / "cells" / cut / "source" / "checkpoint.pb"
+    if not snapshot.is_file() or snapshot.stat().st_size == 0:
+        raise RuntimeError(f"SQLite source namespace snapshot is missing for {cut}")
+    if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
+        raise RuntimeError(f"SQLite source checkpoint is missing for {cut}")
+    raw_namespace = case / "raw-namespace"
+    exported = run(
+        [
+            str(oracle_binary),
+            "export-raw",
+            str(snapshot),
+            "workload/accounts.db",
+            str(raw_namespace),
+        ],
+        cwd=case,
+        timeout=300,
+    )
+    if exported.returncode != 0:
+        raise RuntimeError(
+            "raw SQLite namespace export failed: "
+            + exported.stderr.decode(errors="replace")[-2000:]
+        )
+    try:
+        export_report = json.loads(exported.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("raw SQLite namespace export returned invalid JSON") from error
+    database = raw_namespace / "workload/accounts.db"
+    script = RUN_REPOSITORY / "third_party/sqlite/workload" / (
+        "cursor.sql" if cut == "active-read-cursor" else "transaction.sql"
+    )
+    source_stdout = sqlite_run_stream(receipt, output_root, cut, "source")
+    destination_stdout = sqlite_run_stream(receipt, output_root, cut, "destination")
+    start_ns = time.monotonic_ns()
+    completed = run(
+        [
+            str(native_sqlite),
+            "-batch",
+            "-bail",
+            str(database),
+            f".read {script}",
+        ],
+        cwd=raw_namespace,
+        timeout=300,
+    )
+    end_ns = time.monotonic_ns()
+    _, detector = require_detected_divergence(
+        completed=completed,
+        expected_destination_stdout=destination_stdout,
+        label="native-sqlite-raw-reopen",
+    )
+    observation = {
+        "schema": "visa-sqlite-negative-control-observation-v1",
+        "arm": "naive-raw-resource-reopen",
+        "cut": cut,
+        "source_checkpoint": identity(checkpoint),
+        "source_namespace_snapshot": identity(snapshot),
+        "raw_export_report": {
+            "sha256": sha256_bytes(canonical(export_report)),
+            "size": len(canonical(export_report)),
+        },
+        "source_stdout": {"sha256": sha256_bytes(source_stdout), "size": len(source_stdout)},
+        "expected_destination_stdout": {
+            "sha256": sha256_bytes(destination_stdout),
+            "size": len(destination_stdout),
+        },
+        "actual_reopen_stdout": {
+            "sha256": sha256_bytes(completed.stdout),
+            "size": len(completed.stdout),
+        },
+        "expected_complete_stdout": {
+            "sha256": sha256_bytes(source_stdout + destination_stdout),
+            "size": len(source_stdout + destination_stdout),
+        },
+        "actual_complete_stdout": {
+            "sha256": sha256_bytes(source_stdout + completed.stdout),
+            "size": len(source_stdout + completed.stdout),
+        },
+        "descriptor_state_rebound": False,
+        "compute_continuation_resumed": False,
+    }
+    return negative_sample(
+        workload="sqlite",
+        fixture=fixture,
+        cut=cut,
+        arm="naive-raw-resource-reopen",
+        completed=completed,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        detector=detector,
+        oracle_kind="raw-namespace-native-sqlite-continuation-comparison",
+        oracle_observation=observation,
+        input_bytes=int(receipt["execution_inputs"]["stock_sqlite_wasm"]["size"]),
+        output_bytes=tree_size(raw_namespace),
+        checkpoint_bytes=checkpoint.stat().st_size,
+        resource_state_bytes=snapshot.stat().st_size,
+    )
 
 
 def zstd_sample_from_observation(
@@ -325,7 +671,15 @@ def sqlite_control_sample(
 
 
 def run_sqlite_fixture(
-    *, fixture: int, root: Path, sqlite_artifact: Path, typed_corpus: Path, wanco_receipt: Path
+    *,
+    fixture: int,
+    root: Path,
+    sqlite_artifact: Path,
+    typed_corpus: Path,
+    wanco_receipt: Path,
+    oracle_binary: Path,
+    native_sqlite: Path,
+    docker: str,
 ) -> list[dict[str, object]]:
     output_root = root / f"sqlite-{fixture}"
     output_root.mkdir(mode=0o700)
@@ -357,9 +711,16 @@ def run_sqlite_fixture(
         str(matrix_output),
         "--work-root",
         str(output_root / "work"),
+        "--docker",
+        docker,
         "--skip-runtime-build",
     ]
-    completed = run(command, cwd=RUN_REPOSITORY, timeout=3600)
+    completed = run(
+        command,
+        cwd=RUN_REPOSITORY,
+        timeout=3600,
+        env={**os.environ, "VISA_BASELINE_SOURCE_CONTROLS": "1"},
+    )
     if completed.returncode != 0:
         raise RuntimeError(
             f"SQLite fixture {fixture} failed: {completed.stderr.decode(errors='replace')[-3000:]}"
@@ -386,8 +747,9 @@ def run_sqlite_fixture(
     restart_receipt = json.loads(
         (restart_root / "matrix.json").read_text(encoding="utf-8")
     )
-    # SQLite's current canonical runner has no raw carrier-only/reopen route;
-    # retain that fact as an unsupported capability instead of fabricating it.
+    sqlite_runner = load_module(
+        SQLITE_RUNNER, f"visa_stock_sqlite_baseline_runtime_{fixture}"
+    )
     samples: list[dict[str, object]] = []
     samples.append(
         sqlite_control_sample(
@@ -407,14 +769,27 @@ def run_sqlite_fixture(
     )
     for cut in CONTRACT.SQLITE_CUTS:
         samples.append(sqlite_positive_sample(receipt=receipt, fixture=fixture, cut=cut, root=output_root))
-        for arm in ("wanco-carrier-only", "naive-raw-resource-reopen"):
-            samples.append(unsupported_sample(
-                workload="sqlite",
+        samples.append(
+            run_sqlite_carrier_only(
+                sqlite_runner=sqlite_runner,
                 fixture=fixture,
                 cut=cut,
-                arm=arm,
-                reason="current SQLite runner does not expose a carrier-only or raw namespace reopen execution path; no result is claimed",
-            ))
+                output_root=output_root,
+                receipt=receipt,
+                sqlite_artifact=sqlite_artifact,
+                docker=docker,
+            )
+        )
+        samples.append(
+            run_sqlite_raw_reopen(
+                fixture=fixture,
+                cut=cut,
+                output_root=output_root,
+                receipt=receipt,
+                oracle_binary=oracle_binary,
+                native_sqlite=native_sqlite,
+            )
+        )
     return samples
 
 
@@ -427,6 +802,9 @@ def main() -> int:
     parser.add_argument("--sqlite-artifact-root", type=Path, default=DEFAULT_SQLITE_ARTIFACT)
     parser.add_argument("--sqlite-typed-corpus", type=Path, default=DEFAULT_TYPED_CORPUS)
     parser.add_argument("--wanco-build-receipt", type=Path, default=DEFAULT_WANCO_RECEIPT)
+    parser.add_argument("--sqlite-oracle", type=Path, default=DEFAULT_SQLITE_ORACLE)
+    parser.add_argument("--native-sqlite", type=Path, default=DEFAULT_NATIVE_SQLITE)
+    parser.add_argument("--docker", default="docker")
     args = parser.parse_args()
     if args.runs != CONTRACT.RUNS_PER_ARM:
         raise SystemExit(f"baseline requires exactly {CONTRACT.RUNS_PER_ARM} fixtures per arm")
@@ -452,6 +830,9 @@ def main() -> int:
                 sqlite_artifact=args.sqlite_artifact_root.resolve(),
                 typed_corpus=args.sqlite_typed_corpus.resolve(),
                 wanco_receipt=args.wanco_build_receipt.resolve(),
+                oracle_binary=args.sqlite_oracle.resolve(),
+                native_sqlite=args.native_sqlite.resolve(),
+                docker=args.docker,
             ))
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=RUN_REPOSITORY, text=True).strip()
     receipt = {
@@ -469,6 +850,8 @@ def main() -> int:
             "stock_sqlite_artifact_receipt": identity(args.sqlite_artifact_root.resolve() / "receipt.json"),
             "sqlite_typed_corpus": identity(args.sqlite_typed_corpus.resolve()),
             "wanco_build_receipt": identity(args.wanco_build_receipt.resolve()),
+            "sqlite_oracle": identity(args.sqlite_oracle.resolve()),
+            "native_sqlite": identity(args.native_sqlite.resolve()),
         },
         "samples": samples,
         "scope": {

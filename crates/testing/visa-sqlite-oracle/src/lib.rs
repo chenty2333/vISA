@@ -177,6 +177,59 @@ pub fn evaluate(
     }
 }
 
+/// Materialize the linked namespace represented by a snapshot into `target`.
+/// This is an experiment-only raw-reopen primitive: it deliberately exports
+/// bytes and paths, not descriptor offsets, locks, authority, or a verdict.
+pub fn materialize_raw_namespace(
+    snapshot_bytes: &[u8],
+    database_path: &[u8],
+    target: &std::path::Path,
+) -> Result<NamespaceReport, OracleFinding> {
+    let snapshot = decode_namespace_snapshot(snapshot_bytes).map_err(|error| {
+        OracleFinding::new("snapshot-decode", format!("invalid NamespaceSnapshot bytes: {error}"))
+    })?;
+    let findings = namespace::validate_snapshot(snapshot_bytes, &snapshot);
+    if !findings.is_empty() {
+        return Err(findings.into_iter().next().expect("nonempty findings"));
+    }
+    let materialized = namespace::materialize(&snapshot, database_path)?;
+    let root = materialized.namespace_root();
+    if target.exists() {
+        return Err(OracleFinding::new(
+            "raw-export-target-exists",
+            "raw namespace target already exists",
+        ));
+    }
+    std::fs::create_dir_all(target).map_err(|error| {
+        OracleFinding::new(
+            "raw-export-target",
+            format!("cannot create raw namespace target: {error}"),
+        )
+    })?;
+    copy_tree(&root, target).map_err(|error| {
+        OracleFinding::new("raw-export-copy", format!("cannot export raw namespace: {error}"))
+    })?;
+    Ok(materialized.report().clone())
+}
+
+fn copy_tree(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let metadata = std::fs::symlink_metadata(&source_path)?;
+        if metadata.file_type().is_dir() {
+            std::fs::create_dir(&target_path)?;
+            copy_tree(&source_path, &target_path)?;
+        } else if metadata.file_type().is_symlink() {
+            std::os::unix::fs::symlink(std::fs::read_link(&source_path)?, &target_path)?;
+        } else {
+            std::fs::copy(&source_path, &target_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn parse_expected_acks(bytes: &[u8]) -> Result<ExpectedAcks, OracleFinding> {
     let expected: ExpectedAcks = serde_json::from_slice(bytes).map_err(|error| {
         OracleFinding::new("expected-acks-json", format!("invalid expected-acks JSON: {error}"))

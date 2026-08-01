@@ -102,7 +102,6 @@ impl MaterializedNamespace {
         &self.report
     }
 
-    #[cfg(test)]
     pub(crate) fn namespace_root(&self) -> PathBuf {
         self._temporary.path().join("namespace")
     }

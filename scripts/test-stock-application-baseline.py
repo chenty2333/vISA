@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -70,12 +71,23 @@ def sample(workload: str, fixture: int, cut: str | None, arm: str) -> dict[str, 
             "oracle": {"kind": "test", "accepted": True, "observation_sha256": "0" * 64},
             "detector": None,
         }
-    return RUNNER.unsupported_sample(
+    return RUNNER.negative_sample(
         workload=workload,
         fixture=fixture,
         cut=cut or "test-cut",
         arm=arm,
-        reason="test capability boundary",
+        completed=subprocess.CompletedProcess(
+            ["negative-control"], 1, stdout=b"", stderr=b"detected"
+        ),
+        start_ns=1,
+        end_ns=2,
+        detector="test-semantic-divergence",
+        oracle_kind="test-negative-oracle",
+        oracle_observation={"accepted": False},
+        input_bytes=1,
+        output_bytes=1,
+        checkpoint_bytes=1,
+        resource_state_bytes=1,
     )
 
 
@@ -128,10 +140,10 @@ class StockApplicationBaselineTests(unittest.TestCase):
         with self.assertRaises(CONTRACT.BaselineError):
             CONTRACT.validate_receipt(value)
 
-    def test_unsupported_arm_requires_reason_and_exit_125(self) -> None:
+    def test_negative_arm_requires_a_detector(self) -> None:
         value = receipt()
         candidate = next(item for item in value["samples"] if item["arm"] == "wanco-carrier-only")
-        candidate.pop("reason")
+        candidate["detector"] = None
         with self.assertRaises(CONTRACT.BaselineError):
             CONTRACT.validate_receipt(value)
 
@@ -151,9 +163,20 @@ class StockApplicationBaselineTests(unittest.TestCase):
         finally:
             path.unlink(missing_ok=True)
 
-    def test_empty_streams_are_valid_for_unsupported_arm(self) -> None:
+    def test_empty_stdout_is_valid_for_a_rejected_negative_arm(self) -> None:
         value = receipt()
         CONTRACT.validate_receipt(value)
+
+    def test_exact_destination_reproduction_is_not_a_negative_control(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["control"], 0, stdout=b"same", stderr=b""
+        )
+        with self.assertRaises(RuntimeError):
+            RUNNER.require_detected_divergence(
+                completed=completed,
+                expected_destination_stdout=b"same",
+                label="test-control",
+            )
 
 
 if __name__ == "__main__":
