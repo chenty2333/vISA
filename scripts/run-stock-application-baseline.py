@@ -28,15 +28,14 @@ import stock_application_baseline as CONTRACT
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT.parent.parent
-ARTIFACT_REPOSITORY = WORKSPACE / "vISA"
 RUN_REPOSITORY = ROOT
 ZSTD_RUNNER = ROOT / "scripts/run-stock-zstd-migration-matrix.py"
 SQLITE_RUNNER = ROOT / "scripts/run-stock-sqlite-rollback-matrix.py"
-DEFAULT_ZSTD_ARTIFACT = ARTIFACT_REPOSITORY / "target/final-stock-zstd-build"
-DEFAULT_SQLITE_ARTIFACT = ARTIFACT_REPOSITORY / "target/final-stock-sqlite-build"
-DEFAULT_TYPED_CORPUS = WORKSPACE / "vISA-paper/artifact-data/apps-8a6d8533/stock-sqlite/wanco-typed-corpus/receipt.json"
-DEFAULT_WANCO_RECEIPT = ARTIFACT_REPOSITORY / "target/.ci-cache/wanco-carrier/build-receipt.json"
+PAPER_REPOSITORY = ROOT.parent / "vISA-paper"
+DEFAULT_ZSTD_ARTIFACT = ROOT / "target/final-stock-zstd-build"
+DEFAULT_SQLITE_ARTIFACT = ROOT / "target/final-stock-sqlite-build"
+DEFAULT_TYPED_CORPUS = PAPER_REPOSITORY / "artifact-data/apps-8a6d8533/stock-sqlite/wanco-typed-corpus/receipt.json"
+DEFAULT_WANCO_RECEIPT = ROOT / "target/.ci-cache/wanco-carrier/build-receipt.json"
 UNSUPPORTED = 125
 
 
@@ -339,13 +338,13 @@ def run_sqlite_fixture(
         "--wanco-source-lock",
         str(RUN_REPOSITORY / "third_party/wanco/source-lock.json"),
         "--host-binary",
-        str(ARTIFACT_REPOSITORY / "target/debug/visa_wasi_host"),
+        str(RUN_REPOSITORY / "target/debug/visa_wasi_host"),
         "--bind-binary",
-        str(ARTIFACT_REPOSITORY / "target/debug/visa-wasi-migration-bind"),
+        str(RUN_REPOSITORY / "target/debug/visa-wasi-migration-bind"),
         "--driver-binary",
-        str(ARTIFACT_REPOSITORY / "target/debug/visa-wasi-migration-driver"),
+        str(RUN_REPOSITORY / "target/debug/visa-wasi-migration-driver"),
         "--oracle-binary",
-        str(ARTIFACT_REPOSITORY / "target/debug/visa-sqlite-oracle"),
+        str(RUN_REPOSITORY / "target/debug/visa-sqlite-oracle"),
         "--output",
         str(matrix_output),
         "--work-root",
