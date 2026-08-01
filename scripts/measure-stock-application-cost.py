@@ -24,7 +24,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "visa-stock-application-cost-v1"
-EVENT_SCHEMA = "visa-application-cost-events-v1"
+EVENT_SCHEMA = "visa-application-cost-event-v1"
 
 
 def canonical(value: object) -> bytes:
@@ -100,12 +100,18 @@ def main() -> int:
                 if event_path.exists():
                     for line in event_path.read_text(encoding="utf-8").splitlines():
                         value = json.loads(line)
-                        if not isinstance(value, dict) or "label" not in value or "monotonic_ns" not in value:
+                        if (
+                            not isinstance(value, dict)
+                            or value.get("schema") != EVENT_SCHEMA
+                            or not isinstance(value.get("label"), str)
+                            or not isinstance(value.get("monotonic_ns"), int)
+                        ):
                             raise RuntimeError(f"invalid event in {event_path}")
                         events.append(value)
                 arms.append({
                     "workload": workload, "run": index + 1,
                     "command": command, "exit_status": completed.returncode,
+                    "runner_sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
                     "wall_start_monotonic_ns": started, "wall_end_monotonic_ns": ended,
                     "wall_duration_ns": ended - started,
                     "stdout_sha256": hashlib.sha256(completed.stdout).hexdigest(),
@@ -114,11 +120,50 @@ def main() -> int:
                 })
                 if completed.returncode != 0:
                     raise RuntimeError(f"{workload} cost run {index + 1} failed: {completed.stderr.decode(errors='replace')[-2000:]}")
+    by_workload: dict[str, list[dict[str, Any]]] = {"zstd": [], "sqlite": []}
+    for arm in arms:
+        by_workload[str(arm["workload"])].append(arm)
+    for workload, workload_arms in by_workload.items():
+        for arm in workload_arms:
+            events = arm["events"]
+            if not events:
+                raise RuntimeError(f"{workload} run {arm['run']} emitted no lifecycle events")
+            event_times = [int(event["monotonic_ns"]) for event in events]
+            arm["lifecycle_start_monotonic_ns"] = min(event_times)
+            arm["lifecycle_end_monotonic_ns"] = max(event_times)
+            arm["lifecycle_duration_ns"] = max(event_times) - min(event_times)
     receipt = {
         "schema": SCHEMA,
         "event_schema": EVENT_SCHEMA,
         "repository_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "runs_per_workload": args.runs,
+        "workload_counts": {key: len(value) for key, value in by_workload.items()},
+        "inputs": {
+            "zstd_build_receipt": {
+                "path": str((ROOT / args.zstd_artifact_root / "receipt.json").resolve()),
+                "sha256": hashlib.sha256(
+                    ((ROOT / args.zstd_artifact_root / "receipt.json").resolve()).read_bytes()
+                ).hexdigest(),
+            },
+            "sqlite_build_receipt": {
+                "path": str((ROOT / args.sqlite_artifact_root / "receipt.json").resolve()),
+                "sha256": hashlib.sha256(
+                    ((ROOT / args.sqlite_artifact_root / "receipt.json").resolve()).read_bytes()
+                ).hexdigest(),
+            },
+            "typed_corpus_receipt": {
+                "path": str((ROOT / args.sqlite_typed_corpus).resolve()),
+                "sha256": hashlib.sha256(
+                    ((ROOT / args.sqlite_typed_corpus).resolve()).read_bytes()
+                ).hexdigest(),
+            },
+            "wanco_build_receipt": {
+                "path": str((ROOT / args.wanco_build_receipt).resolve()),
+                "sha256": hashlib.sha256(
+                    ((ROOT / args.wanco_build_receipt).resolve()).read_bytes()
+                ).hexdigest(),
+            },
+        },
         "arms": arms,
         "tool_status": tool_status(),
         "scope": {

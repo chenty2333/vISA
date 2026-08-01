@@ -62,6 +62,7 @@ SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
 APPLICATION_TIMING_SCHEMA = "visa-application-timing-v1"
+APPLICATION_COST_EVENT_SCHEMA = "visa-application-cost-event-v1"
 CONTROL_SCHEMA = CONTRACT.CONTROL_SCHEMA
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 
@@ -71,7 +72,12 @@ def cost_event(label: str, **fields: object) -> None:
     target = os.environ.get("VISA_APPLICATION_COST_EVENTS")
     if not target:
         return
-    event = {"label": label, "monotonic_ns": time.monotonic_ns(), **fields}
+    event = {
+        "schema": APPLICATION_COST_EVENT_SCHEMA,
+        "label": label,
+        "monotonic_ns": time.monotonic_ns(),
+        **fields,
+    }
     path = Path(target)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with path.open("ab") as stream:

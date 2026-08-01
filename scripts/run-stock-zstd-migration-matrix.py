@@ -33,6 +33,7 @@ from receipt_artifacts import ArtifactError, publish_reference
 SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v8"
 ORACLE_REPORT_SCHEMA = "visa-stock-zstd-external-oracle-report-v1"
 APPLICATION_TIMING_SCHEMA = "visa-application-timing-v1"
+APPLICATION_COST_EVENT_SCHEMA = "visa-application-cost-event-v1"
 FAULT_PROCESS_OBSERVATION_SCHEMA = (
     "visa-stock-zstd-fault-process-observation-v1"
 )
@@ -62,6 +63,7 @@ def cost_event(label: str, **fields: object) -> None:
     if not target:
         return
     event = {
+        "schema": APPLICATION_COST_EVENT_SCHEMA,
         "label": label,
         "monotonic_ns": time.monotonic_ns(),
         **fields,
