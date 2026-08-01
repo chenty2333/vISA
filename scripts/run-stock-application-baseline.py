@@ -666,7 +666,18 @@ def zstd_sample_from_observation(
             value = dict(control)
         else:
             value = dict(observation["restart"])
-        samples.append({"workload": "zstd", "fixture": fixture, "cut": None, "arm": arm, **value})
+        # The stock-zstd sidecar is a single-run document and therefore carries
+        # its own local fixture number.  The enclosing baseline study owns the
+        # 1..RUNS_PER_ARM sampling identity and must override that local value.
+        samples.append(
+            {
+                **value,
+                "workload": "zstd",
+                "fixture": fixture,
+                "cut": None,
+                "arm": arm,
+            }
+        )
     for item in observation["observations"]:
         if item["arm"] == "fresh-process-restart":
             continue

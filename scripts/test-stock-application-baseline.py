@@ -203,6 +203,36 @@ class StockApplicationBaselineTests(unittest.TestCase):
         with self.assertRaises(CONTRACT.BaselineError):
             CONTRACT.validate_receipt(value)
 
+    def test_zstd_outer_fixture_identity_overrides_runner_local_fixture(self) -> None:
+        control = sample("zstd", 1, None, "uninterrupted-control")
+        restart = sample("zstd", 1, None, "fresh-process-restart")
+        observations = [
+            restart,
+            sample("zstd", 1, "write-occurrence-64", "wanco-carrier-only"),
+            sample(
+                "zstd",
+                1,
+                "write-occurrence-64",
+                "naive-raw-resource-reopen",
+            ),
+            sample("zstd", 1, "write-occurrence-64", "visa-plus-wanco"),
+        ]
+        samples = RUNNER.zstd_sample_from_observation(
+            {
+                "control": control,
+                "restart": restart,
+                "observations": observations,
+            },
+            fixture=2,
+            root=ROOT,
+        )
+        self.assertEqual(len(samples), 5)
+        self.assertEqual({item["fixture"] for item in samples}, {2})
+        self.assertEqual(
+            {item["arm"] for item in samples},
+            CONTRACT.ARMS,
+        )
+
     def test_noncanonical_json_is_rejected(self) -> None:
         path = ROOT / ".test-stock-baseline.json"
         try:
