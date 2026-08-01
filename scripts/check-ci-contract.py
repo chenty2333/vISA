@@ -879,24 +879,24 @@ def check_wanco_carrier_host_lane(job: dict[str, Any]) -> None:
     )
     check_stock_zstd_oracle_wiring(gate)
     require(
-        'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"'
+        'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v8"'
         in zstd_runner
-        and 'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"'
+        and 'SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v8"'
         in zstd_validator
         and "publish_fault_raw_artifacts" in zstd_runner
         and "raw_fault_artifacts_retained" in zstd_validator
         and "FAULT_PROCESS_OBSERVATION_SCHEMA" in zstd_validator,
-        "stock zstd v7 must retain and independently rederive raw fault evidence",
+        "stock zstd v8 must retain timing and independently rederive raw fault evidence",
     )
     require(
-        'MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v10"'
+        'MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v11"'
         in sqlite_validator
         and "retain_provider_process_recovery_evidence" in sqlite_runner
         and "retain_source_abort_evidence" in sqlite_runner
         and "_recompute_process_recovery" in sqlite_validator
         and "_recompute_source_abort" in sqlite_validator
         and "compute-checkpoint.pb" in sqlite_runner,
-        "stock SQLite v10 must retain and independently rederive recovery evidence",
+        "stock SQLite v11 must retain timing and independently rederive recovery evidence",
     )
     require(
         "gate_system_stock_sqlite()" in gate

@@ -115,6 +115,26 @@ def status(
 
 
 def raw_artifacts(root: Path, label: str, roles: tuple[str, ...]) -> dict[str, object]:
+    timing = []
+    for index, role in enumerate(roles, start=1):
+        start = index * 1_000
+        end = start + 100
+        timing.append({
+            "phase": "application",
+            "role": role,
+            "start_monotonic_ns": start,
+            "end_monotonic_ns": end,
+            "duration_ns": 100,
+            "exit_status": 0,
+        })
+    timing_path = root / f"raw/{label}/application-timing.json"
+    timing_path.write_bytes(
+        MATRIX.canonical_bytes({
+            "schema": MATRIX.APPLICATION_TIMING_SCHEMA,
+            "clock": "python-time.monotonic_ns",
+            "phases": timing,
+        }) + b"\n"
+    )
     return {
         "application_runs": [
             {
@@ -125,6 +145,7 @@ def raw_artifacts(root: Path, label: str, roles: tuple[str, ...]) -> dict[str, o
             }
             for role in roles
         ],
+        "application_timing": file_reference(root, f"raw/{label}/application-timing.json"),
         "compressed_output": file_reference(root, "raw/positive-output.zst"),
         "oracle_report": file_reference(
             root, f"raw/{label}/oracle-report.json"

@@ -26,8 +26,9 @@ from receipt_artifacts import (
 )
 import wanco_process_diagnostics as WANCO_DIAGNOSTICS
 
-SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"
+SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v8"
 ORACLE_REPORT_SCHEMA = "visa-stock-zstd-external-oracle-report-v1"
+APPLICATION_TIMING_SCHEMA = "visa-application-timing-v1"
 FAULT_PROCESS_OBSERVATION_SCHEMA = (
     "visa-stock-zstd-fault-process-observation-v1"
 )
@@ -43,6 +44,7 @@ MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 MAX_STDOUT_BYTES = 1024 * 1024
 MAX_STDERR_BYTES = 1024 * 1024
 MAX_ORACLE_REPORT_BYTES = 1024 * 1024
+MAX_APPLICATION_TIMING_BYTES = 64 * 1024
 MAX_COMPRESSED_BYTES = 64 * 1024 * 1024
 MAX_FAULT_STDERR_BYTES = 1024 * 1024
 MAX_FAULT_PROCESS_OBSERVATION_BYTES = 64 * 1024
@@ -105,6 +107,7 @@ CELL_KEYS = {
 }
 RAW_ARTIFACT_KEYS = {
     "application_runs",
+    "application_timing",
     "compressed_output",
     "oracle_report",
 }
@@ -144,6 +147,54 @@ FAULT_SPECIFICATIONS = {
 
 class ReceiptError(RuntimeError):
     pass
+
+
+def validate_application_timing(
+    value: Any,
+    *,
+    label: str,
+    expected_roles: tuple[str, ...],
+    artifact_root: Path,
+    budget: ReadBudget,
+) -> None:
+    reference = validate_reference(value, f"{label} application timing")
+    expected_path = f"raw/{label}/application-timing.json"
+    if reference["path"] != expected_path:
+        fail(f"{label} application timing path differs")
+    payload = read_reference(
+        artifact_root,
+        reference,
+        f"{label} application timing",
+        budget=budget,
+        max_bytes=MAX_APPLICATION_TIMING_BYTES,
+    )
+    document = exact_object(
+        parse_canonical_json(payload, f"{label} application timing"),
+        {"clock", "phases", "schema"},
+        f"{label} application timing",
+    )
+    if document["schema"] != APPLICATION_TIMING_SCHEMA or document["clock"] != "python-time.monotonic_ns":
+        fail(f"{label} application timing schema or clock differs")
+    phases = document["phases"]
+    if not isinstance(phases, list) or len(phases) != len(expected_roles):
+        fail(f"{label} application timing phase inventory differs")
+    previous_end = -1
+    for index, (phase, expected_role) in enumerate(zip(phases, expected_roles, strict=True)):
+        item = exact_object(
+            phase,
+            {"duration_ns", "end_monotonic_ns", "exit_status", "phase", "role", "start_monotonic_ns"},
+            f"{label} application timing phase {index}",
+        )
+        if item["phase"] != "application" or item["role"] != expected_role:
+            fail(f"{label} application timing phase role differs")
+        start = nonnegative_int(item["start_monotonic_ns"], f"{label} timing start")
+        end = positive_int(item["end_monotonic_ns"], f"{label} timing end")
+        duration = positive_int(item["duration_ns"], f"{label} timing duration")
+        if end < start or duration != end - start or start < previous_end:
+            fail(f"{label} application timing bounds are invalid")
+        if not isinstance(item["exit_status"], int) or isinstance(item["exit_status"], bool) or item["exit_status"] < 0:
+            fail(f"{label} application timing exit status is invalid")
+        previous_end = end
 
 
 def fail(message: str) -> NoReturn:
@@ -628,6 +679,13 @@ def validate_raw_artifacts(
             fail(str(error))
     if tuple(observed_roles) != expected_roles:
         fail(f"{label}.raw_artifacts application run inventory differs")
+    validate_application_timing(
+        raw["application_timing"],
+        label=label,
+        expected_roles=expected_roles,
+        artifact_root=artifact_root,
+        budget=budget,
+    )
 
     compressed_reference = validate_reference(
         raw["compressed_output"],

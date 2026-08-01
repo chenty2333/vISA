@@ -51,6 +51,7 @@ class RunnerTests(unittest.TestCase):
                 "acks": source / "acks.json",
                 "snapshot": source / "namespace.snapshot",
                 "oracle": source / "oracle.json",
+                "timing": source / "application-timing.json",
             }
             for name, path in paths.items():
                 path.write_bytes((name + "\n").encode())
@@ -63,6 +64,7 @@ class RunnerTests(unittest.TestCase):
                     "expected_acknowledgements": paths["acks"],
                     "namespace_snapshot": paths["snapshot"],
                     "oracle_report": paths["oracle"],
+                    "application_timing": paths["timing"],
                 }
             }
             RUNNER.retain_raw_evidence(
@@ -122,6 +124,40 @@ class RunnerTests(unittest.TestCase):
             raw_paths: dict[str, object] = {
                 name: materialize(name) for name in document_names
             }
+            timing_path = materialize("application-timing.json")
+            timing_path.write_bytes(
+                RUNNER.canonical_bytes({
+                    "schema": RUNNER.APPLICATION_TIMING_SCHEMA,
+                    "clock": "python-time.monotonic_ns",
+                    "phases": [
+                        {
+                            "phase": "application",
+                            "role": "source",
+                            "start_monotonic_ns": 1,
+                            "end_monotonic_ns": 2,
+                            "duration_ns": 1,
+                            "exit_status": 0,
+                        },
+                        {
+                            "phase": "application",
+                            "role": "destination",
+                            "start_monotonic_ns": 3,
+                            "end_monotonic_ns": 4,
+                            "duration_ns": 1,
+                            "exit_status": 0,
+                        },
+                        {
+                            "phase": "application",
+                            "role": "readback",
+                            "start_monotonic_ns": 5,
+                            "end_monotonic_ns": 6,
+                            "duration_ns": 1,
+                            "exit_status": 0,
+                        },
+                    ],
+                }) + b"\n"
+            )
+            raw_paths["application_timing"] = timing_path
             raw_paths["application_runs"] = (
                 (
                     "source",

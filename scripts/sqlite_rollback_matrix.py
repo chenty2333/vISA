@@ -29,11 +29,12 @@ import wanco_process_diagnostics as WANCO_DIAGNOSTICS
 
 PLAN_SCHEMA = "visa-stock-sqlite-rollback-journal-plan-v1"
 CELL_SCHEMA = "visa-stock-sqlite-rollback-journal-cell-v5"
-MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v10"
+MATRIX_SCHEMA = "visa-stock-sqlite-rollback-journal-matrix-v11"
 CONTROL_SCHEMA = "visa-stock-sqlite-uninterrupted-control-v3"
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
+APPLICATION_TIMING_SCHEMA = "visa-application-timing-v1"
 PROCESS_RECOVERY_SCHEMA = "visa-sqlite-provider-process-recovery-v2"
 PROCESS_RECOVERY_REPORT_SCHEMA = "visa-sqlite-provider-process-recovery-v1"
 SOURCE_ABORT_SCHEMA = "visa-sqlite-source-abort-reconciliation-v3"
@@ -52,6 +53,7 @@ MAX_SQLITE_STDERR_BYTES = 1024 * 1024
 MAX_SQLITE_JSON_BYTES = 2 * 1024 * 1024
 MAX_SQLITE_SNAPSHOT_BYTES = 64 * 1024 * 1024
 MAX_SQLITE_RETAINED_BYTES = 128 * 1024 * 1024
+MAX_APPLICATION_TIMING_BYTES = 64 * 1024
 PROCESS_RECOVERY_COMMAND = (
     "cargo test --locked -p visa_wasi_host --test "
     "provider_process_recovery -- --nocapture"
@@ -704,15 +706,59 @@ def _artifact_identity(
     return {"sha256": validated["sha256"], "size": validated["size"]}
 
 
+def _validate_application_timing_reference(
+    reference: object,
+    *,
+    label: str,
+    path_label: str,
+    expected_roles: tuple[str, ...],
+    artifact_root: Path | None,
+    budget: ARTIFACTS.ReadBudget | None,
+) -> None:
+    try:
+        validated = ARTIFACTS.validate_reference(reference, label)
+        payload = None if artifact_root is None or budget is None else ARTIFACTS.read_reference(
+            artifact_root, reference, label, budget=budget, max_bytes=MAX_APPLICATION_TIMING_BYTES
+        )
+    except ARTIFACTS.ArtifactError as error:
+        raise MatrixFailure(str(error)) from error
+    expected_path = f"observations/{path_label}/application-timing.json"
+    if validated["path"] != expected_path:
+        raise MatrixFailure(f"{label} path is not canonical")
+    if payload is None:
+        return
+    value = _parse_json_bytes(payload, label)
+    if set(value) != {"clock", "phases", "schema"} or value["schema"] != APPLICATION_TIMING_SCHEMA or value["clock"] != "python-time.monotonic_ns":
+        raise MatrixFailure(f"{label} schema or clock differs")
+    phases = value["phases"]
+    if not isinstance(phases, list) or len(phases) != len(expected_roles):
+        raise MatrixFailure(f"{label} phase inventory differs")
+    previous_end = -1
+    for index, (phase, role) in enumerate(zip(phases, expected_roles, strict=True)):
+        if not isinstance(phase, dict) or set(phase) != {"duration_ns", "end_monotonic_ns", "exit_status", "phase", "role", "start_monotonic_ns"}:
+            raise MatrixFailure(f"{label} phase {index} is malformed")
+        if phase["phase"] not in {"application", "reconciliation"} or phase["role"] != role:
+            raise MatrixFailure(f"{label} phase {index} role differs")
+        start, end, duration = (phase[key] for key in ("start_monotonic_ns", "end_monotonic_ns", "duration_ns"))
+        if not all(isinstance(item, int) and not isinstance(item, bool) for item in (start, end, duration)) or start < 0 or end <= start or duration != end - start or start < previous_end:
+            raise MatrixFailure(f"{label} phase {index} bounds are invalid")
+        if not isinstance(phase["exit_status"], int) or isinstance(phase["exit_status"], bool) or phase["exit_status"] != 0:
+            raise MatrixFailure(f"{label} phase {index} did not exit successfully")
+        previous_end = end
+
+
 def _validate_raw_evidence_references(
     value: object,
     *,
     label: str,
     path_label: str,
     source_cursor_required: bool,
+    artifact_root: Path | None,
+    budget: ARTIFACTS.ReadBudget | None,
 ) -> Mapping[str, object]:
     fields = {
         "application_runs",
+        "application_timing",
         "client_stdout",
         "expected_acknowledgements",
         "namespace_snapshot",
@@ -726,6 +772,21 @@ def _validate_raw_evidence_references(
         "namespace_snapshot": f"observations/{path_label}/namespace.snapshot",
         "oracle_report": f"observations/{path_label}/oracle-report.json",
     }
+    expected_roles = (
+        ("transaction", "cursor")
+        if path_label == "uninterrupted-control"
+        else (("transaction-setup", "source", "destination") if source_cursor_required else ("source", "destination", "readback"))
+    )
+    expected_paths["application_timing"] = f"observations/{path_label}/application-timing.json"
+    if artifact_root is not None:
+        _validate_application_timing_reference(
+            value["application_timing"],
+            label=f"{label} application timing",
+            path_label=path_label,
+            expected_roles=expected_roles,
+            artifact_root=artifact_root,
+            budget=budget,
+        )
     for name in (
         "client_stdout",
         "expected_acknowledgements",
@@ -739,15 +800,6 @@ def _validate_raw_evidence_references(
             raise MatrixFailure(
                 f"{label} retained {name} does not use its canonical cell path"
             )
-    expected_roles = (
-        ("transaction", "cursor")
-        if path_label == "uninterrupted-control"
-        else (
-            ("transaction-setup", "source", "destination")
-            if source_cursor_required
-            else ("source", "destination", "readback")
-        )
-    )
     runs = value["application_runs"]
     if not isinstance(runs, list) or len(runs) != len(expected_roles):
         raise MatrixFailure(f"{label} retained application run inventory differs")
@@ -1332,8 +1384,8 @@ def _validate_process_recovery_qualification(value: object) -> None:
 def _recompute_process_recovery(
     value: Mapping[str, object],
     *,
-    artifact_root: Path,
-    budget: ARTIFACTS.ReadBudget,
+    artifact_root: Path | None,
+    budget: ARTIFACTS.ReadBudget | None,
 ) -> None:
     retained = value["retained_raw_evidence"]
     assert isinstance(retained, dict)
@@ -1426,6 +1478,7 @@ def _validate_source_abort_retained_references(
         "expected_acknowledgements",
         "namespace_snapshot",
         "oracle_report",
+        "application_timing",
         "compute_checkpoint",
         "migration_application",
         "resource_capsule_manifest",
@@ -1451,6 +1504,7 @@ def _validate_source_abort_retained_references(
         "expected_acknowledgements": "expected-acks.json",
         "namespace_snapshot": "namespace.snapshot",
         "oracle_report": "oracle-report.json",
+        "application_timing": "application-timing.json",
         "compute_checkpoint": "compute-checkpoint.pb",
         "migration_application": "migration/application.aot",
         "resource_capsule_manifest": "migration/capsule-manifest.json",
@@ -1474,6 +1528,14 @@ def _validate_source_abort_retained_references(
         assert isinstance(reference, dict)
         if reference["path"] != f"observations/source-abort/{filename}":
             raise MatrixFailure(f"source-abort retained {name} has a noncanonical path")
+    _validate_application_timing_reference(
+        value["application_timing"],
+        label="source-abort application timing",
+        path_label="source-abort",
+        expected_roles=("source", "destination", "readback"),
+        artifact_root=None,
+        budget=None,
+    )
     runs = value["application_runs"]
     expected_roles = ("source", "destination", "readback")
     if not isinstance(runs, list) or len(runs) != len(expected_roles):
@@ -1599,6 +1661,27 @@ def _recompute_retained_observation(
 ) -> None:
     retained = record["retained_raw_evidence"]
     assert isinstance(retained, dict)
+    timing_roles = (
+        ("transaction", "cursor")
+        if label == "uninterrupted control"
+        else (
+            ("source", "destination", "readback")
+            if label == "source-abort"
+            else (
+                ("transaction-setup", "source", "destination")
+                if source_cursor_required
+                else ("source", "destination", "readback")
+            )
+        )
+    )
+    _validate_application_timing_reference(
+        retained["application_timing"],
+        label=f"{label} application timing",
+        path_label=("uninterrupted-control" if label == "uninterrupted control" else "source-abort" if label == "source-abort" else label.removeprefix("cell ")),
+        expected_roles=timing_roles,
+        artifact_root=artifact_root,
+        budget=budget,
+    )
     application_runs = retained["application_runs"]
     assert isinstance(application_runs, list)
     joined_stdout = bytearray()
@@ -2709,6 +2792,9 @@ def _validate_uninterrupted_control(
     value: object,
     workload: Mapping[str, object],
     execution_inputs: Mapping[str, object],
+    *,
+    artifact_root: Path | None,
+    budget: ARTIFACTS.ReadBudget | None,
 ) -> Mapping[str, object]:
     if not isinstance(value, dict) or set(value) != {
         "schema",
@@ -2744,6 +2830,8 @@ def _validate_uninterrupted_control(
         label="uninterrupted control",
         path_label="uninterrupted-control",
         source_cursor_required=False,
+        artifact_root=artifact_root,
+        budget=budget,
     )
     if (
         _artifact_identity(retained["client_stdout"], "control stdout")
@@ -3244,8 +3332,13 @@ def validate_matrix_receipt(
         or workload["expected_cursor_rows"] < 3
     ):
         raise MatrixFailure("cursor workload must contain at least three rows")
+    timing_budget = ARTIFACTS.ReadBudget(MAX_SQLITE_RETAINED_BYTES)
     control_projection = _validate_uninterrupted_control(
-        receipt["uninterrupted_control"], workload, execution_inputs
+        receipt["uninterrupted_control"],
+        workload,
+        execution_inputs,
+        artifact_root=None,
+        budget=None,
     )
     recovery = receipt["process_recovery_qualification"]
     _validate_process_recovery_qualification(recovery)
@@ -3417,6 +3510,8 @@ def validate_matrix_receipt(
             workload,
             execution_inputs,
             control_projection,
+            artifact_root=None,
+            budget=None,
         )
 
 
@@ -3427,6 +3522,9 @@ def _validate_cell(
     workload: Mapping[str, object],
     execution_inputs: Mapping[str, object],
     control_projection: Mapping[str, object],
+    *,
+    artifact_root: Path | None,
+    budget: ARTIFACTS.ReadBudget | None,
 ) -> None:
     required = {
         "schema",
@@ -3484,6 +3582,8 @@ def _validate_cell(
         label=f"cell {spec.cell_id}",
         path_label=spec.cell_id,
         source_cursor_required=spec.cell_id == "active-read-cursor",
+        artifact_root=artifact_root,
+        budget=budget,
     )
     if (
         _artifact_identity(retained["client_stdout"], f"cell {spec.cell_id} stdout")

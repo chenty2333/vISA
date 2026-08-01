@@ -391,6 +391,21 @@ class RunnerTests(unittest.TestCase):
             stdout.write_bytes(b"")
             stderr.write_bytes(b"")
             report.write_bytes(b'{"fixture":true}\n')
+            timing = source / "application-timing.json"
+            timing.write_bytes(
+                MATRIX.canonical_bytes({
+                    "schema": MATRIX.APPLICATION_TIMING_SCHEMA,
+                    "clock": "python-time.monotonic_ns",
+                    "phases": [{
+                        "phase": "application",
+                        "role": "control",
+                        "start_monotonic_ns": 1,
+                        "end_monotonic_ns": 2,
+                        "duration_ns": 1,
+                        "exit_status": 0,
+                    }],
+                }) + b"\n"
+            )
             published = MATRIX.publish_positive_raw_artifacts(
                 artifact_root,
                 "control",
@@ -398,6 +413,7 @@ class RunnerTests(unittest.TestCase):
                     "application_runs": (("control", stdout, stderr, 0),),
                     "compressed_output": compressed,
                     "oracle_report": report,
+                    "application_timing": timing,
                 },
             )
             self.assertEqual(
@@ -429,6 +445,8 @@ class RunnerTests(unittest.TestCase):
             migrated_report = source / "migrated-oracle-report.json"
             migrated_stdout.write_bytes(b"")
             migrated_report.write_bytes(b'{"fixture":"migrated"}\n')
+            migrated_timing = source / "migrated-application-timing.json"
+            migrated_timing.write_bytes(timing.read_bytes())
             migrated = MATRIX.publish_positive_raw_artifacts(
                 artifact_root,
                 "cut-1",
@@ -439,6 +457,7 @@ class RunnerTests(unittest.TestCase):
                     ),
                     "compressed_output": compressed,
                     "oracle_report": migrated_report,
+                    "application_timing": migrated_timing,
                 },
                 shared_compressed_output=published["compressed_output"],
             )
@@ -462,6 +481,7 @@ class RunnerTests(unittest.TestCase):
                         "application_runs": (),
                         "compressed_output": compressed,
                         "oracle_report": migrated_report,
+                        "application_timing": migrated_timing,
                     },
                     shared_compressed_output=published["compressed_output"],
                 )
@@ -470,10 +490,10 @@ class RunnerTests(unittest.TestCase):
                 [retained],
             )
 
-    def test_v7_formal_runner_has_no_dirty_snapshot_escape(self) -> None:
+    def test_v8_formal_runner_has_no_dirty_snapshot_escape(self) -> None:
         self.assertEqual(
             MATRIX.SCHEMA,
-            "visa-stock-zstd-transparent-migration-matrix-v7",
+            "visa-stock-zstd-transparent-migration-matrix-v8",
         )
         parser_source = inspect.getsource(MATRIX.parse_args)
         main_source = inspect.getsource(MATRIX.main)

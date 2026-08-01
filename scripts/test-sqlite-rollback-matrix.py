@@ -121,6 +121,10 @@ def retained(seed: int, path: str) -> dict[str, object]:
     return {"path": path, **identity(seed)}
 
 
+def timing_reference(path: str, roles: tuple[str, ...]) -> dict[str, object]:
+    return retained(7000 + len(roles), path)
+
+
 def retained_application_runs(
     seed: int, path_label: str, roles: tuple[str, ...]
 ) -> list[dict[str, object]]:
@@ -617,6 +621,10 @@ def complete_receipt() -> dict[str, object]:
                         else ("source", "destination", "readback")
                     ),
                 ),
+                "application_timing": retained(
+                    index + 1199,
+                    f"observations/{spec.cell_id}/application-timing.json",
+                ),
                 "client_stdout": retained(
                     index + 700, f"observations/{spec.cell_id}/raw-client.stdout"
                 ),
@@ -779,6 +787,9 @@ def complete_receipt() -> dict[str, object]:
                     "uninterrupted-control",
                     ("transaction", "cursor"),
                 ),
+                "application_timing": retained(
+                    1999, "observations/uninterrupted-control/application-timing.json"
+                ),
                 "client_stdout": retained(
                     595, "observations/uninterrupted-control/raw-client.stdout"
                 ),
@@ -885,6 +896,9 @@ def complete_receipt() -> dict[str, object]:
                     1300,
                     "source-abort",
                     ("source", "destination", "readback"),
+                ),
+                "application_timing": retained(
+                    1399, "observations/source-abort/application-timing.json"
                 ),
                 "client_stdout": retained(
                     595, "observations/source-abort/raw-client.stdout"
@@ -1181,6 +1195,25 @@ def materialize_retained_receipt(
         oracle_report = write_reference(
             f"observations/{label}/oracle-report.json", retained_report_bytes
         )
+        timing_roles = tuple(role for role, _ in run_payloads)
+        timing_payload = pretty_json_line({
+            "schema": MATRIX.APPLICATION_TIMING_SCHEMA,
+            "clock": "python-time.monotonic_ns",
+            "phases": [
+                {
+                    "phase": "application",
+                    "role": role,
+                    "start_monotonic_ns": (index + 1) * 10,
+                    "end_monotonic_ns": (index + 1) * 10 + 1,
+                    "duration_ns": 1,
+                    "exit_status": 0,
+                }
+                for index, role in enumerate(timing_roles)
+            ],
+        })
+        timing_reference = write_reference(
+            f"observations/{label}/application-timing.json", timing_payload
+        )
         observation = {
             "stdout": {
                 "sha256": stdout["sha256"],
@@ -1214,6 +1247,7 @@ def materialize_retained_receipt(
         }
         retained_observation = {
             "application_runs": application_runs,
+            "application_timing": timing_reference,
             "client_stdout": stdout,
             "expected_acknowledgements": expected,
             "namespace_snapshot": snapshot,

@@ -30,8 +30,9 @@ from typing import Any, Iterator, Sequence
 from receipt_artifacts import ArtifactError, publish_reference
 
 
-SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v7"
+SCHEMA = "visa-stock-zstd-transparent-migration-matrix-v8"
 ORACLE_REPORT_SCHEMA = "visa-stock-zstd-external-oracle-report-v1"
+APPLICATION_TIMING_SCHEMA = "visa-application-timing-v1"
 FAULT_PROCESS_OBSERVATION_SCHEMA = (
     "visa-stock-zstd-fault-process-observation-v1"
 )
@@ -73,6 +74,54 @@ def file_identity(path: Path) -> dict[str, object]:
 
 def bytes_identity(payload: bytes) -> dict[str, object]:
     return {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}
+
+
+def write_application_timing(
+    path: Path, phases: Sequence[dict[str, object]]
+) -> None:
+    """Persist measured application phase timings without semantic verdicts."""
+    if not phases:
+        raise MatrixFailure("application timing receipt has no phases")
+    normalized: list[dict[str, object]] = []
+    previous_end = 0
+    for phase in phases:
+        if set(phase) != {
+            "phase",
+            "role",
+            "start_monotonic_ns",
+            "end_monotonic_ns",
+            "duration_ns",
+            "exit_status",
+        }:
+            raise MatrixFailure("application timing phase has unexpected fields")
+        start = phase["start_monotonic_ns"]
+        end = phase["end_monotonic_ns"]
+        duration = phase["duration_ns"]
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (start, end, duration)
+        ) or start < 0 or end < start or duration != end - start or duration <= 0:
+            raise MatrixFailure("application timing phase has invalid monotonic bounds")
+        if start < previous_end:
+            raise MatrixFailure("application timing phases overlap or are unordered")
+        if not isinstance(phase["phase"], str) or not phase["phase"]:
+            raise MatrixFailure("application timing phase name is empty")
+        if not isinstance(phase["role"], str) or not phase["role"]:
+            raise MatrixFailure("application timing role is empty")
+        if (
+            not isinstance(phase["exit_status"], int)
+            or isinstance(phase["exit_status"], bool)
+            or phase["exit_status"] < 0
+        ):
+            raise MatrixFailure("application timing exit status is invalid")
+        normalized.append(dict(phase))
+        previous_end = end
+    document = {
+        "schema": APPLICATION_TIMING_SCHEMA,
+        "clock": "python-time.monotonic_ns",
+        "phases": normalized,
+    }
+    path.write_bytes(canonical_bytes(document) + b"\n")
 
 
 def run(
@@ -545,6 +594,7 @@ def checkpoint_source(
     container_name = (
         f"visa-zstd-checkpoint-{os.getpid()}-{secrets.token_hex(4)}"
     )
+    started_ns = time.monotonic_ns()
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
         process = subprocess.Popen(
             runtime.command(
@@ -595,6 +645,7 @@ def checkpoint_source(
                 raise MatrixFailure("provider did not release the exact zstd checkpoint")
             try:
                 status = process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
+                ended_ns = time.monotonic_ns()
             except subprocess.TimeoutExpired as error:
                 raise MatrixFailure(
                     "source AOT did not finish checkpointing"
@@ -625,6 +676,8 @@ def checkpoint_source(
         "held_status": held_status,
         "checkpoint_released_status": released_status,
         "checkpoint": file_identity(checkpoint),
+        "application_start_monotonic_ns": started_ns,
+        "application_end_monotonic_ns": ended_ns,
     }
 
 
@@ -766,6 +819,7 @@ def run_control(
     with Provider(
         host_binary, database, socket, admin_capability, case
     ) as provider:
+        application_start_ns = time.monotonic_ns()
         completed = run_aot(
             runtime,
             case,
@@ -775,6 +829,19 @@ def run_control(
             ),
             "control",
             check=True,
+        )
+        application_end_ns = time.monotonic_ns()
+        timing_path = case / "application-timing.json"
+        write_application_timing(
+            timing_path,
+            [{
+                "phase": "application",
+                "role": "control",
+                "start_monotonic_ns": application_start_ns,
+                "end_monotonic_ns": application_end_ns,
+                "duration_ns": application_end_ns - application_start_ns,
+                "exit_status": completed.returncode,
+            }],
         )
         oracle, oracle_report = materialize_and_check(
             provider,
@@ -801,6 +868,7 @@ def run_control(
         },
         {
             "compressed_output": case / "control-output.zst",
+            "application_timing": timing_path,
             "application_runs": (
                 (
                     "control",
@@ -1073,6 +1141,7 @@ def run_migrated_cell(
                 epoch=2,
                 label=f"{label} carrier-only provider before execution",
             )
+            carrier_only_start_ns = time.monotonic_ns()
             carrier_only = run_aot(
                 runtime,
                 case,
@@ -1089,6 +1158,7 @@ def run_migrated_cell(
                 checkpoint=checkpoint,
                 check=False,
             )
+            carrier_only_end_ns = time.monotonic_ns()
             carrier_only_after = read_status(
                 carrier_only_provider.control("status")
             )
@@ -1443,6 +1513,7 @@ def run_migrated_cell(
                     "provider_state_unchanged": True,
                 }
             )
+            destination_start_ns = time.monotonic_ns()
             destination_completed = run_aot(
                 bound_runtime,
                 case,
@@ -1461,8 +1532,35 @@ def run_migrated_cell(
                 / "checkpoint.pb",
                 check=True,
             )
+            destination_end_ns = time.monotonic_ns()
             if destination_completed.returncode != 0:
                 raise MatrixFailure("restored destination did not exit cleanly")
+            source_start_ns = checkpoint_observation.get("application_start_monotonic_ns")
+            source_end_ns = checkpoint_observation.get("application_end_monotonic_ns")
+            if not isinstance(source_start_ns, int) or not isinstance(source_end_ns, int):
+                raise MatrixFailure(f"{label} source application timing is absent")
+            timing_path = case / "application-timing.json"
+            write_application_timing(
+                timing_path,
+                [
+                    {
+                        "phase": "application",
+                        "role": "source",
+                        "start_monotonic_ns": source_start_ns,
+                        "end_monotonic_ns": source_end_ns,
+                        "duration_ns": source_end_ns - source_start_ns,
+                        "exit_status": 0,
+                    },
+                    {
+                        "phase": "application",
+                        "role": "destination",
+                        "start_monotonic_ns": destination_start_ns,
+                        "end_monotonic_ns": destination_end_ns,
+                        "duration_ns": destination_end_ns - destination_start_ns,
+                        "exit_status": destination_completed.returncode,
+                    },
+                ],
+            )
             oracle, oracle_report = materialize_and_check(
                 destination_provider,
                 destination / "migrated-output.zst",
@@ -1524,6 +1622,7 @@ def run_migrated_cell(
                     destination_completed.returncode,
                 ),
             ),
+            "application_timing": timing_path,
             "oracle_report": oracle_report,
         },
     )
@@ -1862,11 +1961,13 @@ def publish_positive_raw_artifacts(
 ) -> dict[str, object]:
     compressed = raw.get("compressed_output")
     report = raw.get("oracle_report")
+    timing = raw.get("application_timing")
     application_runs = raw.get("application_runs")
     if (
         not isinstance(compressed, Path)
         or not isinstance(report, Path)
         or not isinstance(application_runs, tuple)
+        or not isinstance(timing, Path)
     ):
         raise MatrixFailure(f"{label} raw artifact set is malformed")
     prefix = f"raw/{label}"
@@ -1921,6 +2022,11 @@ def publish_positive_raw_artifacts(
             report,
             artifact_root,
             f"{prefix}/oracle-report.json",
+        ),
+        "application_timing": publish_reference(
+            timing,
+            artifact_root,
+            f"{prefix}/application-timing.json",
         ),
     }
 

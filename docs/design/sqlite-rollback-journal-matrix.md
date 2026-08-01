@@ -182,7 +182,7 @@ operation ID.
 
 ## Evidence validity
 
-A valid `visa-stock-sqlite-rollback-journal-matrix-v10` receipt contains one
+A valid `visa-stock-sqlite-rollback-journal-matrix-v11` receipt contains one
 uninterrupted control and exactly eight
 `visa-stock-sqlite-rollback-journal-cell-v5` cells in canonical order. Each
 cell binds its plan entry, exact barrier
@@ -266,5 +266,5 @@ same-request lost-response retry and drain rejection, all eight handoffs, all
 ten oracle runs (one uninterrupted control plus eight migrated cells, followed
 by one source-abort recovery oracle), provider kill/reopen qualification, and
 source-compute abort reconciliation complete. The `plan` subcommand remains
-explicitly non-evidence; the real runner's compact v10
+explicitly non-evidence; the real runner's compact v11
 receipt is the validation input.

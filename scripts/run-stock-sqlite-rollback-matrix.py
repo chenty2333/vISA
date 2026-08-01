@@ -61,6 +61,7 @@ SOURCE_RETAINED_PROOF_SCHEMA = "visa-canonical-source-retained-proof-v1"
 SOURCE_RETAINED_RECEIPT_SCHEMA = "visa-wasi-authority-source-retained-receipt-v1"
 ORACLE_REPORT_SCHEMA = "visa-sqlite-oracle-report-v2"
 ORACLE_PROJECTION_SCHEMA = "visa-sqlite-semantic-projection-v1"
+APPLICATION_TIMING_SCHEMA = "visa-application-timing-v1"
 CONTROL_SCHEMA = CONTRACT.CONTROL_SCHEMA
 EQUIVALENCE_PROJECTION_SCHEMA = "visa-stock-sqlite-equivalence-projection-v1"
 
@@ -70,6 +71,37 @@ MatrixFailure = CONTRACT.MatrixFailure
 
 def canonical_bytes(value: object) -> bytes:
     return CONTRACT.canonical_bytes(value)
+
+
+def write_application_timing(path: Path, phases: Sequence[dict[str, object]]) -> None:
+    if not phases:
+        raise MatrixFailure("application timing receipt has no phases")
+    normalized: list[dict[str, object]] = []
+    previous_end = -1
+    for phase in phases:
+        if set(phase) != {
+            "phase", "role", "start_monotonic_ns", "end_monotonic_ns",
+            "duration_ns", "exit_status",
+        }:
+            raise MatrixFailure("application timing phase has unexpected fields")
+        start = phase["start_monotonic_ns"]
+        end = phase["end_monotonic_ns"]
+        duration = phase["duration_ns"]
+        if not all(isinstance(value, int) and not isinstance(value, bool) for value in (start, end, duration)):
+            raise MatrixFailure("application timing phase has invalid integer bounds")
+        if start < 0 or end <= start or duration != end - start or start < previous_end:
+            raise MatrixFailure("application timing phase has invalid monotonic bounds")
+        if phase["phase"] not in {"application", "reconciliation"} or not isinstance(phase["role"], str) or not phase["role"]:
+            raise MatrixFailure("application timing phase identity is empty")
+        if not isinstance(phase["exit_status"], int) or isinstance(phase["exit_status"], bool) or phase["exit_status"] < 0:
+            raise MatrixFailure("application timing exit status is invalid")
+        normalized.append(dict(phase))
+        previous_end = end
+    path.write_bytes(canonical_bytes({
+        "schema": APPLICATION_TIMING_SCHEMA,
+        "clock": "python-time.monotonic_ns",
+        "phases": normalized,
+    }) + b"\n")
 
 
 def development_projection(value: Mapping[str, object]) -> dict[str, object]:
@@ -202,6 +234,7 @@ def retain_raw_evidence(
         "expected_acknowledgements",
         "namespace_snapshot",
         "oracle_report",
+        "application_timing",
     }:
         raise MatrixFailure(f"{label} omitted its raw evidence paths")
     references: dict[str, object] = {}
@@ -243,6 +276,7 @@ def retain_raw_evidence(
         "expected_acknowledgements": "expected-acks.json",
         "namespace_snapshot": "namespace.snapshot",
         "oracle_report": "oracle-report.json",
+        "application_timing": "application-timing.json",
     }
     for name, filename in filenames.items():
         source = raw_paths[name]
@@ -321,6 +355,7 @@ def retain_source_abort_evidence(
         "expected_acknowledgements",
         "namespace_snapshot",
         "oracle_report",
+        "application_timing",
         "compute_checkpoint",
         "migration_application",
         "resource_capsule_manifest",
@@ -422,6 +457,7 @@ def retain_source_abort_evidence(
             "expected_acknowledgements": "expected-acks.json",
             "namespace_snapshot": "namespace.snapshot",
             "oracle_report": "oracle-report.json",
+            "application_timing": "application-timing.json",
             "compute_checkpoint": "compute-checkpoint.pb",
             "migration_application": "migration/application.aot",
             "resource_capsule_manifest": "migration/capsule-manifest.json",
@@ -621,10 +657,13 @@ class AotProcess:
         self.stderr_path = stderr_path
         self.container_name = container_name
         self.docker = docker
+        self.start_monotonic_ns = time.monotonic_ns()
+        self.end_monotonic_ns: int | None = None
 
     def wait(self, *, expect_checkpoint: bool = False) -> int:
         try:
             status = self.process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
+            self.end_monotonic_ns = time.monotonic_ns()
         except subprocess.TimeoutExpired as error:
             self.kill()
             raise MatrixFailure("stock SQLite AOT timed out") from error
@@ -665,6 +704,20 @@ def completed_application_run(
     if not role or status is None or status != 0:
         raise MatrixFailure(f"{role or 'unnamed'} application segment did not complete cleanly")
     return role, process.stdout_path, process.stderr_path, status
+
+
+def timing_phase(role: str, process: AotProcess) -> dict[str, object]:
+    end = process.end_monotonic_ns
+    if end is None:
+        raise MatrixFailure(f"{role} application timing ended before process wait")
+    return {
+        "phase": "application",
+        "role": role,
+        "start_monotonic_ns": process.start_monotonic_ns,
+        "end_monotonic_ns": end,
+        "duration_ns": end - process.start_monotonic_ns,
+        "exit_status": process.process.returncode,
+    }
 
 
 class DockerAot:
@@ -2452,6 +2505,11 @@ def run_uninterrupted_control(
             cwd=execution,
         )
         oracle_report_path = external_oracle.pop("_report_path")
+        timing_path = case / "application-timing.json"
+        write_application_timing(
+            timing_path,
+            [timing_phase("transaction", transaction), timing_phase("cursor", cursor)],
+        )
     return {
         "schema": CONTROL_SCHEMA,
         "execution": "single-provider-uninterrupted-transaction-and-readback",
@@ -2468,6 +2526,7 @@ def run_uninterrupted_control(
             "expected_acknowledgements": expected_path,
             "namespace_snapshot": snapshot_path,
             "oracle_report": oracle_report_path,
+            "application_timing": timing_path,
         },
     }
 
@@ -2720,11 +2779,16 @@ def run_matrix_cell(
                 completed_application_run("source", source_process),
                 completed_application_run("destination", destination_process),
             ]
+            timing_processes: list[tuple[str, AotProcess]] = [
+                ("source", source_process),
+                ("destination", destination_process),
+            ]
             source_cursor_stdout: Path | None = None
             if setup_process is not None:
                 application_runs.insert(
                     0, completed_application_run("transaction-setup", setup_process)
                 )
+                timing_processes.insert(0, ("transaction-setup", setup_process))
                 source_cursor_stdout = source_process.stdout_path
             else:
                 readback = run_script(
@@ -2745,6 +2809,7 @@ def run_matrix_cell(
                 application_runs.append(
                     completed_application_run("readback", readback)
                 )
+                timing_processes.append(("readback", readback))
             components = [entry[1] for entry in application_runs]
             observation, txids = strict_stdout_observation(
                 transcript=case / "raw-client.stdout",
@@ -2777,6 +2842,11 @@ def run_matrix_cell(
                 cwd=destination,
             )
             oracle_report_path = external_oracle.pop("_report_path")
+            timing_path = case / "application-timing.json"
+            write_application_timing(
+                timing_path,
+                [timing_phase(role, process) for role, process in timing_processes],
+            )
 
     cell: dict[str, object] = {
         "schema": CONTRACT.CELL_SCHEMA,
@@ -2805,6 +2875,7 @@ def run_matrix_cell(
             "expected_acknowledgements": expected_path,
             "namespace_snapshot": snapshot_path,
             "oracle_report": oracle_report_path,
+            "application_timing": timing_path,
         },
     }
     if continuation_witness is not None:
@@ -3309,6 +3380,7 @@ def qualify_source_abort_reconciliation(
         ):
             raise MatrixFailure("source provider was not restored before coordinator death")
 
+        recovered_start_ns = time.monotonic_ns()
         recovered = run(
             [
                 driver_binary,
@@ -3321,6 +3393,7 @@ def qualify_source_abort_reconciliation(
             timeout=PROCESS_TIMEOUT_SECONDS,
             check=False,
         )
+        recovered_end_ns = time.monotonic_ns()
         recovered_stdout = driver_root / "recovered.stdout"
         recovered_stderr = driver_root / "recovered.stderr"
         write_new(recovered_stdout, recovered.stdout)
@@ -3409,6 +3482,33 @@ def qualify_source_abort_reconciliation(
                 0,
             ),
             completed_application_run("readback", readback),
+        )
+        source_start_ns = source_process.start_monotonic_ns
+        source_end_ns = source_process.end_monotonic_ns
+        if source_end_ns is None:
+            raise MatrixFailure("source-abort source timing did not finish")
+        timing_path = case / "application-timing.json"
+        write_application_timing(
+            timing_path,
+            [
+                {
+                    "phase": "application",
+                    "role": "source",
+                    "start_monotonic_ns": source_start_ns,
+                    "end_monotonic_ns": source_end_ns,
+                    "duration_ns": source_end_ns - source_start_ns,
+                    "exit_status": 0,
+                },
+                {
+                    "phase": "application",
+                    "role": "destination",
+                    "start_monotonic_ns": recovered_start_ns,
+                    "end_monotonic_ns": recovered_end_ns,
+                    "duration_ns": recovered_end_ns - recovered_start_ns,
+                    "exit_status": recovered.returncode,
+                },
+                timing_phase("readback", readback),
+            ],
         )
         migration_manifest = require_object(
             final_record.get("migration_manifest"), "driver migration manifest"
@@ -3595,6 +3695,7 @@ def qualify_source_abort_reconciliation(
             "expected_acknowledgements": expected_path,
             "namespace_snapshot": snapshot_path,
             "oracle_report": oracle_report_path,
+            "application_timing": timing_path,
             "compute_checkpoint": binding_root / "artifacts" / "checkpoint.pb",
             "migration_application": binding_root / "artifacts" / "application.aot",
             "resource_capsule_manifest": binding_root / "capsule" / "manifest.json",
