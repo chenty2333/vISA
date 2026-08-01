@@ -350,8 +350,25 @@ def run_sqlite_carrier_only(
             completed = run(command, cwd=case, timeout=300)
             end_ns = time.monotonic_ns()
             status_after = sqlite_runner.CONTRACT.status_projection(provider.status())
-            fresh_snapshot = case / "fresh-provider.snapshot"
-            provider.control("snapshot-namespace", fresh_snapshot)
+            snapshot_client = sqlite_runner.stable_id(
+                f"{cut}-carrier-only-snapshot-client"
+            )
+            fresh_namespace = sqlite_runner.snapshot_namespace(
+                runtime,
+                case_root=output_root,
+                destination=case,
+                provider=provider,
+                environment=sqlite_runner.guest_environment(
+                    socket_path,
+                    session=session,
+                    owner=owner,
+                    client=snapshot_client,
+                    guest_capability=guest,
+                    epoch=2,
+                ),
+                cell_id=f"baseline-carrier-{fixture}-{cut}",
+            )
+            fresh_snapshot = fresh_namespace.pop("path")
     cell = next(item for item in receipt["cells"] if item["cell_id"] == cut)
     expected_reference = cell["retained_raw_evidence"]["expected_acknowledgements"]
     expected_acks = output_root / str(expected_reference["path"])
@@ -390,6 +407,7 @@ def run_sqlite_carrier_only(
         "fresh_provider_status_before": status_before,
         "fresh_provider_status_after": status_after,
         "fresh_provider_namespace": identity(fresh_snapshot),
+        "fresh_provider_snapshot_gate": fresh_namespace,
         "fresh_provider_oracle": {
             "exit_status": resource_oracle.returncode,
             "stdout": {
