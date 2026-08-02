@@ -14,9 +14,9 @@ use rustix::fs::{CWD, RenameFlags, renameat_with};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use visa_durable_sqlite::{
-    DatabaseGuard, StoreLock, checkpoint_truncate, cleanup_owned_initialization_files,
-    ensure_private_parent, ensure_sqlite_sidecars_absent, initialization_path, publish_noreplace,
-    sync_file, sync_parent_directory,
+    DatabaseGuard, DurableStoreError, StoreLock, checkpoint_truncate,
+    cleanup_owned_initialization_files, ensure_private_parent, ensure_sqlite_sidecars_absent,
+    initialization_path, publish_noreplace, sync_file, sync_parent_directory,
 };
 use visa_wasi_protocol::{
     AdminCapability, AdminOperation, AdminRequest, AdminResponse, BarrierDirective, BarrierPhase,
@@ -140,6 +140,7 @@ pub enum ProviderError {
     AlreadyExists,
     Missing,
     Integrity(&'static str),
+    Durable(DurableStoreError),
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
     Codec,
@@ -153,6 +154,7 @@ impl fmt::Display for ProviderError {
             Self::AlreadyExists => formatter.write_str("provider target already exists"),
             Self::Missing => formatter.write_str("provider input is missing"),
             Self::Integrity(message) => write!(formatter, "provider integrity failure: {message}"),
+            Self::Durable(error) => write!(formatter, "provider durable store failure: {error}"),
             Self::Io(error) => write!(formatter, "provider filesystem failure: {error}"),
             Self::Sqlite(error) => write!(formatter, "provider SQLite failure: {error}"),
             Self::Codec => formatter.write_str("provider wire codec failure"),
@@ -163,6 +165,7 @@ impl fmt::Display for ProviderError {
 impl std::error::Error for ProviderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Durable(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             _ => None,
@@ -1666,9 +1669,19 @@ fn operation_errno(error: &ProviderError) -> u16 {
         ProviderError::AlreadyExists => errno::EXIST,
         ProviderError::Missing => errno::NOENT,
         ProviderError::Integrity(_)
+        | ProviderError::Durable(_)
         | ProviderError::Io(_)
         | ProviderError::Sqlite(_)
         | ProviderError::Codec => errno::IO,
+    }
+}
+
+/// Preserve a durable publication failure for diagnostics, except for the
+/// one caller-visible no-replace outcome that has a dedicated provider error.
+fn map_durable_publish_error(error: DurableStoreError) -> ProviderError {
+    match error {
+        DurableStoreError::AlreadyExists => ProviderError::AlreadyExists,
+        error => ProviderError::Durable(error),
     }
 }
 
@@ -1741,7 +1754,7 @@ pub fn create_provider(config: &CreateConfig) -> Result<(), ProviderError> {
         ensure_sqlite_sidecars_absent(&temporary_path)
             .map_err(|_| ProviderError::Integrity("initial sidecar remained"))?;
         publish_noreplace(&temporary_path, &config.database, guard.file())
-            .map_err(|_| ProviderError::AlreadyExists)
+            .map_err(map_durable_publish_error)
     })();
     if result.is_err() {
         cleanup_owned_initialization_files(&temporary_path, guard.file());
@@ -1799,7 +1812,7 @@ pub fn restore_provider(config: &RestoreConfig) -> Result<(), ProviderError> {
             .map_err(|_| ProviderError::Integrity("restore checkpoint failed"))?;
         connection.close().map_err(|_| ProviderError::Integrity("restore close failed"))?;
         publish_noreplace(&temporary_path, &config.database, guard.file())
-            .map_err(|_| ProviderError::AlreadyExists)
+            .map_err(map_durable_publish_error)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary_path);
@@ -3890,4 +3903,21 @@ fn u64_to_sql(value: u64) -> i64 {
 
 fn sql_to_u64(value: i64) -> u64 {
     u64::from_ne_bytes(value.to_ne_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durable_publish_mapping_only_collapses_true_target_conflicts() {
+        assert!(matches!(
+            map_durable_publish_error(DurableStoreError::AlreadyExists),
+            ProviderError::AlreadyExists
+        ));
+        assert!(matches!(
+            map_durable_publish_error(DurableStoreError::Io(std::io::Error::other("ZFS reject"))),
+            ProviderError::Durable(DurableStoreError::Io(_))
+        ));
+    }
 }
