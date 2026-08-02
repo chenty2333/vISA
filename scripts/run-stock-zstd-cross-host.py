@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import stock_zstd_cross_host as evidence
 
@@ -109,6 +109,28 @@ def timing_phase(name: str, start: int, end: int) -> dict[str, object]:
     }
 
 
+def checked_build_configuration_sha256(execution: Mapping[str, object]) -> str:
+    """Return the source-lock digest used as the migration build identity.
+
+    ``verify_execution_inputs`` owns the provenance check; this local guard
+    makes the cross-host glue fail clearly if that canonical contract changes.
+    """
+
+    value = execution.get("stock_zstd_source_lock_sha256")
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise RunFailure(
+            "validated execution binding has no canonical stock-zstd source-lock digest"
+        )
+    return value
+
+
+def ensure_private_directory(path: Path) -> None:
+    """Create an owned runner directory with the mode required by the host."""
+
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
+
+
 def remote_provider_command(root: Path, request: dict[str, Any], *args: str | Path) -> list[str]:
     return [
         os.fspath(root / "tools" / "visa_wasi_host"),
@@ -122,7 +144,7 @@ def remote_provider_command(root: Path, request: dict[str, Any], *args: str | Pa
 @contextlib.contextmanager
 def remote_provider(root: Path, request: dict[str, Any]) -> Iterator[subprocess.Popen[bytes]]:
     destination = root / "destination"
-    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_private_directory(destination)
     socket = destination / "provider.sock"
     socket.unlink(missing_ok=True)
     stdout = (destination / "provider.stdout").open("ab")
@@ -236,7 +258,9 @@ def remote_prepare(root: Path) -> int:
     request = load_remote_request(root)
     destination = root / "destination"
     database = destination / "provider" / "state.sqlite"
-    database.parent.mkdir(mode=0o700, parents=True, exist_ok=False)
+    # The provider creates its own immediate database parent.  The socket is
+    # placed directly under ``destination``, which must itself be private.
+    ensure_private_directory(destination)
     restored = run(
         [
             root / "tools" / "visa_wasi_host",
@@ -621,6 +645,7 @@ def main_controller(arguments: argparse.Namespace) -> int:
     docker = local.require_tool("docker")
     execution = local.verify_execution_inputs(repository, docker, build_receipt)
     runtime = local.DockerAot(docker, execution["wanco_image_id"], executable)
+    build_configuration_sha256 = checked_build_configuration_sha256(execution)
     cargo_target = Path(
         json.loads(local.run(["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"], cwd=repository).stdout)["target_directory"]
     )
@@ -695,7 +720,7 @@ def main_controller(arguments: argparse.Namespace) -> int:
                 source_restore_client=source_restore_client,
                 destination_client=destination_client,
                 build_receipt=build_receipt,
-                build_configuration_sha256=execution["build_configuration_sha256"],
+                build_configuration_sha256=build_configuration_sha256,
                 runtime_sha256=execution["wanco_runtime_sha256"],
             )
             seal = local.bind_command(bind_binary, "seal", binding, "intent.json", "migration-manifest.json")

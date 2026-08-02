@@ -383,6 +383,26 @@ def main() -> int:
         output.write_bytes(original)
 
     runner = load_runner()
+    with tempfile.TemporaryDirectory(prefix="visa-stock-zstd-cross-host-private-dir-") as value:
+        private = Path(value) / "nested" / "destination"
+        runner.ensure_private_directory(private)
+        assert private.is_dir()
+        assert private.stat().st_mode & 0o777 == 0o700
+        private.chmod(0o755)
+        runner.ensure_private_directory(private)
+        assert private.stat().st_mode & 0o777 == 0o700
+    tests += 1
+    assert runner.checked_build_configuration_sha256(
+        {"stock_zstd_source_lock_sha256": "a" * 64}
+    ) == "a" * 64
+    for invalid in ({}, {"stock_zstd_source_lock_sha256": "A" * 64}, {"stock_zstd_source_lock_sha256": "a" * 63}):
+        try:
+            runner.checked_build_configuration_sha256(invalid)
+        except runner.RunFailure:
+            pass
+        else:
+            raise AssertionError("invalid cross-host build identity was accepted")
+    tests += 1
     same_host = runner.load_same_host_runner(ROOT)
     assert Path(same_host.checkpoint_source.__code__.co_filename).resolve() == (
         ROOT / "scripts" / "run-stock-zstd-migration-matrix.py"
@@ -402,7 +422,7 @@ def main() -> int:
         "remote hello test",
     )
     tests += 1
-    print(f"stock-zstd cross-host tests: {tests}/8 passed")
+    print(f"stock-zstd cross-host tests: {tests}/10 passed")
     return 0
 
 
