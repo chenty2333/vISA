@@ -83,9 +83,32 @@ python3 scripts/stock_zstd_cross_host.py validate \
 python3 scripts/test-stock-zstd-cross-host.py
 ```
 
-The compact publication retains the schema-bound receipt, raw endpoint and SSH
-public-host-key observations, transfer manifest, destination process streams,
-controller-clock timing, and one shared compressed output. Authentication
-credentials, capabilities, provider databases, checkpoint bytes, capsule bytes,
-runtime libraries, and temporary remote directories are not published; their
-identities remain bound in the receipt and transfer manifest.
+The v1 receipt above is the private execution authority. It retains the pinned
+SSH witness and endpoint details needed to audit the original operation and
+must not be copied into a paper package or Zenodo deposit.
+
+## Public derivative
+
+Create an explicitly named public v2 projection only after v1 validates. The
+projection does not rerun the workload:
+
+```sh
+python3 scripts/make-stock-zstd-cross-host-public-receipt.py create \
+  target/final-stock-zstd-cross-host-316b8d7 \
+  target/stock-zstd-cross-host-public-v2 \
+  --expected-revision 316b8d78cbe2ad9f341efe96d3bf4b0b9477847e \
+  --stock-zstd /usr/bin/zstd
+python3 scripts/make-stock-zstd-cross-host-public-receipt.py validate \
+  target/stock-zstd-cross-host-public-v2/receipt.json \
+  --expected-revision 316b8d78cbe2ad9f341efe96d3bf4b0b9477847e \
+  --stock-zstd /usr/bin/zstd
+python3 scripts/test-stock-zstd-cross-host-public-receipt.py
+```
+
+The v2 allowlist retains the receipt, controller timing, process streams,
+control oracle, shared compressed output, transfer manifest, and redacted
+endpoint/status observations. It binds the private v1 receipt by SHA-256 but
+does not retain a hostname, address, kernel/OS fingerprint, legacy endpoint
+identifier, SSH key/fingerprint, or `raw/known_hosts`. Checkpoint bytes,
+capsule bytes, provider state, runtime libraries, credentials, and temporary
+remote directories remain private.
