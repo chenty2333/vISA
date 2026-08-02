@@ -201,9 +201,12 @@ def parse_status(payload: bytes, label: str) -> dict[str, Any]:
         value = json.loads(payload)
     except json.JSONDecodeError as error:
         raise RunFailure(f"cannot parse {label} status: {error}") from error
-    if not isinstance(value, dict):
-        raise RunFailure(f"{label} status is not an object")
-    return value
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        raise RunFailure(f"{label} did not return a successful control status")
+    status = value.get("status")
+    if not isinstance(status, dict):
+        raise RunFailure(f"{label} response has no status object")
+    return status
 
 
 def verify_transfer_manifest(root: Path) -> None:

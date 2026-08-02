@@ -403,6 +403,22 @@ def main() -> int:
         else:
             raise AssertionError("invalid cross-host build identity was accepted")
     tests += 1
+    remote_status = status("prepared", 1, 64)
+    assert runner.parse_status(
+        json.dumps({"ok": True, "status": remote_status}).encode(), "remote prepared"
+    ) == remote_status
+    for malformed in (
+        b"not-json",
+        json.dumps({"ok": False, "status": remote_status}).encode(),
+        json.dumps({"ok": True, "status": None}).encode(),
+    ):
+        try:
+            runner.parse_status(malformed, "remote prepared")
+        except runner.RunFailure:
+            pass
+        else:
+            raise AssertionError("malformed remote control response was accepted")
+    tests += 1
     same_host = runner.load_same_host_runner(ROOT)
     assert Path(same_host.checkpoint_source.__code__.co_filename).resolve() == (
         ROOT / "scripts" / "run-stock-zstd-migration-matrix.py"
@@ -422,7 +438,7 @@ def main() -> int:
         "remote hello test",
     )
     tests += 1
-    print(f"stock-zstd cross-host tests: {tests}/10 passed")
+    print(f"stock-zstd cross-host tests: {tests}/11 passed")
     return 0
 
 
