@@ -285,10 +285,11 @@ pub fn sync_parent_directory(database_path: &Path) -> Result<()> {
 ///
 /// The payload is written to a nonce-named `0600` temporary file using
 /// `O_CREAT|O_EXCL|O_NOFOLLOW`, fsynced while held open, and then moved into
-/// place with `RENAME_NOREPLACE`. The containing private directory is fsynced
-/// after the rename. This helper deliberately does not inspect SQLite headers
-/// or sidecars, so it can be used for schema-independent manifests and other
-/// durable metadata.
+/// place with an atomic no-replace operation. `RENAME_NOREPLACE` is preferred;
+/// filesystems that reject that flag use a same-filesystem hard-link/unlink
+/// fallback. The containing private directory is fsynced after publication.
+/// This helper deliberately does not inspect SQLite headers or sidecars, so it
+/// can be used for schema-independent manifests and other durable metadata.
 pub fn publish_private_noreplace(final_path: &Path, bytes: &[u8], nonce: [u8; 16]) -> Result<()> {
     ensure_private_parent(final_path)?;
     let temporary_path = initialization_path(final_path, nonce);
@@ -305,17 +306,7 @@ pub fn publish_private_noreplace(final_path: &Path, bytes: &[u8], nonce: [u8; 16
         temporary_file.write_all(bytes).map_err(map_io)?;
         verify_private_regular_fd(&temporary_file)?;
         sync_file(&temporary_file)?;
-        renameat_with(CWD, &temporary_path, CWD, final_path, RenameFlags::NOREPLACE).map_err(
-            |error| {
-                if error == rustix::io::Errno::EXIST {
-                    DurableStoreError::AlreadyExists
-                } else if error == rustix::io::Errno::NOENT {
-                    DurableStoreError::Missing
-                } else {
-                    map_errno(error)
-                }
-            },
-        )?;
+        publish_move_noreplace(&temporary_path, final_path, &temporary_file)?;
         sync_parent_directory(final_path)
     })();
 
@@ -325,7 +316,7 @@ pub fn publish_private_noreplace(final_path: &Path, bytes: &[u8], nonce: [u8; 16
     result
 }
 
-/// Publish a closed SQLite initialization file with `RENAME_NOREPLACE`.
+/// Publish a closed SQLite initialization file without replacing a final path.
 ///
 /// The descriptor is checked and fsynced before the rename. Both the source
 /// and destination parents are fsynced after it, which also handles callers
@@ -341,22 +332,72 @@ pub fn publish_noreplace(
     verify_private_regular_fd(temporary_file)?;
     verify_sqlite_header_fd(temporary_file)?;
     sync_file(temporary_file)?;
-    renameat_with(CWD, temporary_path, CWD, final_path, RenameFlags::NOREPLACE).map_err(
-        |error| {
-            if error == rustix::io::Errno::EXIST {
-                DurableStoreError::AlreadyExists
-            } else if error == rustix::io::Errno::NOENT {
-                DurableStoreError::Missing
-            } else {
-                map_errno(error)
-            }
-        },
-    )?;
+    publish_move_noreplace(temporary_path, final_path, temporary_file)?;
     sync_parent_directory(temporary_path)?;
     if temporary_path.parent() != final_path.parent() {
         sync_parent_directory(final_path)?;
     }
     Ok(())
+}
+
+/// Atomically make `final_path` refer to `temporary_path` without replacing an
+/// existing final entry. Some container-backed filesystems reject
+/// `RENAME_NOREPLACE` with `EINVAL`/`EOPNOTSUPP`; in that case, a hard link
+/// followed by removal of the temporary name has the same no-replace property
+/// for the regular private files accepted by this module.
+fn publish_move_noreplace(
+    temporary_path: &Path,
+    final_path: &Path,
+    temporary_file: &impl AsFd,
+) -> Result<()> {
+    match renameat_with(CWD, temporary_path, CWD, final_path, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if error == rustix::io::Errno::INVAL
+                || error == rustix::io::Errno::NOSYS
+                || error == rustix::io::Errno::NOTSUP
+                || error == rustix::io::Errno::OPNOTSUPP =>
+        {
+            publish_link_noreplace(temporary_path, final_path, temporary_file)
+        }
+        Err(error) if error == rustix::io::Errno::EXIST => Err(DurableStoreError::AlreadyExists),
+        Err(error) if error == rustix::io::Errno::NOENT => Err(DurableStoreError::Missing),
+        Err(error) => Err(map_errno(error)),
+    }
+}
+
+fn publish_link_noreplace(
+    temporary_path: &Path,
+    final_path: &Path,
+    temporary_file: &impl AsFd,
+) -> Result<()> {
+    match fs::hard_link(temporary_path, final_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(DurableStoreError::AlreadyExists);
+        }
+        Err(error) => return Err(map_io(error)),
+    }
+    remove_owned_file(temporary_path, temporary_file)
+}
+
+/// Remove a temporary name only while it still resolves to the file held by
+/// `temporary_file`. A publication fallback must not delete a replacement path
+/// if another same-UID process has moved the temporary file after the link.
+fn remove_owned_file(temporary_path: &Path, temporary_file: &impl AsFd) -> Result<()> {
+    let guard_stat = fstat(temporary_file).map_err(map_errno)?;
+    match fs::symlink_metadata(temporary_path) {
+        Ok(path_metadata)
+            if path_metadata.file_type().is_file()
+                && path_metadata.dev() == guard_stat.st_dev
+                && path_metadata.ino() == guard_stat.st_ino =>
+        {
+            fs::remove_file(temporary_path).map_err(map_io)
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(map_io(error)),
+    }
 }
 
 /// Best-effort cleanup for an initialization path, guarded by the inode held

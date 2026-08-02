@@ -1,4 +1,8 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt, PermissionsExt},
+    path::PathBuf,
+};
 
 use rusqlite::Connection;
 use tempfile::{TempDir, tempdir};
@@ -112,6 +116,38 @@ fn publication_is_noreplace_and_cleanup_is_inode_bound() {
     second_guard.cleanup_owned();
     assert_eq!(fs::read(&second_temporary).expect("retain swapped path"), b"attacker path");
     drop(second_guard);
+}
+
+#[test]
+fn hard_link_noreplace_fallback_preserves_the_existing_final_path() {
+    let fixture = Fixture::new();
+    let temporary = fixture.database.with_extension("temporary");
+    fs::write(&temporary, b"first").expect("write first temporary file");
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
+        .expect("restrict first temporary file");
+    let temporary_file = fs::File::open(&temporary).expect("open first temporary file");
+
+    publish_link_noreplace(&temporary, &fixture.database, &temporary_file)
+        .expect("publish through hard link");
+    assert_eq!(fs::read(&fixture.database).expect("read first final"), b"first");
+    assert!(!temporary.exists(), "temporary link source must be removed");
+    assert_eq!(
+        fs::metadata(&fixture.database).expect("final metadata").nlink(),
+        1,
+        "unlinking the temporary name must restore a single final link"
+    );
+
+    let competing = fixture.database.with_extension("competing");
+    fs::write(&competing, b"second").expect("write competing temporary file");
+    fs::set_permissions(&competing, fs::Permissions::from_mode(0o600))
+        .expect("restrict competing temporary file");
+    let competing_file = fs::File::open(&competing).expect("open competing temporary file");
+    assert!(matches!(
+        publish_link_noreplace(&competing, &fixture.database, &competing_file),
+        Err(DurableStoreError::AlreadyExists)
+    ));
+    assert_eq!(fs::read(&fixture.database).expect("retain final"), b"first");
+    assert_eq!(fs::read(&competing).expect("retain competing source"), b"second");
 }
 
 #[test]
