@@ -11,6 +11,16 @@ Component/runtime 到达 cooperative safe point，只能说明 portable state �
 事实压成一个 `frozen` 状态会允许 source 或旧 provider 在 destination 启动后
 继续产生工作。
 
+## Process-local capture 不是 durable snapshot
+
+Runtime 停止 source、关闭 provider dispatch 并返回 sealed snapshot，只能证明当前
+进程曾形成该 semantic cut；在 coordinator 原子记录 `SnapshotRecorded` 或 durable
+capture authority 返回可查询 receipt 之前，重启后的进程仍无法取得这份 snapshot。
+若在该窗口同时丢失 coordinator 和 source runtime，不能从 lineage parent 重放、
+重新打开 source，或把缺失 snapshot 猜成 aborted。Rollback acknowledgement 和
+snapshot-store acknowledgement 同样可能丢失，必须查询精确 operation 或保留
+`recovery-required`。
+
 ## Continuation record 和 receipt 不是外部 authority
 
 vISA 可以保存协调 intent、receipt 和查询结果，但不能因为本地记录了

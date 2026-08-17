@@ -4,63 +4,54 @@
 
 ## 当前位置
 
-vISA 当前是一套规模远大于其新职责的 WebAssembly state-continuity 研究仓库。
-它拥有 portable/native state 分割、canonical reducer、runtime coordinator、
-resource profile、真实 runtime/provider adapter 和多条端到端实验，但也同时保留
-reference kernel、冻结 Linux service crates、重复 oracle、多个 runtime/ISA
-qualification、claim/evidence publication、release scaffolding 和历史研究文档。
+vISA 已完成 destructive rebaseline，当前是一套小型、可嵌入、可恢复的
+Semantic Continuation Engine，而不是旧 WebAssembly continuity 研究仓库的兼容
+演进。Active workspace 已收敛为 `visa-core`、`visa-coordinator`、
+`visa-profile`、`visa-wasi` 和 `visa-reference` 五个 crate；旧 reference kernel、
+Linux service、runtime/ISA qualification、oracle、claim/evidence、publication 和
+release scaffolding 已从活动树删除，历史只由 Git 保留。
 
-这些旧结果证明过若干 bounded 场景，但项目没有外部用户或兼容承诺。用户已经
-决定，新实现不继承旧 API、schema、snapshot、journal、claim、evidence 或
-repository-layout 义务；旧代码和文档可以直接删除，Git history 足以承担考古。
+项目已迁移到 Rust 1.95。当前核心、profile 和 reducer 保持 `no_std + alloc`
+边界，完整 workspace 通过格式、严格 lint、测试和无默认特性检查。这些检查保护
+当前实现，不构成稳定 API、持久化格式或兼容承诺。
 
-## 选定的新方向
+## 已建立的引擎
 
-vISA 将成为 Semantic World 的小型 portable semantic-continuation layer。它只
-拥有 continuity scope、portable-state lineage、continuity profile、snapshot、
-runtime safe-point 语义和 continuation recovery。
+`visa-core` 已拥有 portable snapshot、continuity scope、state lineage、profile
+identity、resource requirement、canonical receipt 和 pure preflight/apply reducer。
+`visa-coordinator` 已实现 durable pending operation、exact lost-ack query、原子
+lineage CAS，以及 pre-commit source recovery 与 post-commit destination recovery
+的分离。
 
-TheKernel 拥有 world、provider binding/generation、capability、native resource
-和 admission/execution fence；Nexus/CSER 拥有 escaped effect、custody、outcome、
-physical claim、settlement 与 retirement。vISA 通过 exact receipt 协调这些
-权威，但不复制其 ledger 或自行推进其事实。
+第一条 reference vertical 使用两个隔离的 Wasmtime Component instance、typed
+counter/session state、SQLite continuation store、reference binding authority 和
+durable KV provider。它已经验证 fresh destination binding、provider generation
+推进、source fencing、双重 activation gate、重复调用幂等，以及 prepare、commit
+和 activation acknowledgement 丢失后的重启恢复。Portable snapshot 不包含
+runtime instance、SQLite connection、provider handle、capability 或其他 native
+state。
 
-预期的最小产品面是 `visa-core`、`visa-coordinator`、`visa-profile`、
-`visa-wasi` 和 `visa-reference`。这些名称表达当前责任，不构成兼容承诺。
+## 当前真实边界
 
-## 可复用的基础
+Durable recovery 从 sealed snapshot 被原子记录为 `SnapshotRecorded` 开始。在
+runtime 已停止 source 并形成 process-local snapshot、但 coordinator 尚未把该
+snapshot 持久化的窗口内，如果 coordinator 和 source runtime 同时消失，新进程
+没有足够事实重建 guest state。当前实现对此进入 `recovery-required`，不会猜测
+abort、success 或重新打开 source。
 
-现有实现中值得重新审查和提取的是：
-
-- pure preflight/apply/replay 与 rejected transition 不修改状态；
-- portable logical state 与 native binding 的严格分离；
-- cooperative safe point、prepare-before-activate 和失败后 source recovery；
-- opaque、host-local destination preparation；
-- profile-driven typed state codec 和 resource disposition；
-- SQLite provider 中与真实 fencing、durability 和 fresh binding 直接相关的机制。
-
-这些是设计和实现种子，不是必须保留的 crate、API 或依赖。Wanco 与 stock
-SQLite/zstd 路径展示了 transparent compute carrier 的未来价值，但旧
-qualification implementation 不作为第一条新主线保留。
-
-## 当前约束
-
-仓库仍固定在旧 Rust nightly，源码尚未迁移到用户更新后的工具链。因为 active
-workspace 尚未收缩，现在不能把现有 build、test 或 evidence 结果视为新路线的
-基线。工具链迁移应发生在破坏性删除之后，避免为即将删除的 package 和 gate
-付出适配成本。
-
-TheKernel 当前仍在收口 x86_64 Linux、io_uring 和真实 lifecycle，尚无通用
-World runtime 或 vISA adapter。Nexus 也正在进行 provider-generation-aware CSER
-Core rebaseline。两者不是 vISA 当前工作的阻塞依赖；vISA 先通过 reference ports
-建立自己的边界，等对应外部 authority 稳定并出现真实需求后再接入。
+TheKernel 和 Nexus/CSER 目前都尚未形成适合 vISA 消费的稳定 authority surface。
+这不阻塞 vISA 自身继续演进，但意味着现在不应冻结 `WorldId`、binding receipt、
+effect closure 或跨仓库 wire API。Unresolved escaped effects 继续 fail closed。
 
 ## 面前的工作
 
-下一阶段是 destructive rebaseline，而不是继续旧 roadmap：先删除与新核心无关
-的代码、证据、脚本和文档，缩小 workspace；再迁移 Rust 工具链并重写
-continuity core；随后完成两个隔离 Wasmtime Component 实例与同步 durable KV
-之间的第一条 reference continuation。
+下一阶段首先把 source capture 变成可查询的 durable operation，关闭
+pre-snapshot dual-crash 边界。随后从现有 reference vertical 中提炼真正可嵌入的
+profile/WASI seam 和 coordinator step/diagnostic API，但继续允许内部 API、schema
+和持久化格式破坏。
 
-当前尚未实施这些代码变化。本次只是建立新的项目规则、conceptual terrain、
-用户选定 route、当前位置和已知 hazards。
+性能工作采用 measurement-first：分别观察 component preflight、fresh instance、
+freeze、snapshot seal、record CAS、authority prepare/commit、restore、activation 和
+recovery query 的成本，再只优化确认主导的 Wasmtime、SQLite、polling 或编码路径。
+vISA 不进入普通 syscall、provider call 或应用热路径，也不恢复旧式 benchmark
+矩阵。

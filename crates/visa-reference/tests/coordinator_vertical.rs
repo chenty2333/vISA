@@ -52,13 +52,159 @@ fn missing_live_source_before_snapshot_fails_closed() {
         record.phase,
         ContinuationPhase::RecoveryRequired {
             last_known: Progress::Preparing,
-            cause: RecoveryCause::MissingPreparedRuntime,
+            cause: RecoveryCause::CaptureRejected { .. },
         }
     ));
     assert_eq!(coordinator.abort(&id).unwrap(), DriveResult::Waiting);
     let record = coordinator.store.load(&id).unwrap().unwrap();
     assert!(record.source_restoration.is_none());
     assert!(matches!(record.phase, ContinuationPhase::RecoveryRequired { .. }));
+}
+
+#[test]
+fn capture_persistence_retry_reuses_the_sealed_safe_point_without_refreezing() {
+    let database = ReferenceDatabase::in_memory().unwrap();
+    let authority = Authority::new(database.clone()).unwrap();
+    let source = authority.bootstrap("capture-retry", 0, Rights::READ | Rights::WRITE).unwrap();
+    let provider = DurableKvProvider::new(database.clone());
+    let source_binding = provider.bind_bootstrap_source(&authority, &source.binding_id).unwrap();
+    let source_coordinate = coordinate(source.binding_id.as_bytes().to_vec());
+    let lineage_parent = LineagePoint {
+        lineage: LineageId::from_u128(93),
+        generation: 0,
+        state_digest: Digest::ZERO,
+    };
+    let intent = ContinuationIntent {
+        id: ContinuationId::from_u128(94),
+        scope: ScopeId::from_u128(95),
+        source: source_coordinate.clone(),
+        destination: coordinate(b"capture-retry-destination".to_vec()),
+        lineage_parent: lineage_parent.clone(),
+        profile: DurableKvProfile.profile_ref(),
+    };
+    let vertical = WasmtimeVertical::new().unwrap();
+    let source_instance = ReferenceInstance::source_with_context(
+        &vertical.prepared,
+        provider.clone(),
+        source_binding.clone(),
+        SnapshotContext {
+            snapshot: SnapshotId::from_u128(96),
+            continuation: intent.id,
+            scope: intent.scope,
+            lineage: LineageAdvance { parent: lineage_parent, successor_generation: 1 },
+            runtime: source_coordinate,
+            cut_sequence: 0,
+            receipt_digest: Digest::ZERO,
+        },
+    )
+    .unwrap();
+    let mut runtime = CoordinatorRuntimeAdapter::new(authority.clone(), provider, vertical);
+    runtime.install_source(source_instance);
+    runtime.inject_capture_persistence_failure_once();
+    let mut coordinator = Coordinator::new(
+        RecordStore::new(database),
+        CoordinatorAuthorityAdapter::new(authority),
+        runtime,
+    );
+    let id = coordinator.begin(intent).unwrap();
+
+    assert_eq!(coordinator.drive(&id).unwrap(), DriveResult::Waiting);
+    let unknown = coordinator.store.load(&id).unwrap().unwrap();
+    assert!(unknown.snapshot.is_none());
+    assert!(matches!(
+        unknown.phase,
+        ContinuationPhase::RecoveryRequired {
+            cause: RecoveryCause::CaptureOutcomeUnknown { .. },
+            ..
+        }
+    ));
+    assert!(matches!(source_binding.get(b"counter"), Err(ProviderError::DispatchClosed(_))));
+
+    assert_eq!(coordinator.recover(&id).unwrap(), DriveResult::DurableBoundary);
+    let captured = coordinator.store.load(&id).unwrap().unwrap();
+    assert!(captured.capture_receipt.is_some());
+    assert!(captured.pending.is_none());
+}
+
+#[test]
+fn armed_capture_after_persistence_failure_requires_fresh_runtime_recovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("armed-capture.sqlite");
+    let database = ReferenceDatabase::open(&database_path).unwrap();
+    let authority = Authority::new(database.clone()).unwrap();
+    let source = authority.bootstrap("armed-capture", 0, Rights::READ | Rights::WRITE).unwrap();
+    let provider = DurableKvProvider::new(database.clone());
+    let source_binding = provider.bind_bootstrap_source(&authority, &source.binding_id).unwrap();
+    let source_coordinate = coordinate(source.binding_id.as_bytes().to_vec());
+    let lineage_parent = LineagePoint {
+        lineage: LineageId::from_u128(97),
+        generation: 0,
+        state_digest: Digest::ZERO,
+    };
+    let intent = ContinuationIntent {
+        id: ContinuationId::from_u128(98),
+        scope: ScopeId::from_u128(99),
+        source: source_coordinate.clone(),
+        destination: coordinate(b"armed-capture-destination".to_vec()),
+        lineage_parent: lineage_parent.clone(),
+        profile: DurableKvProfile.profile_ref(),
+    };
+    let vertical = WasmtimeVertical::new().unwrap();
+    let source_instance = ReferenceInstance::source_with_context(
+        &vertical.prepared,
+        provider.clone(),
+        source_binding.clone(),
+        SnapshotContext {
+            snapshot: SnapshotId::from_u128(100),
+            continuation: intent.id,
+            scope: intent.scope,
+            lineage: LineageAdvance { parent: lineage_parent, successor_generation: 1 },
+            runtime: source_coordinate,
+            cut_sequence: 0,
+            receipt_digest: Digest::ZERO,
+        },
+    )
+    .unwrap();
+    let mut runtime = CoordinatorRuntimeAdapter::new(authority.clone(), provider, vertical);
+    runtime.install_source(source_instance);
+    runtime.inject_capture_persistence_failure_once();
+    let mut coordinator = Coordinator::new(
+        RecordStore::new(database),
+        CoordinatorAuthorityAdapter::new(authority),
+        runtime,
+    );
+    let id = coordinator.begin(intent).unwrap();
+    assert_eq!(coordinator.drive(&id).unwrap(), DriveResult::Waiting);
+    let pending_operation =
+        coordinator.store.load(&id).unwrap().unwrap().pending.unwrap().operation;
+    assert!(matches!(source_binding.get(b"counter"), Err(ProviderError::DispatchClosed(_))));
+
+    // The capture row is armed, but its sealed facts were never persisted.
+    // Dropping the source process must not turn that fact into a retryable
+    // absent operation or invoke capture again in the fresh runtime.
+    drop(coordinator);
+    let recovered_database = ReferenceDatabase::open(&database_path).unwrap();
+    let recovered_authority = Authority::new(recovered_database.clone()).unwrap();
+    let recovered_runtime = CoordinatorRuntimeAdapter::new(
+        recovered_authority.clone(),
+        DurableKvProvider::new(recovered_database.clone()),
+        WasmtimeVertical::new().unwrap(),
+    );
+    let mut recovered = Coordinator::new(
+        RecordStore::new(recovered_database),
+        CoordinatorAuthorityAdapter::new(recovered_authority),
+        recovered_runtime,
+    );
+    assert_eq!(recovered.recover(&id).unwrap(), DriveResult::Waiting);
+    let record = recovered.store.load(&id).unwrap().unwrap();
+    assert_eq!(record.pending.as_ref().unwrap().operation, pending_operation);
+    assert!(matches!(
+        record.phase,
+        ContinuationPhase::RecoveryRequired {
+            cause: RecoveryCause::CaptureOutcomeUnknown { operation },
+            ..
+        } if operation == pending_operation
+    ));
 }
 
 #[test]
@@ -105,6 +251,7 @@ fn coordinator_activates_fresh_wasmtime_destination_after_lost_ack() {
     source_instance.set_session(b"session-v1").unwrap();
     let mut runtime = CoordinatorRuntimeAdapter::new(authority.clone(), provider, vertical);
     runtime.install_source(source_instance);
+    runtime.inject_capture_lost_ack_once();
     let mut coordinator = Coordinator::new(
         RecordStore::new(database.clone()),
         CoordinatorAuthorityAdapter::new(authority.clone()),
@@ -112,8 +259,33 @@ fn coordinator_activates_fresh_wasmtime_destination_after_lost_ack() {
     );
     let id = coordinator.begin(intent).unwrap();
 
-    assert_eq!(coordinator.drive(&id).unwrap(), DriveResult::DurableBoundary);
+    assert_eq!(coordinator.drive(&id).unwrap(), DriveResult::Waiting);
+    let capture_operation =
+        coordinator.store.load(&id).unwrap().unwrap().pending.unwrap().operation;
     assert!(matches!(old_handle.get(b"counter"), Err(ProviderError::DispatchClosed(_))));
+
+    // The runtime-owned capture transaction committed, but its acknowledgement
+    // and the entire source process are lost. A fresh coordinator resolves the
+    // exact capture operation and obtains the durable snapshot bytes.
+    drop(coordinator);
+    let capture_database = ReferenceDatabase::open(&database_path).unwrap();
+    let capture_authority = Authority::new(capture_database.clone()).unwrap();
+    let runtime = CoordinatorRuntimeAdapter::new(
+        capture_authority.clone(),
+        DurableKvProvider::new(capture_database.clone()),
+        WasmtimeVertical::new().unwrap(),
+    );
+    let mut coordinator = Coordinator::new(
+        RecordStore::new(capture_database),
+        CoordinatorAuthorityAdapter::new(capture_authority),
+        runtime,
+    );
+    assert_eq!(coordinator.discover_unfinished().unwrap(), vec![id]);
+    assert_eq!(coordinator.recover(&id).unwrap(), DriveResult::DurableBoundary);
+    let captured = coordinator.store.load(&id).unwrap().unwrap();
+    assert_eq!(captured.capture_receipt.as_ref().unwrap().operation, capture_operation);
+    assert!(captured.pending.is_none());
+
     assert!(matches!(coordinator.drive(&id).unwrap(), DriveResult::ExternalPending(_)));
     assert!(matches!(coordinator.drive(&id).unwrap(), DriveResult::ExternalPending(_)));
     assert_eq!(coordinator.drive(&id).unwrap(), DriveResult::DurableBoundary);
@@ -155,6 +327,7 @@ fn coordinator_activates_fresh_wasmtime_destination_after_lost_ack() {
             .windows(source.binding_id.len())
             .all(|window| window != source.binding_id.as_bytes())
     );
+    let counts_before_application_calls = coordinator.read_control_counts();
     let destination = coordinator.runtime.destination_mut().unwrap();
     assert_ne!(destination.binding().binding_id(), source.binding_id);
     assert_eq!(destination.binding().provider_generation(), old_handle.provider_generation() + 1);
@@ -162,6 +335,11 @@ fn coordinator_activates_fresh_wasmtime_destination_after_lost_ack() {
     assert_eq!(destination.session().unwrap().unwrap().value, b"session-v1");
     assert_eq!(destination.increment().unwrap(), 3);
     let first_destination_handle = destination.binding().clone();
+    assert_eq!(
+        coordinator.read_control_counts(),
+        counts_before_application_calls,
+        "ordinary guest/provider calls must not enter the vISA control path"
+    );
 
     // Activation releases the lineage slot at the exact successor point. A
     // stale parent cannot fork it, while the committed generation can begin
@@ -338,9 +516,9 @@ fn precommit_abort_survives_restart_and_recreates_source_from_portable_state() {
     assert_eq!(coordinator.recover(&id).unwrap(), DriveResult::SourceRestored);
     assert_eq!(coordinator.runtime.source_mut().unwrap().value().unwrap(), 3);
 
-    // The receipt proves that restoration happened; it does not prove that a
-    // process-local runtime survived a later crash. A fresh adapter therefore
-    // fails closed instead of replaying the old snapshot over resumed work.
+    // The durable receipt completes the old continuation. A later loss of the
+    // process-local runtime is a new fault, not authority to reopen the
+    // completed record or replay its snapshot over resumed work.
     drop(coordinator);
     let final_database = ReferenceDatabase::open(&database_path).unwrap();
     let final_authority = Authority::new(final_database.clone()).unwrap();
@@ -354,14 +532,8 @@ fn precommit_abort_survives_restart_and_recreates_source_from_portable_state() {
         CoordinatorAuthorityAdapter::new(final_authority),
         final_runtime,
     );
-    assert_eq!(final_coordinator.recover(&id).unwrap(), DriveResult::Waiting);
+    assert_eq!(final_coordinator.recover(&id).unwrap(), DriveResult::SourceRestored);
     assert!(final_coordinator.runtime.source_mut().is_none());
     let record = final_coordinator.store.load(&id).unwrap().unwrap();
-    assert!(matches!(
-        record.phase,
-        ContinuationPhase::RecoveryRequired {
-            last_known: Progress::Aborted,
-            cause: RecoveryCause::MissingPreparedRuntime,
-        }
-    ));
+    assert!(matches!(record.phase, ContinuationPhase::Progress(Progress::Aborted)));
 }

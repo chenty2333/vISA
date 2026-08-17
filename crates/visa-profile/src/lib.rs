@@ -9,7 +9,7 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::{fmt, marker::PhantomData};
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -36,6 +36,8 @@ pub enum CodecError {
     Deserialize,
     /// A valid value was followed by bytes that were not consumed by it.
     TrailingBytes,
+    /// The input decoded to a value, but was not that value's canonical wire form.
+    NonCanonical,
 }
 
 impl fmt::Display for CodecError {
@@ -50,6 +52,7 @@ impl fmt::Display for CodecError {
             Self::Serialize => f.write_str("state serialization failed"),
             Self::Deserialize => f.write_str("state deserialization failed"),
             Self::TrailingBytes => f.write_str("state has trailing bytes"),
+            Self::NonCanonical => f.write_str("state is not in canonical wire form"),
         }
     }
 }
@@ -65,8 +68,10 @@ pub trait PortableStateCodec<T> {
 /// Bounded postcard codec with strict whole-input decoding.
 ///
 /// `postcard::take_from_bytes` is used instead of accepting a decoder prefix;
-/// any remaining byte is rejected.  Bounds are checked before decoding and
-/// after encoding so a hostile length prefix cannot allocate unbounded state.
+/// any remaining byte is rejected.  Encoding uses a buffer of exactly
+/// `max_bytes`, and decoding re-encodes the value into the same bound so
+/// alternate encodings are rejected.  This bounds codec workspace; it does
+/// not make allocations performed by arbitrary user serializers bounded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PostcardCodec<T> {
     max_bytes: usize,
@@ -96,11 +101,18 @@ where
     T: Serialize + DeserializeOwned,
 {
     fn encode(&self, value: &T) -> Result<Vec<u8>, CodecError> {
-        let bytes = postcard::to_allocvec(value).map_err(|_| CodecError::Serialize)?;
-        if bytes.len() > self.max_bytes {
-            return Err(CodecError::Oversize { len: bytes.len(), max: self.max_bytes });
-        }
-        Ok(bytes)
+        let mut buffer = vec![0; self.max_bytes];
+        let encoded = postcard::to_slice(value, &mut buffer).map_err(|error| match error {
+            postcard::Error::SerializeBufferFull => CodecError::Oversize {
+                // `to_slice` deliberately does not allocate to discover the
+                // final length.  Report the smallest length known to exceed
+                // the configured bound.
+                len: self.max_bytes.saturating_add(1),
+                max: self.max_bytes,
+            },
+            _ => CodecError::Serialize,
+        })?;
+        Ok(encoded.to_vec())
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<T, CodecError> {
@@ -111,6 +123,10 @@ where
             postcard::take_from_bytes(bytes).map_err(|_| CodecError::Deserialize)?;
         if !rest.is_empty() {
             return Err(CodecError::TrailingBytes);
+        }
+        let canonical = self.encode(&value)?;
+        if canonical.as_slice() != bytes {
+            return Err(CodecError::NonCanonical);
         }
         Ok(value)
     }
@@ -162,13 +178,16 @@ pub enum ProfileError {
     WrongDisposition,
     WrongLogicalName,
     RightsMismatch,
+    ResourceRequirementsMismatch,
 }
 
 /// The profile SDK contract implemented by a typed profile.
 pub trait ContinuityProfile {
     type State;
+    type Codec: PortableStateCodec<Self::State>;
 
     fn profile_ref(&self) -> ProfileRef;
+    fn state_codec(&self) -> Self::Codec;
     fn validate_state(&self, state: &Self::State) -> Result<(), ProfileError>;
     fn resource_requirements(
         &self,
@@ -186,6 +205,17 @@ pub trait ContinuityProfile {
         grant: &BindingGrant,
     ) -> Result<(), ProfileError>;
     fn project_effects(&self, receipts: &[EffectClosureReceipt]) -> ApplicationRecoveryDecision;
+
+    /// Validate the resource projection carried by a snapshot against the
+    /// requirements derived from its decoded typed state.
+    fn validate_resources(
+        &self,
+        state: &Self::State,
+        resources: &[ResourceRequirement],
+    ) -> Result<(), ProfileError> {
+        let expected = self.resource_requirements(state)?;
+        if expected == resources { Ok(()) } else { Err(ProfileError::ResourceRequirementsMismatch) }
+    }
 }
 
 /// Opaque, stable identifiers for the first profile contract.
@@ -328,9 +358,14 @@ impl DurableKvProfile {
 
 impl ContinuityProfile for DurableKvProfile {
     type State = CounterSessionState;
+    type Codec = PostcardCodec<CounterSessionState>;
 
     fn profile_ref(&self) -> ProfileRef {
         Self::profile_ref(*self)
+    }
+
+    fn state_codec(&self) -> Self::Codec {
+        PostcardCodec::default()
     }
 
     fn validate_state(&self, state: &Self::State) -> Result<(), ProfileError> {
@@ -383,6 +418,18 @@ mod tests {
         let mut trailing = encoded.clone();
         trailing.push(0);
         assert_eq!(codec.decode(&trailing), Err(CodecError::TrailingBytes));
+    }
+
+    #[test]
+    fn noncanonical_postcard_encoding_is_rejected() {
+        let codec = PostcardCodec::<CounterSessionState>::new(128);
+        let encoded = codec.encode(&state(b"session")).unwrap();
+        // Postcard's varint decoder accepts this two-byte representation of
+        // the counter value 7, while the serializer emits the one-byte form.
+        assert_eq!(encoded[0], 7);
+        let mut noncanonical = encoded.clone();
+        noncanonical.splice(0..1, [0x87, 0x00]);
+        assert_eq!(codec.decode(&noncanonical), Err(CodecError::NonCanonical));
     }
 
     #[test]

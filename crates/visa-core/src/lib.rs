@@ -254,6 +254,44 @@ impl SafePointReceipt {
     }
 }
 
+/// Canonical proof that a runtime or capture authority accepted one exact
+/// portable source capture.  This is a content receipt, not a capability.
+/// Every field that can change the continuation is repeated here so an exact
+/// query can never be mistaken for a receipt for a different cut.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureReceipt {
+    pub operation: OperationId,
+    pub continuation: ContinuationId,
+    pub scope: ScopeId,
+    pub snapshot: SnapshotId,
+    pub source: ExternalCoordinate,
+    pub profile: ProfileRef,
+    pub lineage: LineageAdvance,
+    pub state_digest: Digest,
+    pub snapshot_digest: Digest,
+    pub safe_point_digest: Digest,
+    pub receipt_digest: Digest,
+}
+
+impl CaptureReceipt {
+    pub fn seal(mut self) -> Result<Self, ContractError> {
+        self.receipt_digest = Digest::ZERO;
+        self.receipt_digest = canonical_digest(&self)?;
+        Ok(self)
+    }
+
+    pub fn verify(&self) -> Result<(), ContractError> {
+        let mut material = self.clone();
+        let claimed = material.receipt_digest;
+        material.receipt_digest = Digest::ZERO;
+        if canonical_digest(&material)? == claimed {
+            Ok(())
+        } else {
+            Err(ContractError::ReceiptDigestMismatch)
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingGrant {
     pub requirement: RequirementId,
@@ -268,6 +306,7 @@ pub struct BindingPreparationReceipt {
     pub operation: OperationId,
     pub continuation: ContinuationId,
     pub snapshot: SnapshotId,
+    pub snapshot_digest: Digest,
     pub destination: ExternalCoordinate,
     pub grants: Vec<BindingGrant>,
     pub receipt_digest: Digest,
@@ -299,6 +338,7 @@ pub struct AbortPreparationReceipt {
     pub operation: OperationId,
     pub continuation: ContinuationId,
     pub snapshot: SnapshotId,
+    pub snapshot_digest: Digest,
     pub source: ExternalCoordinate,
     pub destination: ExternalCoordinate,
     pub preparation_receipt_digest: Digest,
@@ -329,6 +369,7 @@ pub struct AuthorityCommitReceipt {
     pub operation: OperationId,
     pub continuation: ContinuationId,
     pub snapshot: SnapshotId,
+    pub snapshot_digest: Digest,
     pub source: ExternalCoordinate,
     pub source_fence_epoch: u64,
     pub destination: ExternalCoordinate,
@@ -395,6 +436,7 @@ pub struct ActivationReceipt {
     pub operation: OperationId,
     pub continuation: ContinuationId,
     pub snapshot: SnapshotId,
+    pub snapshot_digest: Digest,
     pub destination: ExternalCoordinate,
     pub authority_commit_digest: Digest,
     pub execution_epoch: u64,
@@ -424,6 +466,7 @@ impl ActivationReceipt {
 pub struct SourceRestorationReceipt {
     pub continuation: ContinuationId,
     pub snapshot: SnapshotId,
+    pub snapshot_digest: Digest,
     pub source: ExternalCoordinate,
     pub execution_epoch: u64,
     pub receipt_digest: Digest,
@@ -471,10 +514,17 @@ pub enum Progress {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecoveryCause {
     ExternalOutcomeUnknown { authority: AuthorityId, operation: OperationId },
+    CaptureOutcomeUnknown { operation: OperationId },
+    CaptureReceiptMismatch { operation: OperationId },
+    CaptureDurabilityUnavailable { operation: OperationId },
+    ProcessLocalCaptureDualCrashRisk { operation: OperationId },
+    CaptureRejected { operation: OperationId },
     MissingPreparedRuntime,
     ReceiptConflict,
     StoreConflict,
     SourceRestorationUnknown,
+    RuntimePreparationUnknown { operation: OperationId },
+    RuntimeRestoreUnknown { operation: OperationId },
     RuntimeActivationUnknown { operation: OperationId },
     UnresolvedEffects,
 }
@@ -498,6 +548,7 @@ impl ContinuationPhase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExternalOperationKind {
+    CaptureSource,
     PrepareBindings,
     CommitAuthority,
     AbortPreparation,
@@ -518,6 +569,9 @@ pub struct ContinuationRecord {
     pub phase: ContinuationPhase,
     pub pending: Option<PendingExternal>,
     pub snapshot: Option<SnapshotEnvelope>,
+    /// Present only when the source runtime returned an authority-durable
+    /// capture receipt. `None` is an explicit process-local capture outcome.
+    pub capture_receipt: Option<CaptureReceipt>,
     pub binding_preparation: Option<BindingPreparationReceipt>,
     pub effect_closures: Vec<EffectClosureReceipt>,
     pub authority_commit: Option<AuthorityCommitReceipt>,
@@ -541,6 +595,11 @@ pub enum Command {
         snapshot: SnapshotEnvelope,
         safe_point: SafePointReceipt,
     },
+    RecordCapture {
+        snapshot: SnapshotEnvelope,
+        safe_point: SafePointReceipt,
+        receipt: CaptureReceipt,
+    },
     ArmExternal(PendingExternal),
     ObserveExternalRejection(PendingExternal),
     ObserveBindingPreparation(BindingPreparationReceipt),
@@ -549,7 +608,6 @@ pub enum Command {
     ObserveActivation(ActivationReceipt),
     ObserveSourceRestoration(SourceRestorationReceipt),
     MarkRecoveryRequired(RecoveryCause),
-    ResumeRecovery,
     AbortConfirmed {
         operation: OperationId,
         receipt: Option<AbortPreparationReceipt>,
@@ -565,6 +623,11 @@ pub enum Event {
         snapshot: SnapshotEnvelope,
         safe_point: SafePointReceipt,
     },
+    CaptureRecorded {
+        snapshot: SnapshotEnvelope,
+        safe_point: SafePointReceipt,
+        receipt: CaptureReceipt,
+    },
     ExternalArmed(PendingExternal),
     ExternalRejected(PendingExternal),
     BindingPreparationRecorded(BindingPreparationReceipt),
@@ -573,7 +636,6 @@ pub enum Event {
     Activated(ActivationReceipt),
     SourceRestored(SourceRestorationReceipt),
     RecoveryRequired(RecoveryCause),
-    RecoveryResumed,
     Aborted {
         operation: OperationId,
         receipt: Option<AbortPreparationReceipt>,
@@ -599,6 +661,8 @@ pub enum ContractError {
     StateDigestMismatch,
     EnvelopeDigestMismatch,
     SnapshotMismatch,
+    CaptureMismatch,
+    RejectedResource,
     SafePointMismatch,
     PendingOperationExists,
     PendingOperationMismatch,
@@ -620,6 +684,26 @@ impl fmt::Display for ContractError {
     }
 }
 
+fn capture_request_digest(
+    record: &ContinuationRecord,
+    operation: OperationId,
+) -> Result<Digest, ContractError> {
+    let successor_generation = record
+        .intent
+        .lineage_parent
+        .generation
+        .checked_add(1)
+        .ok_or(ContractError::InvalidLineageAdvance)?;
+    canonical_digest(&(
+        operation,
+        record.intent.id,
+        record.intent.scope,
+        &record.intent.source,
+        &record.intent.profile,
+        LineageAdvance { parent: record.intent.lineage_parent.clone(), successor_generation },
+    ))
+}
+
 /// Validate a command without changing state or invoking an external system.
 #[must_use]
 pub fn preflight(record: Option<&ContinuationRecord>, command: &Command) -> Decision {
@@ -635,7 +719,9 @@ fn preflight_existing(record: &ContinuationRecord, command: &Command) -> Decisio
     match command {
         Command::Begin(_) => Decision::Reject(ContractError::RecordAlreadyExists),
         Command::RecordSnapshot { snapshot, safe_point } => {
-            if record.phase.last_known() != Progress::Preparing || record.snapshot.is_some() {
+            if record.phase != ContinuationPhase::Progress(Progress::Preparing)
+                || record.snapshot.is_some()
+            {
                 return Decision::Reject(ContractError::InvalidPhase);
             }
             if let Err(error) = snapshot.verify() {
@@ -661,12 +747,102 @@ fn preflight_existing(record: &ContinuationRecord, command: &Command) -> Decisio
             {
                 return Decision::Reject(ContractError::SafePointMismatch);
             }
+            if record
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.kind != ExternalOperationKind::CaptureSource)
+            {
+                return Decision::Reject(ContractError::PendingOperationMismatch);
+            }
             Decision::Apply(Event::SnapshotRecorded {
                 snapshot: snapshot.clone(),
                 safe_point: safe_point.clone(),
             })
         }
+        Command::RecordCapture { snapshot, safe_point, receipt } => {
+            let Some(pending) = &record.pending else {
+                return Decision::Reject(ContractError::InvalidPhase);
+            };
+            let capture_phase = match &record.phase {
+                ContinuationPhase::Progress(Progress::Preparing) => true,
+                ContinuationPhase::RecoveryRequired {
+                    last_known: Progress::Preparing,
+                    cause: RecoveryCause::CaptureOutcomeUnknown { operation },
+                } => *operation == pending.operation,
+                _ => false,
+            };
+            if !capture_phase || record.snapshot.is_some() {
+                return Decision::Reject(ContractError::InvalidPhase);
+            }
+            if let Err(error) = snapshot.verify() {
+                return Decision::Reject(error);
+            }
+            let body = &snapshot.body;
+            if body.continuation != record.intent.id
+                || body.scope != record.intent.scope
+                || body.profile != record.intent.profile
+                || body.lineage.parent != record.intent.lineage_parent
+            {
+                return Decision::Reject(ContractError::SnapshotMismatch);
+            }
+            if let Err(error) = safe_point.verify() {
+                return Decision::Reject(error);
+            }
+            if safe_point.continuation != body.continuation
+                || safe_point.scope != body.scope
+                || safe_point.runtime != body.source_cut.runtime
+                || safe_point.cut_sequence != body.source_cut.cut_sequence
+                || safe_point.portable_state_digest != body.state_digest
+                || safe_point.receipt_digest != body.source_cut.receipt_digest
+            {
+                return Decision::Reject(ContractError::SafePointMismatch);
+            }
+            if let Err(error) = receipt.verify() {
+                return Decision::Reject(error);
+            }
+            if pending.kind != ExternalOperationKind::CaptureSource
+                || pending.operation != receipt.operation
+            {
+                return Decision::Reject(ContractError::PendingOperationMismatch);
+            }
+            match capture_request_digest(record, pending.operation) {
+                Ok(digest) if digest == pending.request_digest => {}
+                Ok(_) => return Decision::Reject(ContractError::PendingOperationMismatch),
+                Err(error) => return Decision::Reject(error),
+            }
+            if receipt.continuation != body.continuation
+                || receipt.scope != body.scope
+                || receipt.snapshot != body.snapshot
+                || receipt.source != record.intent.source
+                || receipt.profile != body.profile
+                || receipt.lineage != body.lineage
+                || receipt.state_digest != body.state_digest
+                || receipt.snapshot_digest != snapshot.body_digest
+                || receipt.safe_point_digest != safe_point.receipt_digest
+            {
+                return Decision::Reject(ContractError::CaptureMismatch);
+            }
+            Decision::Apply(Event::CaptureRecorded {
+                snapshot: snapshot.clone(),
+                safe_point: safe_point.clone(),
+                receipt: receipt.clone(),
+            })
+        }
         Command::ArmExternal(pending) => {
+            let progress = match &record.phase {
+                ContinuationPhase::Progress(progress) => *progress,
+                ContinuationPhase::RecoveryRequired {
+                    last_known: Progress::Committed,
+                    cause:
+                        RecoveryCause::RuntimePreparationUnknown { operation }
+                        | RecoveryCause::RuntimeRestoreUnknown { operation },
+                } if pending.kind == ExternalOperationKind::ActivateRuntime
+                    && *operation == pending.operation =>
+                {
+                    Progress::Committed
+                }
+                _ => return Decision::Reject(ContractError::InvalidPhase),
+            };
             if let Some(existing) = &record.pending {
                 return if existing == pending {
                     Decision::AlreadyApplied
@@ -674,8 +850,18 @@ fn preflight_existing(record: &ContinuationRecord, command: &Command) -> Decisio
                     Decision::Reject(ContractError::PendingOperationExists)
                 };
             }
-            if !operation_allowed(record.phase.last_known(), pending.kind) {
+            if !operation_allowed(progress, pending.kind)
+                || (pending.kind == ExternalOperationKind::AbortPreparation
+                    && record.binding_preparation.is_none())
+            {
                 return Decision::Reject(ContractError::InvalidPhase);
+            }
+            if pending.kind == ExternalOperationKind::CaptureSource {
+                match capture_request_digest(record, pending.operation) {
+                    Ok(digest) if digest == pending.request_digest => {}
+                    Ok(_) => return Decision::Reject(ContractError::PendingOperationMismatch),
+                    Err(error) => return Decision::Reject(error),
+                }
             }
             Decision::Apply(Event::ExternalArmed(pending.clone()))
         }
@@ -694,20 +880,22 @@ fn preflight_existing(record: &ContinuationRecord, command: &Command) -> Decisio
         Command::MarkRecoveryRequired(cause) => {
             if record.phase.last_known() == Progress::Activated
                 || (record.phase.last_known() == Progress::Aborted
-                    && record.source_restoration.is_none())
+                    && (record.snapshot.is_none() || record.source_restoration.is_some()))
             {
                 Decision::Reject(ContractError::InvalidPhase)
-            } else if matches!(&record.phase, ContinuationPhase::RecoveryRequired { cause: current, .. } if current == cause)
+            } else if let ContinuationPhase::RecoveryRequired { cause: current, .. } = &record.phase
             {
-                Decision::AlreadyApplied
+                if current == cause {
+                    Decision::AlreadyApplied
+                } else if !recovery_cause_is_fatal(current) && recovery_cause_is_fatal(cause) {
+                    Decision::Apply(Event::RecoveryRequired(cause.clone()))
+                } else {
+                    Decision::Reject(ContractError::InvalidPhase)
+                }
             } else {
                 Decision::Apply(Event::RecoveryRequired(cause.clone()))
             }
         }
-        Command::ResumeRecovery => match record.phase {
-            ContinuationPhase::RecoveryRequired { .. } => Decision::Apply(Event::RecoveryResumed),
-            ContinuationPhase::Progress(_) => Decision::AlreadyApplied,
-        },
         Command::AbortConfirmed { operation, receipt, reason } => {
             if matches!(
                 record.phase.last_known(),
@@ -733,6 +921,7 @@ fn preflight_existing(record: &ContinuationRecord, command: &Command) -> Decisio
                     if receipt.operation != *operation
                         || receipt.continuation != record.intent.id
                         || receipt.snapshot != snapshot.body.snapshot
+                        || receipt.snapshot_digest != snapshot.body_digest
                         || receipt.source != record.intent.source
                         || receipt.destination != record.intent.destination
                         || receipt.preparation_receipt_digest != preparation.receipt_digest
@@ -767,13 +956,20 @@ fn preflight_existing(record: &ContinuationRecord, command: &Command) -> Decisio
 const fn operation_allowed(progress: Progress, kind: ExternalOperationKind) -> bool {
     matches!(
         (progress, kind),
-        (Progress::Frozen, ExternalOperationKind::PrepareBindings)
+        (Progress::Preparing, ExternalOperationKind::CaptureSource)
+            | (Progress::Frozen, ExternalOperationKind::PrepareBindings)
             | (Progress::DestinationPrepared, ExternalOperationKind::CommitAuthority)
             | (Progress::Committed, ExternalOperationKind::ActivateRuntime)
-            | (
-                Progress::Preparing | Progress::Frozen | Progress::DestinationPrepared,
-                ExternalOperationKind::AbortPreparation
-            )
+            | (Progress::DestinationPrepared, ExternalOperationKind::AbortPreparation)
+    )
+}
+
+fn recovery_cause_is_fatal(cause: &RecoveryCause) -> bool {
+    matches!(
+        cause,
+        RecoveryCause::CaptureReceiptMismatch { .. }
+            | RecoveryCause::ReceiptConflict
+            | RecoveryCause::StoreConflict
     )
 }
 
@@ -805,9 +1001,18 @@ fn observe_preparation(
     };
     if receipt.continuation != record.intent.id
         || receipt.snapshot != snapshot.body.snapshot
+        || receipt.snapshot_digest != snapshot.body_digest
         || receipt.destination != record.intent.destination
     {
         return Decision::Reject(ContractError::SnapshotMismatch);
+    }
+    if snapshot
+        .body
+        .resources
+        .iter()
+        .any(|requirement| requirement.disposition == RebindDisposition::Reject)
+    {
+        return Decision::Reject(ContractError::RejectedResource);
     }
     for requirement in snapshot
         .body
@@ -842,6 +1047,9 @@ fn observe_effect(record: &ContinuationRecord, receipt: &EffectClosureReceipt) -
     if let Some(existing) = record.effect_closures.iter().find(|item| item.effect == receipt.effect)
     {
         return duplicate_or_conflict(receipt.effect.0, existing == receipt, receipt.effect.0);
+    }
+    if matches!(record.phase.last_known(), Progress::Activated | Progress::Aborted) {
+        return Decision::Reject(ContractError::InvalidPhase);
     }
     let Some(snapshot) = &record.snapshot else {
         return Decision::Reject(ContractError::MissingSnapshot);
@@ -889,6 +1097,7 @@ fn observe_commit(record: &ContinuationRecord, receipt: &AuthorityCommitReceipt)
     };
     if receipt.continuation != record.intent.id
         || receipt.snapshot != snapshot.body.snapshot
+        || receipt.snapshot_digest != snapshot.body_digest
         || receipt.source != record.intent.source
         || receipt.destination != record.intent.destination
         || receipt.binding_receipt_digest != preparation.receipt_digest
@@ -925,6 +1134,7 @@ fn observe_activation(record: &ContinuationRecord, receipt: &ActivationReceipt) 
     };
     if receipt.continuation != record.intent.id
         || receipt.snapshot != snapshot.body.snapshot
+        || receipt.snapshot_digest != snapshot.body_digest
         || receipt.destination != record.intent.destination
         || receipt.authority_commit_digest != commit.receipt_digest
         || receipt.execution_epoch != commit.execution_epoch
@@ -954,6 +1164,7 @@ fn observe_source_restoration(
     if record.phase.last_known() != Progress::Aborted
         || receipt.continuation != record.intent.id
         || receipt.snapshot != snapshot.body.snapshot
+        || receipt.snapshot_digest != snapshot.body_digest
         || receipt.source != record.intent.source
     {
         return Decision::Reject(ContractError::ActivationMismatch);
@@ -993,6 +1204,11 @@ fn command_for_event(event: &Event) -> Command {
         Event::SnapshotRecorded { snapshot, safe_point } => {
             Command::RecordSnapshot { safe_point: safe_point.clone(), snapshot: snapshot.clone() }
         }
+        Event::CaptureRecorded { snapshot, safe_point, receipt } => Command::RecordCapture {
+            snapshot: snapshot.clone(),
+            safe_point: safe_point.clone(),
+            receipt: receipt.clone(),
+        },
         Event::ExternalArmed(value) => Command::ArmExternal(value.clone()),
         Event::ExternalRejected(value) => Command::ObserveExternalRejection(value.clone()),
         Event::BindingPreparationRecorded(value) => {
@@ -1003,7 +1219,6 @@ fn command_for_event(event: &Event) -> Command {
         Event::Activated(value) => Command::ObserveActivation(value.clone()),
         Event::SourceRestored(value) => Command::ObserveSourceRestoration(value.clone()),
         Event::RecoveryRequired(value) => Command::MarkRecoveryRequired(value.clone()),
-        Event::RecoveryResumed => Command::ResumeRecovery,
         Event::Aborted { operation, receipt, reason } => Command::AbortConfirmed {
             operation: *operation,
             receipt: receipt.clone(),
@@ -1023,6 +1238,7 @@ fn apply_validated(
             phase: ContinuationPhase::Progress(Progress::Preparing),
             pending: None,
             snapshot: None,
+            capture_receipt: None,
             binding_preparation: None,
             effect_closures: Vec::new(),
             authority_commit: None,
@@ -1037,6 +1253,20 @@ fn apply_validated(
         Event::Begun(_) => return Err(ContractError::RecordAlreadyExists),
         Event::SnapshotRecorded { snapshot, .. } => {
             record.snapshot = Some(snapshot.clone());
+            record.capture_receipt = None;
+            if record
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.kind == ExternalOperationKind::CaptureSource)
+            {
+                record.pending = None;
+            }
+            record.phase = ContinuationPhase::Progress(Progress::Frozen);
+        }
+        Event::CaptureRecorded { snapshot, receipt, .. } => {
+            record.snapshot = Some(snapshot.clone());
+            record.capture_receipt = Some(receipt.clone());
+            record.pending = None;
             record.phase = ContinuationPhase::Progress(Progress::Frozen);
         }
         Event::ExternalArmed(pending) => record.pending = Some(pending.clone()),
@@ -1065,9 +1295,6 @@ fn apply_validated(
                 last_known: record.phase.last_known(),
                 cause: cause.clone(),
             };
-        }
-        Event::RecoveryResumed => {
-            record.phase = ContinuationPhase::Progress(record.phase.last_known());
         }
         Event::Aborted { receipt, .. } => {
             record.abort_receipt = receipt.clone();
@@ -1159,6 +1386,28 @@ mod tests {
         apply(None, &Event::Begun(intent())).unwrap()
     }
 
+    fn capture_receipt(
+        operation: OperationId,
+        snapshot: &SnapshotEnvelope,
+        safe_point: &SafePointReceipt,
+    ) -> CaptureReceipt {
+        CaptureReceipt {
+            operation,
+            continuation: intent().id,
+            scope: intent().scope,
+            snapshot: snapshot.body.snapshot,
+            source: intent().source,
+            profile: snapshot.body.profile.clone(),
+            lineage: snapshot.body.lineage.clone(),
+            state_digest: snapshot.body.state_digest,
+            snapshot_digest: snapshot.body_digest,
+            safe_point_digest: safe_point.receipt_digest,
+            receipt_digest: Digest::ZERO,
+        }
+        .seal()
+        .unwrap()
+    }
+
     #[test]
     fn rejected_transition_does_not_mutate_record() {
         let record = begun();
@@ -1167,6 +1416,7 @@ mod tests {
             operation: OperationId(id(9)),
             continuation: intent().id,
             snapshot: SnapshotId(id(6)),
+            snapshot_digest: Digest::ZERO,
             destination: intent().destination,
             authority_commit_digest: Digest::ZERO,
             execution_epoch: 2,
@@ -1239,6 +1489,7 @@ mod tests {
             operation: pending.operation,
             continuation: intent().id,
             snapshot: envelope.body.snapshot,
+            snapshot_digest: envelope.body_digest,
             destination: intent().destination.clone(),
             grants: vec![BindingGrant {
                 requirement: RequirementId(id(7)),
@@ -1297,6 +1548,7 @@ mod tests {
             operation: abort_operation,
             continuation: intent().id,
             snapshot: envelope.body.snapshot,
+            snapshot_digest: envelope.body_digest,
             source: intent().source.clone(),
             destination: intent().destination.clone(),
             preparation_receipt_digest: preparation.receipt_digest,
@@ -1341,6 +1593,7 @@ mod tests {
             operation: commit_op,
             continuation: intent().id,
             snapshot: envelope.body.snapshot,
+            snapshot_digest: envelope.body_digest,
             source: intent().source.clone(),
             source_fence_epoch: 1,
             destination: intent().destination.clone(),
@@ -1376,6 +1629,7 @@ mod tests {
             operation: activation_operation,
             continuation: intent().id,
             snapshot: envelope.body.snapshot,
+            snapshot_digest: envelope.body_digest,
             destination: coordinate(99),
             authority_commit_digest: commit.receipt_digest,
             execution_epoch: commit.execution_epoch,
@@ -1415,6 +1669,329 @@ mod tests {
         assert_eq!(
             preflight(Some(&record), &Command::ArmExternal(different)),
             Decision::Reject(ContractError::PendingOperationExists)
+        );
+    }
+
+    #[test]
+    fn only_exact_capture_receipt_can_close_unknown_durable_capture() {
+        let mut record = begun();
+        let operation = OperationId(id(21));
+        let pending = PendingExternal {
+            operation,
+            kind: ExternalOperationKind::CaptureSource,
+            request_digest: capture_request_digest(&record, operation).unwrap(),
+        };
+        record = apply(Some(record), &Event::ExternalArmed(pending)).unwrap();
+        record = apply(
+            Some(record),
+            &Event::RecoveryRequired(RecoveryCause::CaptureOutcomeUnknown { operation }),
+        )
+        .unwrap();
+        let (snapshot, safe_point) = snapshot();
+        assert_eq!(
+            preflight(
+                Some(&record),
+                &Command::RecordSnapshot {
+                    snapshot: snapshot.clone(),
+                    safe_point: safe_point.clone(),
+                },
+            ),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+        let receipt = capture_receipt(operation, &snapshot, &safe_point);
+        record = apply(
+            Some(record),
+            &Event::CaptureRecorded {
+                snapshot: snapshot.clone(),
+                safe_point: safe_point.clone(),
+                receipt: receipt.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(record.capture_receipt, Some(receipt));
+        assert_eq!(record.phase, ContinuationPhase::Progress(Progress::Frozen));
+
+        let mut wrong = begun();
+        let request_digest = capture_request_digest(&wrong, operation).unwrap();
+        wrong = apply(
+            Some(wrong),
+            &Event::ExternalArmed(PendingExternal {
+                operation,
+                kind: ExternalOperationKind::CaptureSource,
+                request_digest,
+            }),
+        )
+        .unwrap();
+        let mut mismatched = capture_receipt(operation, &snapshot, &safe_point);
+        mismatched.source = coordinate(99);
+        mismatched = mismatched.seal().unwrap();
+        assert_eq!(
+            preflight(
+                Some(&wrong),
+                &Command::RecordCapture { snapshot, safe_point, receipt: mismatched.clone() },
+            ),
+            Decision::Reject(ContractError::CaptureMismatch)
+        );
+        mismatched.receipt_digest = Digest::ZERO;
+        assert_eq!(mismatched.verify(), Err(ContractError::ReceiptDigestMismatch));
+    }
+
+    #[test]
+    fn capture_cannot_clear_unrelated_recovery_cause() {
+        let operation = OperationId(id(22));
+        let mut record = begun();
+        let pending = PendingExternal {
+            operation,
+            kind: ExternalOperationKind::CaptureSource,
+            request_digest: capture_request_digest(&record, operation).unwrap(),
+        };
+        record = apply(Some(record), &Event::ExternalArmed(pending)).unwrap();
+        record =
+            apply(Some(record), &Event::RecoveryRequired(RecoveryCause::StoreConflict)).unwrap();
+        let (snapshot, safe_point) = snapshot();
+        assert_eq!(
+            preflight(
+                Some(&record),
+                &Command::RecordCapture {
+                    snapshot: snapshot.clone(),
+                    safe_point: safe_point.clone(),
+                    receipt: capture_receipt(operation, &snapshot, &safe_point),
+                },
+            ),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+    }
+
+    #[test]
+    fn recovery_causes_are_monotonic() {
+        let operation = OperationId(id(23));
+        let soft = RecoveryCause::CaptureOutcomeUnknown { operation };
+        let mut record = apply(Some(begun()), &Event::RecoveryRequired(soft.clone())).unwrap();
+        assert_eq!(
+            preflight(Some(&record), &Command::MarkRecoveryRequired(soft.clone())),
+            Decision::AlreadyApplied
+        );
+        assert_eq!(
+            preflight(
+                Some(&record),
+                &Command::MarkRecoveryRequired(RecoveryCause::CaptureRejected { operation }),
+            ),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+        let fatal = RecoveryCause::StoreConflict;
+        let Decision::Apply(event) =
+            preflight(Some(&record), &Command::MarkRecoveryRequired(fatal.clone()))
+        else {
+            panic!()
+        };
+        record = apply(Some(record), &event).unwrap();
+        assert_eq!(
+            record.phase,
+            ContinuationPhase::RecoveryRequired {
+                last_known: Progress::Preparing,
+                cause: fatal.clone(),
+            }
+        );
+        assert_eq!(
+            preflight(
+                Some(&record),
+                &Command::MarkRecoveryRequired(RecoveryCause::CaptureReceiptMismatch { operation }),
+            ),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+        assert_eq!(
+            preflight(Some(&record), &Command::MarkRecoveryRequired(soft)),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+        assert_eq!(
+            preflight(Some(&record), &Command::MarkRecoveryRequired(fatal)),
+            Decision::AlreadyApplied
+        );
+    }
+
+    #[test]
+    fn external_operations_and_rejected_resources_fail_closed() {
+        let capture = PendingExternal {
+            operation: OperationId(id(25)),
+            kind: ExternalOperationKind::CaptureSource,
+            request_digest: Digest::of_bytes(b"forged request"),
+        };
+        assert_eq!(
+            preflight(Some(&begun()), &Command::ArmExternal(capture)),
+            Decision::Reject(ContractError::PendingOperationMismatch)
+        );
+
+        let activation_operation = OperationId(id(26));
+        let mut recovering = begun();
+        recovering.phase = ContinuationPhase::RecoveryRequired {
+            last_known: Progress::Committed,
+            cause: RecoveryCause::RuntimeRestoreUnknown { operation: activation_operation },
+        };
+        let activation = PendingExternal {
+            operation: activation_operation,
+            kind: ExternalOperationKind::ActivateRuntime,
+            request_digest: Digest::of_bytes(b"activation"),
+        };
+        assert!(matches!(
+            preflight(Some(&recovering), &Command::ArmExternal(activation)),
+            Decision::Apply(Event::ExternalArmed(_))
+        ));
+        let wrong_activation = PendingExternal {
+            operation: OperationId(id(27)),
+            kind: ExternalOperationKind::ActivateRuntime,
+            request_digest: Digest::of_bytes(b"activation"),
+        };
+        assert_eq!(
+            preflight(Some(&recovering), &Command::ArmExternal(wrong_activation)),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+
+        let abort = PendingExternal {
+            operation: OperationId(id(24)),
+            kind: ExternalOperationKind::AbortPreparation,
+            request_digest: Digest::of_bytes(b"abort"),
+        };
+        let record = begun();
+        assert_eq!(
+            preflight(Some(&record), &Command::ArmExternal(abort.clone())),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+
+        let (envelope, safe_point) = snapshot();
+        let record = apply(
+            Some(record),
+            &Event::SnapshotRecorded { snapshot: envelope.clone(), safe_point },
+        )
+        .unwrap();
+        assert_eq!(
+            preflight(Some(&record), &Command::ArmExternal(abort)),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+
+        let (mut rejected, safe_point) = snapshot();
+        rejected.body.resources[0].disposition = RebindDisposition::Reject;
+        let rejected = SnapshotEnvelope::seal(rejected.body).unwrap();
+        let mut record = begun();
+        record = apply(
+            Some(record),
+            &Event::SnapshotRecorded { snapshot: rejected.clone(), safe_point },
+        )
+        .unwrap();
+        let pending = PendingExternal {
+            operation: OperationId(id(25)),
+            kind: ExternalOperationKind::PrepareBindings,
+            request_digest: Digest::of_bytes(b"prepare"),
+        };
+        record = apply(Some(record), &Event::ExternalArmed(pending.clone())).unwrap();
+        let receipt = BindingPreparationReceipt {
+            operation: pending.operation,
+            continuation: intent().id,
+            snapshot: rejected.body.snapshot,
+            snapshot_digest: rejected.body_digest,
+            destination: intent().destination,
+            grants: vec![BindingGrant {
+                requirement: RequirementId(id(7)),
+                provider: coordinate(3),
+                provider_generation: 1,
+                binding: coordinate(4),
+                granted_rights: Rights(3),
+            }],
+            receipt_digest: Digest::ZERO,
+        }
+        .seal()
+        .unwrap();
+        assert_eq!(
+            preflight(Some(&record), &Command::ObserveBindingPreparation(receipt)),
+            Decision::Reject(ContractError::RejectedResource)
+        );
+    }
+
+    #[test]
+    fn terminal_records_reject_new_effect_facts() {
+        let (mut snapshot, _) = snapshot();
+        let effect = EffectRef {
+            authority: AuthorityId(id(30)),
+            effect: EffectId(id(31)),
+            required_resolution: RequiredEffectResolution::Settled,
+        };
+        snapshot.body.effects.push(effect.clone());
+        snapshot = SnapshotEnvelope::seal(snapshot.body).unwrap();
+        let closure = EffectClosureReceipt {
+            effect: effect.effect,
+            authority: effect.authority,
+            resolution: EffectResolution::Settled { outcome_digest: Digest::of_bytes(b"done") },
+            receipt_digest: Digest::ZERO,
+        }
+        .seal()
+        .unwrap();
+        for progress in [Progress::Activated, Progress::Aborted] {
+            let mut record = begun();
+            record.snapshot = Some(snapshot.clone());
+            record.phase = ContinuationPhase::Progress(progress);
+            if progress == Progress::Aborted {
+                record.source_restoration = Some(SourceRestorationReceipt {
+                    continuation: record.intent.id,
+                    snapshot: snapshot.body.snapshot,
+                    snapshot_digest: snapshot.body_digest,
+                    source: record.intent.source.clone(),
+                    execution_epoch: 1,
+                    receipt_digest: Digest::ZERO,
+                });
+            }
+            assert_eq!(
+                preflight(Some(&record), &Command::ObserveEffectClosure(closure.clone())),
+                Decision::Reject(ContractError::InvalidPhase)
+            );
+            if progress == Progress::Activated {
+                assert_eq!(
+                    preflight(
+                        Some(&record),
+                        &Command::MarkRecoveryRequired(RecoveryCause::StoreConflict)
+                    ),
+                    Decision::Reject(ContractError::InvalidPhase)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn aborted_record_can_require_recovery_until_source_restoration_is_durable() {
+        let (snapshot, _) = snapshot();
+        let mut record = begun();
+        record.phase = ContinuationPhase::Progress(Progress::Aborted);
+        record.snapshot = Some(snapshot.clone());
+        let cause = RecoveryCause::SourceRestorationUnknown;
+
+        assert_eq!(
+            preflight(Some(&record), &Command::MarkRecoveryRequired(cause.clone())),
+            Decision::Apply(Event::RecoveryRequired(cause.clone()))
+        );
+
+        record.source_restoration = Some(
+            SourceRestorationReceipt {
+                continuation: record.intent.id,
+                snapshot: snapshot.body.snapshot,
+                snapshot_digest: snapshot.body_digest,
+                source: record.intent.source.clone(),
+                execution_epoch: 1,
+                receipt_digest: Digest::ZERO,
+            }
+            .seal()
+            .unwrap(),
+        );
+        assert_eq!(
+            preflight(Some(&record), &Command::MarkRecoveryRequired(cause)),
+            Decision::Reject(ContractError::InvalidPhase)
+        );
+
+        let mut never_frozen = begun();
+        never_frozen.phase = ContinuationPhase::Progress(Progress::Aborted);
+        assert_eq!(
+            preflight(
+                Some(&never_frozen),
+                &Command::MarkRecoveryRequired(RecoveryCause::StoreConflict)
+            ),
+            Decision::Reject(ContractError::InvalidPhase)
         );
     }
 }

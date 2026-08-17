@@ -12,6 +12,7 @@ mod db;
 
 pub mod adapters;
 pub mod authority;
+pub mod measurement;
 pub mod provider;
 pub mod runtime;
 pub mod store;

@@ -5,7 +5,9 @@ use std::fmt;
 use rusqlite::{OptionalExtension, params};
 
 use crate::authority::{Authority, AuthorityError, BindingId, Rights};
-use crate::db::{ReferenceDatabase, ReferenceDatabaseError};
+use crate::db::{
+    ReferenceDatabase, ReferenceDatabaseError, sqlite_bool, sqlite_to_u64, u64_to_sqlite,
+};
 
 #[derive(Debug)]
 pub enum ProviderError {
@@ -159,33 +161,55 @@ impl DurableKvProvider {
         else {
             return Err(ProviderError::BindingNotFound(handle.binding_id.clone()));
         };
-        if generation as u64 != handle.provider_generation {
+        let generation = sqlite_to_u64(generation, "provider_generation")?;
+        let epoch = sqlite_to_u64(epoch, "execution_epoch")?;
+        let rights = sqlite_to_u64(rights, "rights")?;
+        let active = sqlite_bool(active, "active")?;
+        let fenced = sqlite_bool(fenced, "fenced")?;
+        let dispatch_open = sqlite_bool(dispatch_open, "dispatch_open")?;
+        if role != "source" && role != "destination" {
+            return Err(ProviderError::Database(ReferenceDatabaseError::Invalid(
+                "binding has an unknown role".into(),
+            )));
+        }
+        if generation != handle.provider_generation {
             return Err(ProviderError::StaleGeneration {
                 expected: handle.provider_generation,
-                actual: generation as u64,
+                actual: generation,
             });
         }
-        if epoch as u64 != handle.execution_epoch {
+        if epoch != handle.execution_epoch {
             return Err(ProviderError::StaleEpoch {
                 expected: handle.execution_epoch,
-                actual: epoch as u64,
+                actual: epoch,
             });
         }
-        if fenced != 0 {
+        if fenced {
             return Err(ProviderError::Fenced(handle.binding_id.clone()));
         }
-        if active == 0 {
+        if !active {
             return Err(ProviderError::Inactive(handle.binding_id.clone()));
         }
-        if dispatch_open == 0 {
+        if !dispatch_open {
             return Err(ProviderError::DispatchClosed(handle.binding_id.clone()));
         }
         if role == "destination" && activation.as_deref() != Some("activated") {
             return Err(ProviderError::DispatchClosed(handle.binding_id.clone()));
         }
-        if !Rights::from_bits(rights as u64).contains(required) {
+        if !Rights::from_bits(rights).contains(required) {
             return Err(ProviderError::RightsDenied);
         }
+        Ok(())
+    }
+
+    /// Check the live authority fence for runtime-local business calls. The
+    /// handle's cached coordinates are never trusted after a continuation
+    /// boundary or an authority commit.
+    pub(crate) fn ensure_live(&self, handle: &BindingHandle) -> Result<(), ProviderError> {
+        let connection = self.database.lock()?;
+        let tx = connection.unchecked_transaction()?;
+        Self::validate(&tx, handle, Rights::default())?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -222,19 +246,28 @@ impl DurableKvProvider {
             .query_row(
                 "SELECT value, revision FROM visa_provider_kv WHERE key = ?1",
                 params![key],
-                |row| Ok(KvEntry { value: row.get(0)?, revision: row.get::<_, i64>(1)? as u64 }),
+                |row| {
+                    let revision = row.get::<_, i64>(1)?;
+                    Ok((row.get(0)?, revision))
+                },
             )
             .optional()?;
+        let value = value
+            .map(|(value, revision)| {
+                Ok::<KvEntry, ReferenceDatabaseError>(KvEntry {
+                    value,
+                    revision: sqlite_to_u64(revision, "revision")?,
+                })
+            })
+            .transpose()?;
+        let generation = u64_to_sqlite(handle.provider_generation, "provider_generation")?;
+        let epoch = u64_to_sqlite(handle.execution_epoch, "execution_epoch")?;
         let changed = tx.execute(
             "UPDATE visa_authority_bindings SET dispatch_open = 0
              WHERE binding_id = ?1 AND provider_generation = ?2
                AND execution_epoch = ?3 AND active = 1 AND fenced = 0
                AND dispatch_open = 1",
-            params![
-                handle.binding_id,
-                handle.provider_generation as i64,
-                handle.execution_epoch as i64,
-            ],
+            params![handle.binding_id, generation, epoch,],
         )?;
         if changed != 1 {
             return Err(ProviderError::DispatchClosed(handle.binding_id.clone()));
@@ -312,9 +345,20 @@ impl BindingHandle {
             .query_row(
                 "SELECT value, revision FROM visa_provider_kv WHERE key = ?1",
                 params![key],
-                |row| Ok(KvEntry { value: row.get(0)?, revision: row.get::<_, i64>(1)? as u64 }),
+                |row| {
+                    let revision = row.get::<_, i64>(1)?;
+                    Ok((row.get(0)?, revision))
+                },
             )
             .optional()?;
+        let value = value
+            .map(|(value, revision)| {
+                Ok::<KvEntry, ReferenceDatabaseError>(KvEntry {
+                    value,
+                    revision: sqlite_to_u64(revision, "revision")?,
+                })
+            })
+            .transpose()?;
         tx.commit()?;
         Ok(value)
     }
@@ -349,23 +393,29 @@ impl BindingHandle {
                 |row| row.get::<_, i64>(0),
             )
             .optional()?
-            .map(|revision| revision as u64);
+            .map(|revision| sqlite_to_u64(revision, "revision"))
+            .transpose()?;
         if current != expected_revision {
             return Err(ProviderError::CompareAndSwapMismatch {
                 expected: expected_revision,
                 actual: current,
             });
         }
-        let revision = current.map_or(0, |revision| revision + 1);
+        let revision = current.map_or(Ok(0), |revision| {
+            revision
+                .checked_add(1)
+                .ok_or_else(|| ReferenceDatabaseError::Invalid("revision overflow".into()))
+        })?;
+        let revision_sql = u64_to_sqlite(revision, "revision")?;
         if current.is_some() {
             tx.execute(
                 "UPDATE visa_provider_kv SET value = ?2, revision = ?3 WHERE key = ?1",
-                params![key, value, revision as i64],
+                params![key, value, revision_sql],
             )?;
         } else {
             tx.execute(
                 "INSERT INTO visa_provider_kv(key, value, revision) VALUES (?1, ?2, ?3)",
-                params![key, value, revision as i64],
+                params![key, value, revision_sql],
             )?;
         }
         tx.commit()?;

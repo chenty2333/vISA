@@ -14,7 +14,9 @@ use visa_core::{
     OperationId, ResourceRequirement, SnapshotId, canonical_digest,
 };
 
-use crate::db::{ReferenceDatabase, ReferenceDatabaseError};
+use crate::db::{
+    ReferenceDatabase, ReferenceDatabaseError, sqlite_bool, sqlite_to_u64, u64_to_sqlite,
+};
 
 pub type BindingId = String;
 
@@ -147,7 +149,7 @@ pub enum ActivationAdmissionState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbortQuery {
-    Applied(AbortPreparationReceipt),
+    Applied(Box<AbortPreparationReceipt>),
     Absent,
 }
 
@@ -261,7 +263,7 @@ struct OperationDigestMaterial<'a> {
 
 type BindingRow = (String, i64, i64, i64, String, i64, i64, i64);
 type OperationRow = (Vec<u8>, String, Option<String>, String, i64, i64, String, Option<i64>);
-type CommitRow = (String, Vec<u8>, String, String, String, i64, i64, String, i64, i64);
+type CommitRow = (String, Vec<u8>, String, String, String, i64, i64, String, i64, i64, Vec<u8>);
 type ActivationPermitRow = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, String, Vec<u8>, i64, String);
 
 impl Authority {
@@ -289,15 +291,15 @@ impl Authority {
         let tx = connection.unchecked_transaction()?;
         if let Some(row) = binding_row(&tx, &binding_id)? {
             if row.0 != owner
-                || row.1 as u64 != provider_generation
-                || row.2 as u64 != rights.bits()
+                || durable_u64(row.1, "provider_generation")? != provider_generation
+                || durable_u64(row.2, "rights")? != rights.bits()
                 || row.4 != "source"
             {
                 return Err(AuthorityError::Conflict {
                     operation_id: format!("bootstrap:{binding_id}"),
                 });
             }
-            if row.5 == 0 || row.6 != 0 {
+            if !durable_bool(row.5, "active")? || durable_bool(row.6, "fenced")? {
                 return Err(AuthorityError::Fenced);
             }
             if row.7 == 0 {
@@ -309,21 +311,28 @@ impl Authority {
                 owner,
                 provider_generation,
                 rights,
-                execution_epoch: row.3 as u64,
+                execution_epoch: durable_u64(row.3, "execution_epoch")?,
             });
         }
+        let provider_generation_sql = durable_i64(provider_generation, "provider_generation")?;
+        let rights_sql = durable_i64(rights.bits(), "rights")?;
         tx.execute(
             "INSERT INTO visa_authority_bindings
              (binding_id, owner, provider_generation, rights, execution_epoch, role, active,
               fenced, dispatch_open)
              VALUES (?1, ?2, ?3, ?4, 0, 'source', 1, 0, 1)",
-            params![binding_id, owner, provider_generation as i64, rights.bits() as i64],
+            params![binding_id, owner, provider_generation_sql, rights_sql],
         )?;
         tx.commit()?;
         Ok(SourceBinding { binding_id, owner, provider_generation, rights, execution_epoch: 0 })
     }
 
     pub fn prepare(&self, request: PrepareRequest) -> Result<PrepareReceipt, AuthorityError> {
+        if request.requirements.is_empty() {
+            return Err(AuthorityError::Invalid(
+                "preparation requires at least one resource requirement".into(),
+            ));
+        }
         validate_coordinate(&request.source)?;
         let source_binding_id = coordinate_text(&request.source)?;
         let destination_owner = coordinate_text(&request.destination)?;
@@ -346,17 +355,27 @@ impl Authority {
                 || row.1 != source_binding_id
                 || row.3 != source.0
                 || row.4 != source.1
-                || row.5 as u64 != rights.bits()
+                || durable_u64(row.5, "rights")? != rights.bits()
                 || destination.0 != destination_owner
             {
                 return Err(AuthorityError::Conflict { operation_id });
+            }
+            if source.4 != "source" {
+                return Err(AuthorityError::Invalid(
+                    "preparation source is not a source binding".into(),
+                ));
+            }
+            if destination.4 != "destination" {
+                return Err(AuthorityError::Invalid(
+                    "preparation destination is not a destination binding".into(),
+                ));
             }
             if matches!(row.6.as_str(), "aborted" | "rejected") {
                 return Err(AuthorityError::Rejected(format!("preparation is {}", row.6)));
             }
             let destination_generation = source_generation_successor(source.1)?;
             tx.commit()?;
-            return Ok(prepare_receipt(
+            return prepare_receipt(
                 &request,
                 request_digest,
                 source_binding_id,
@@ -365,22 +384,30 @@ impl Authority {
                 destination_owner,
                 destination_generation,
                 rights,
-            ));
+            );
         }
 
         let source = binding_row(&tx, &source_binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(source_binding_id.clone()))?;
-        if source.5 == 0 || source.6 != 0 {
+        if source.4 != "source" {
+            return Err(AuthorityError::Invalid(
+                "preparation source is not a source binding".into(),
+            ));
+        }
+        if !durable_bool(source.5, "active")? || durable_bool(source.6, "fenced")? {
             return Err(AuthorityError::Fenced);
         }
-        if source.7 != 0 {
+        if durable_bool(source.7, "dispatch_open")? {
             return Err(AuthorityError::DispatchOpen);
         }
-        let available = Rights::from_bits(source.2 as u64);
+        let available = Rights::from_bits(durable_u64(source.2, "rights")?);
         if !available.contains(rights) {
             return Err(AuthorityError::InsufficientRights { requested: rights, available });
         }
         let destination_generation = source_generation_successor(source.1)?;
+        let destination_generation_sql =
+            durable_i64(destination_generation, "provider_generation")?;
+        let rights_sql = durable_i64(rights.bits(), "rights")?;
         let destination_binding_id = format!("destination:{operation_id}");
         tx.execute(
             "INSERT INTO visa_authority_bindings
@@ -390,8 +417,8 @@ impl Authority {
             params![
                 destination_binding_id,
                 destination_owner,
-                destination_generation as i64,
-                rights.bits() as i64,
+                destination_generation_sql,
+                rights_sql,
                 source.3,
                 source_binding_id,
                 operation_id,
@@ -409,12 +436,12 @@ impl Authority {
                 destination_binding_id,
                 source.0,
                 source.1,
-                rights.bits() as i64,
+                rights_sql,
                 source.3,
             ],
         )?;
         tx.commit()?;
-        Ok(prepare_receipt(
+        prepare_receipt(
             &request,
             request_digest,
             source_binding_id,
@@ -423,13 +450,18 @@ impl Authority {
             destination_owner,
             destination_generation,
             rights,
-        ))
+        )
     }
 
     pub fn query_preparation(
         &self,
         request: &PrepareRequest,
     ) -> Result<Option<PrepareReceipt>, AuthorityError> {
+        if request.requirements.is_empty() {
+            return Err(AuthorityError::Invalid(
+                "preparation requires at least one resource requirement".into(),
+            ));
+        }
         validate_coordinate(&request.source)?;
         let source_binding_id = coordinate_text(&request.source)?;
         let destination_owner = coordinate_text(&request.destination)?;
@@ -452,10 +484,20 @@ impl Authority {
             || row.1 != source_binding_id
             || row.3 != source.0
             || row.4 != source.1
-            || row.5 as u64 != rights.bits()
+            || durable_u64(row.5, "rights")? != rights.bits()
             || destination.0 != destination_owner
         {
             return Err(AuthorityError::Conflict { operation_id });
+        }
+        if source.4 != "source" {
+            return Err(AuthorityError::Invalid(
+                "preparation source is not a source binding".into(),
+            ));
+        }
+        if destination.4 != "destination" {
+            return Err(AuthorityError::Invalid(
+                "preparation destination is not a destination binding".into(),
+            ));
         }
         if matches!(row.6.as_str(), "aborted" | "rejected") {
             return Err(AuthorityError::Rejected(format!("preparation is {}", row.6)));
@@ -470,7 +512,7 @@ impl Authority {
             destination_owner,
             destination_generation,
             rights,
-        )))
+        )?))
     }
 
     pub fn commit(&self, request: CommitRequest) -> Result<AuthorityCommitReceipt, AuthorityError> {
@@ -495,9 +537,16 @@ impl Authority {
                 &destination_binding_id,
                 rights,
             )?;
+            let source = binding_row(&tx, &source_binding_id)?
+                .ok_or_else(|| AuthorityError::NotFound(source_binding_id.clone()))?;
+            if source.4 != "source" {
+                return Err(AuthorityError::Invalid(
+                    "commit source is not a source binding".into(),
+                ));
+            }
             if row.7 == "applied" {
                 tx.commit()?;
-                return Ok(commit_receipt_from_row(&request, request_digest, &row));
+                return commit_receipt_from_row(&request, request_digest, &row);
             }
             if row.7 == "rejected" {
                 return Err(AuthorityError::Rejected("commit was rejected".into()));
@@ -530,33 +579,51 @@ impl Authority {
             || preparation.2.as_deref() != Some(&destination_binding_id)
             || preparation.3 != source.0
             || preparation.4 != source.1
-            || preparation.5 as u64 != rights.bits()
+            || durable_u64(preparation.5, "rights")? != rights.bits()
             || preparation.6 != "prepared"
         {
             return Err(AuthorityError::Conflict { operation_id: preparation_operation_id });
         }
-        if source.5 == 0 || source.6 != 0 {
+        if !durable_bool(source.5, "active")? || durable_bool(source.6, "fenced")? {
             return Err(AuthorityError::Fenced);
         }
-        if source.7 != 0 {
+        if durable_bool(source.7, "dispatch_open")? {
             return Err(AuthorityError::DispatchOpen);
         }
-        let available = Rights::from_bits(source.2 as u64);
+        if source.4 != "source" {
+            return Err(AuthorityError::Invalid("commit source is not a source binding".into()));
+        }
+        if destination.4 != "destination" {
+            return Err(AuthorityError::Invalid(
+                "commit destination is not a destination binding".into(),
+            ));
+        }
+        let available = Rights::from_bits(durable_u64(source.2, "rights")?);
         if !available.contains(rights) {
             return Err(AuthorityError::InsufficientRights { requested: rights, available });
         }
         if destination.0 != destination_owner
-            || destination.1 as u64 != destination_generation
-            || destination.2 as u64 != rights.bits()
-            || destination.5 != 0
-            || destination.6 != 0
-            || destination.7 != 0
+            || durable_u64(destination.1, "provider_generation")? != destination_generation
+            || durable_u64(destination.2, "rights")? != rights.bits()
+            || durable_bool(destination.5, "active")?
+            || durable_bool(destination.6, "fenced")?
+            || durable_bool(destination.7, "dispatch_open")?
         {
             return Err(AuthorityError::DestinationNotFresh);
         }
-        let destination_epoch = (source.3 as u64)
+        let destination_epoch = durable_u64(source.3, "execution_epoch")?
             .checked_add(1)
             .ok_or_else(|| AuthorityError::Invalid("execution epoch overflow".into()))?;
+        let destination_epoch_sql = durable_i64(destination_epoch, "execution_epoch")?;
+        let rights_sql = durable_i64(rights.bits(), "rights")?;
+        let core_receipt = core_commit_receipt(
+            &request,
+            durable_u64(source.3, "execution_epoch")?,
+            destination_epoch,
+        );
+        let core_receipt_bytes = postcard::to_allocvec(&core_receipt).map_err(|error| {
+            AuthorityError::Invalid(format!("cannot encode commit receipt: {error}"))
+        })?;
         if tx.execute(
             "UPDATE visa_authority_bindings
              SET active = 0, fenced = 1, dispatch_open = 0
@@ -570,7 +637,7 @@ impl Authority {
             "UPDATE visa_authority_bindings
              SET active = 1, execution_epoch = ?2, dispatch_open = 0
              WHERE binding_id = ?1 AND active = 0 AND fenced = 0 AND dispatch_open = 0",
-            params![destination_binding_id, destination_epoch as i64],
+            params![destination_binding_id, destination_epoch_sql],
         )? != 1
         {
             return Err(AuthorityError::DestinationNotFresh);
@@ -586,9 +653,9 @@ impl Authority {
         tx.execute(
             "INSERT INTO visa_authority_commits
              (operation_id, preparation_operation_id, request_digest, source_binding_id,
-              destination_binding_id, source_owner, provider_generation, rights, status,
-              source_epoch, destination_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'applied', ?9, ?10)",
+             destination_binding_id, source_owner, provider_generation, rights, status,
+             source_epoch, destination_epoch, core_receipt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'applied', ?9, ?10, ?11)",
             params![
                 operation_id,
                 preparation_operation_id,
@@ -597,9 +664,10 @@ impl Authority {
                 destination_binding_id,
                 source.0,
                 source.1,
-                rights.bits() as i64,
+                rights_sql,
                 source.3,
-                destination_epoch as i64,
+                destination_epoch_sql,
+                core_receipt_bytes,
             ],
         )?;
         tx.commit()?;
@@ -613,12 +681,15 @@ impl Authority {
             destination_binding_id,
             source.0,
             source.1,
-            rights.bits() as i64,
+            rights_sql,
             "applied".to_owned(),
             source.3,
-            destination_epoch as i64,
+            destination_epoch_sql,
+            postcard::to_allocvec(&core_receipt).map_err(|error| {
+                AuthorityError::Invalid(format!("cannot encode commit receipt: {error}"))
+            })?,
         );
-        Ok(commit_receipt_from_row(&request, request_digest, &row))
+        commit_receipt_from_row(&request, request_digest, &row)
     }
 
     pub fn query_commit(&self, request: &CommitRequest) -> Result<OperationQuery, AuthorityError> {
@@ -647,7 +718,7 @@ impl Authority {
                 request,
                 request_digest,
                 &row,
-            )))),
+            )?))),
             "rejected" => Ok(OperationQuery::Rejected("authority rejected commit".into())),
             _ => Ok(OperationQuery::Indeterminate),
         }
@@ -678,12 +749,23 @@ impl Authority {
         }
         let source = binding_row(&tx, &validated.source_binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(validated.source_binding_id.clone()))?;
-        if source.5 == 0 || source.6 != 0 {
+        if source.4 != "source" {
+            return Err(AuthorityError::Invalid("abort source is not a source binding".into()));
+        }
+        if !durable_bool(source.5, "active")? || durable_bool(source.6, "fenced")? {
             return Err(AuthorityError::Fenced);
         }
         let destination = binding_row(&tx, &validated.destination_binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(validated.destination_binding_id.clone()))?;
-        if destination.5 != 0 || destination.6 != 0 || destination.7 != 0 {
+        if destination.4 != "destination" {
+            return Err(AuthorityError::Invalid(
+                "abort destination is not a destination binding".into(),
+            ));
+        }
+        if durable_bool(destination.5, "active")?
+            || durable_bool(destination.6, "fenced")?
+            || durable_bool(destination.7, "dispatch_open")?
+        {
             return Err(AuthorityError::AlreadyCommitted);
         }
         let ownership: Option<(String, String)> = tx
@@ -745,7 +827,7 @@ impl Authority {
         {
             return Err(AuthorityError::Conflict { operation_id });
         }
-        Ok(AbortQuery::Applied(validated.receipt))
+        Ok(AbortQuery::Applied(Box::new(validated.receipt)))
     }
 
     /// Reopen a source only when no prepared destination remains. This covers
@@ -755,7 +837,10 @@ impl Authority {
         let tx = connection.unchecked_transaction()?;
         let source = binding_row(&tx, binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(binding_id.to_owned()))?;
-        if source.5 == 0 || source.6 != 0 {
+        if source.4 != "source" {
+            return Err(AuthorityError::Invalid("resume target is not a source binding".into()));
+        }
+        if !durable_bool(source.5, "active")? || durable_bool(source.6, "fenced")? {
             return Err(AuthorityError::Fenced);
         }
         let pending: i64 = tx.query_row(
@@ -783,7 +868,10 @@ impl Authority {
         let tx = connection.unchecked_transaction()?;
         let source = binding_row(&tx, binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(binding_id.to_owned()))?;
-        if source.5 == 0 || source.6 != 0 {
+        if source.4 != "source" {
+            return Err(AuthorityError::Invalid("close target is not a source binding".into()));
+        }
+        if !durable_bool(source.5, "active")? || durable_bool(source.6, "fenced")? {
             return Err(AuthorityError::Fenced);
         }
         let pending: i64 = tx.query_row(
@@ -815,10 +903,11 @@ impl Authority {
         validate_activation_admission(&tx, request)?;
         let binding = binding_row(&tx, &request.destination_binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(request.destination_binding_id.clone()))?;
+        let execution_epoch = durable_i64(request.commit.execution_epoch, "execution_epoch")?;
         if binding.4 != "destination"
-            || binding.5 == 0
-            || binding.6 != 0
-            || binding.3 as u64 != request.commit.execution_epoch
+            || !durable_bool(binding.5, "active")?
+            || durable_bool(binding.6, "fenced")?
+            || durable_u64(binding.3, "execution_epoch")? != request.commit.execution_epoch
         {
             return Err(AuthorityError::DestinationNotFresh);
         }
@@ -850,19 +939,22 @@ impl Authority {
                 || existing.3 != request.destination.value
                 || existing.4 != request.destination_binding_id
                 || existing.5 != request.commit.receipt_digest.0
-                || existing.6 as u64 != request.commit.execution_epoch
+                || durable_u64(existing.6, "execution_epoch")? != request.commit.execution_epoch
             {
                 return Err(AuthorityError::Conflict { operation_id });
             }
             if existing.7 == "activated" {
                 return Err(AuthorityError::AlreadyCommitted);
             }
+            if existing.7 != "admitted" {
+                return Err(AuthorityError::Conflict { operation_id });
+            }
         } else {
             let owner: Option<String> = tx
                 .query_row(
                     "SELECT operation_id FROM visa_authority_activation_permits
                      WHERE destination_binding_id = ?1 AND execution_epoch = ?2",
-                    params![request.destination_binding_id, request.commit.execution_epoch as i64],
+                    params![request.destination_binding_id, execution_epoch],
                     |row| row.get(0),
                 )
                 .optional()?;
@@ -883,7 +975,7 @@ impl Authority {
                     request.destination.value,
                     request.destination_binding_id,
                     request.commit.receipt_digest.0,
-                    request.commit.execution_epoch as i64,
+                    execution_epoch,
                 ],
             )?;
         }
@@ -891,7 +983,7 @@ impl Authority {
             "UPDATE visa_authority_bindings SET dispatch_open = 1
              WHERE binding_id = ?1 AND active = 1 AND fenced = 0
                AND execution_epoch = ?2",
-            params![request.destination_binding_id, request.commit.execution_epoch as i64],
+            params![request.destination_binding_id, execution_epoch],
         )? != 1
         {
             return Err(AuthorityError::DestinationNotFresh);
@@ -937,7 +1029,7 @@ impl Authority {
             || existing.3 != request.destination.value
             || existing.4 != request.destination_binding_id
             || existing.5 != request.commit.receipt_digest.0
-            || existing.6 as u64 != request.commit.execution_epoch
+            || durable_u64(existing.6, "execution_epoch")? != request.commit.execution_epoch
         {
             return Err(AuthorityError::Conflict { operation_id });
         }
@@ -954,20 +1046,69 @@ impl Authority {
         &self,
         request: &ActivationAdmissionRequest,
     ) -> Result<(), AuthorityError> {
-        match self.query_activation_admission(request)? {
-            ActivationAdmissionState::Absent => return Err(AuthorityError::DestinationNotFresh),
-            ActivationAdmissionState::Activated => return Ok(()),
-            ActivationAdmissionState::Admitted => {}
-        }
         let connection = self.database.lock()?;
-        if connection.execute(
+        let tx = connection.unchecked_transaction()?;
+        validate_activation_admission(&tx, request)?;
+        let operation_id = operation_text(request.operation);
+        let Some(existing): Option<ActivationPermitRow> = tx
+            .query_row(
+                "SELECT continuation_id, snapshot_id, destination_authority, destination_value,
+                        destination_binding_id, authority_commit_digest, execution_epoch, status
+                 FROM visa_authority_activation_permits WHERE operation_id = ?1",
+                params![operation_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            return Err(AuthorityError::DestinationNotFresh);
+        };
+        validate_activation_permit(&existing, request)?;
+        if existing.7 == "activated" {
+            tx.commit()?;
+            return Ok(());
+        }
+        if existing.7 != "admitted" {
+            return Err(AuthorityError::Conflict { operation_id });
+        }
+        if tx.execute(
             "UPDATE visa_authority_activation_permits SET status = 'activated'
-             WHERE operation_id = ?1 AND status = 'admitted'",
-            params![operation_text(request.operation)],
+             WHERE operation_id = ?1 AND destination_binding_id = ?2
+               AND authority_commit_digest = ?3 AND execution_epoch = ?4
+               AND status = 'admitted'",
+            params![
+                operation_id,
+                request.destination_binding_id,
+                request.commit.receipt_digest.0,
+                durable_i64(request.commit.execution_epoch, "execution_epoch")?,
+            ],
         )? != 1
         {
             return Err(AuthorityError::DestinationNotFresh);
         }
+        if tx.execute(
+            "UPDATE visa_authority_bindings SET role = 'source'
+             WHERE binding_id = ?1 AND role = 'destination' AND active = 1
+               AND fenced = 0 AND execution_epoch = ?2",
+            params![
+                request.destination_binding_id,
+                durable_i64(request.commit.execution_epoch, "execution_epoch")?,
+            ],
+        )? != 1
+        {
+            return Err(AuthorityError::DestinationNotFresh);
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -977,50 +1118,97 @@ impl Authority {
         &self,
         request: &ActivationAdmissionRequest,
     ) -> Result<(), AuthorityError> {
-        match self.query_activation_admission(request)? {
-            ActivationAdmissionState::Absent => return Ok(()),
-            ActivationAdmissionState::Activated => return Err(AuthorityError::AlreadyCommitted),
-            ActivationAdmissionState::Admitted => {}
-        }
         let connection = self.database.lock()?;
         let tx = connection.unchecked_transaction()?;
         validate_activation_admission(&tx, request)?;
+        let operation_id = operation_text(request.operation);
+        let Some(existing): Option<ActivationPermitRow> = tx
+            .query_row(
+                "SELECT continuation_id, snapshot_id, destination_authority, destination_value,
+                        destination_binding_id, authority_commit_digest, execution_epoch, status
+                 FROM visa_authority_activation_permits WHERE operation_id = ?1",
+                params![operation_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            tx.commit()?;
+            return Ok(());
+        };
+        validate_activation_permit(&existing, request)?;
+        if existing.7 == "activated" {
+            return Err(AuthorityError::AlreadyCommitted);
+        }
+        if existing.7 != "admitted" {
+            return Err(AuthorityError::Conflict { operation_id });
+        }
         let binding = binding_row(&tx, &request.destination_binding_id)?
             .ok_or_else(|| AuthorityError::NotFound(request.destination_binding_id.clone()))?;
+        let execution_epoch = durable_i64(request.commit.execution_epoch, "execution_epoch")?;
         if binding.4 != "destination"
-            || binding.5 == 0
-            || binding.6 != 0
-            || binding.3 as u64 != request.commit.execution_epoch
+            || !durable_bool(binding.5, "active")?
+            || durable_bool(binding.6, "fenced")?
+            || durable_u64(binding.3, "execution_epoch")? != request.commit.execution_epoch
         {
             return Err(AuthorityError::DestinationNotFresh);
         }
-        let operation_id = operation_text(request.operation);
-        tx.execute(
+        if tx.execute(
             "UPDATE visa_authority_bindings SET dispatch_open = 0
              WHERE binding_id = ?1 AND active = 1 AND fenced = 0
                AND execution_epoch = ?2",
-            params![request.destination_binding_id, request.commit.execution_epoch as i64],
-        )?;
-        tx.execute(
-            "DELETE FROM visa_authority_activation_permits WHERE operation_id = ?1",
-            params![operation_id],
-        )?;
+            params![request.destination_binding_id, execution_epoch],
+        )? != 1
+        {
+            return Err(AuthorityError::DestinationNotFresh);
+        }
+        if tx.execute(
+            "DELETE FROM visa_authority_activation_permits
+             WHERE operation_id = ?1 AND status = 'admitted'
+               AND destination_binding_id = ?2 AND authority_commit_digest = ?3
+               AND execution_epoch = ?4",
+            params![
+                operation_id,
+                request.destination_binding_id,
+                request.commit.receipt_digest.0,
+                execution_epoch,
+            ],
+        )? != 1
+        {
+            return Err(AuthorityError::DestinationNotFresh);
+        }
         tx.commit()?;
         Ok(())
     }
 
     pub fn binding(&self, binding_id: &str) -> Result<Option<BindingView>, AuthorityError> {
         let connection = self.database.lock()?;
-        Ok(binding_row(&connection, binding_id)?.map(|row| BindingView {
+        let Some(row) = binding_row(&connection, binding_id)? else { return Ok(None) };
+        let role = match row.4.as_str() {
+            "source" => BindingRole::Source,
+            "destination" => BindingRole::Destination,
+            _ => return Err(AuthorityError::Invalid("binding has an unknown role".into())),
+        };
+        Ok(Some(BindingView {
             binding_id: binding_id.to_owned(),
             owner: row.0,
-            provider_generation: row.1 as u64,
-            rights: Rights::from_bits(row.2 as u64),
-            execution_epoch: row.3 as u64,
-            role: if row.4 == "source" { BindingRole::Source } else { BindingRole::Destination },
-            active: row.5 != 0,
-            fenced: row.6 != 0,
-            dispatch_open: row.7 != 0,
+            provider_generation: durable_u64(row.1, "provider_generation")?,
+            rights: Rights::from_bits(durable_u64(row.2, "rights")?),
+            execution_epoch: durable_u64(row.3, "execution_epoch")?,
+            role,
+            active: durable_bool(row.5, "active")?,
+            fenced: durable_bool(row.6, "fenced")?,
+            dispatch_open: durable_bool(row.7, "dispatch_open")?,
         }))
     }
 
@@ -1057,11 +1245,60 @@ fn validate_activation_admission(
     let commit_operation = operation_text(request.commit.operation);
     let row = commit_row(connection, &commit_operation)?
         .ok_or_else(|| AuthorityError::NotFound(commit_operation.clone()))?;
-    if row.3 != request.destination_binding_id
-        || row.7 != "applied"
-        || row.9 as u64 != request.commit.execution_epoch
+    let stored_receipt: CoreCommitReceipt = postcard::from_bytes(&row.10).map_err(|error| {
+        AuthorityError::Invalid(format!("durable commit receipt is corrupt: {error}"))
+    })?;
+    stored_receipt.verify().map_err(|error| {
+        AuthorityError::Invalid(format!("durable commit receipt is invalid: {error}"))
+    })?;
+    if stored_receipt != request.commit {
+        return Err(AuthorityError::Conflict { operation_id: commit_operation });
+    }
+    let source_binding_id = coordinate_text(&request.commit.source)?;
+    let destination_owner = coordinate_text(&request.commit.destination)?;
+    let source = binding_row(connection, &source_binding_id)?
+        .ok_or_else(|| AuthorityError::NotFound(source_binding_id.clone()))?;
+    let destination = binding_row(connection, &request.destination_binding_id)?
+        .ok_or_else(|| AuthorityError::NotFound(request.destination_binding_id.clone()))?;
+    let row_provider_generation = durable_u64(row.5, "provider_generation")?;
+    let row_rights = durable_u64(row.6, "rights")?;
+    if row.2 != source_binding_id
+        || row.4 != source.0
+        || row.8 != source.3
+        || source.4 != "source"
+        || destination.0 != destination_owner
+        || !matches!(destination.4.as_str(), "destination" | "source")
+        || durable_u64(destination.1, "provider_generation")?
+            != row_provider_generation
+                .checked_add(1)
+                .ok_or_else(|| AuthorityError::Invalid("provider generation overflow".into()))?
+        || durable_u64(destination.2, "rights")? != row_rights
+        || destination.3 != row.9
     {
         return Err(AuthorityError::Conflict { operation_id: commit_operation });
+    }
+    if row.3 != request.destination_binding_id
+        || row.7 != "applied"
+        || durable_u64(row.9, "destination_epoch")? != request.commit.execution_epoch
+    {
+        return Err(AuthorityError::Conflict { operation_id: commit_operation });
+    }
+    Ok(())
+}
+
+fn validate_activation_permit(
+    existing: &ActivationPermitRow,
+    request: &ActivationAdmissionRequest,
+) -> Result<(), AuthorityError> {
+    if existing.0 != request.continuation.0
+        || existing.1 != request.snapshot.0
+        || existing.2 != request.destination.authority.0
+        || existing.3 != request.destination.value
+        || existing.4 != request.destination_binding_id
+        || existing.5 != request.commit.receipt_digest.0
+        || durable_u64(existing.6, "execution_epoch")? != request.commit.execution_epoch
+    {
+        return Err(AuthorityError::Conflict { operation_id: operation_text(request.operation) });
     }
     Ok(())
 }
@@ -1155,6 +1392,15 @@ fn validate_abort_request(
         .ok_or_else(|| AuthorityError::NotFound(preparation_operation_id.clone()))?;
     let source = binding_row(connection, &source_binding_id)?
         .ok_or_else(|| AuthorityError::NotFound(source_binding_id.clone()))?;
+    if source.4 != "source" {
+        return Err(AuthorityError::Invalid("abort source is not a source binding".into()));
+    }
+    let destination = binding_row(connection, &destination_binding_id)?;
+    if destination.as_ref().is_some_and(|row| row.4 != "destination") {
+        return Err(AuthorityError::Invalid(
+            "abort destination is not a destination binding".into(),
+        ));
+    }
     let rights = requirements_rights(&request.requirements);
     let prepare_request = PrepareRequest {
         operation: request.preparation.operation,
@@ -1177,8 +1423,9 @@ fn validate_abort_request(
         || preparation.2.as_deref() != Some(&destination_binding_id)
         || preparation.3 != source.0
         || preparation.4 != source.1
-        || preparation.5 as u64 != rights.bits()
+        || durable_u64(preparation.5, "rights")? != rights.bits()
         || !matches!(preparation.6.as_str(), "prepared" | "aborted")
+        || (preparation.6 == "prepared" && destination.is_none())
     {
         return Err(AuthorityError::Conflict { operation_id: preparation_operation_id });
     }
@@ -1187,6 +1434,7 @@ fn validate_abort_request(
         operation: request.operation,
         continuation: request.continuation,
         snapshot: request.snapshot,
+        snapshot_digest: request.preparation.snapshot_digest,
         source: request.source.clone(),
         destination: request.destination.clone(),
         preparation_receipt_digest: request.preparation.receipt_digest,
@@ -1205,9 +1453,21 @@ fn validate_abort_request(
 }
 
 fn source_generation_successor(source_generation: i64) -> Result<u64, AuthorityError> {
-    (source_generation as u64)
+    durable_u64(source_generation, "provider_generation")?
         .checked_add(1)
         .ok_or_else(|| AuthorityError::Invalid("provider generation overflow".into()))
+}
+
+fn durable_u64(value: i64, field: &str) -> Result<u64, AuthorityError> {
+    sqlite_to_u64(value, field).map_err(AuthorityError::from)
+}
+
+fn durable_i64(value: u64, field: &str) -> Result<i64, AuthorityError> {
+    u64_to_sqlite(value, field).map_err(AuthorityError::from)
+}
+
+fn durable_bool(value: i64, field: &str) -> Result<bool, AuthorityError> {
+    sqlite_bool(value, field).map_err(AuthorityError::from)
 }
 
 fn preparation_binding(receipt: &BindingPreparationReceipt) -> Result<String, AuthorityError> {
@@ -1242,6 +1502,7 @@ fn core_prepare_receipt(
         operation: request.operation,
         continuation: request.continuation,
         snapshot: request.snapshot,
+        snapshot_digest: request.preparation_digest,
         destination: request.destination.clone(),
         grants: request
             .requirements
@@ -1270,8 +1531,8 @@ fn prepare_receipt(
     destination_owner: String,
     destination_generation: u64,
     rights: Rights,
-) -> PrepareReceipt {
-    PrepareReceipt {
+) -> Result<PrepareReceipt, AuthorityError> {
+    Ok(PrepareReceipt {
         request_digest,
         source_binding_id,
         destination_binding_id: destination_binding_id.clone(),
@@ -1279,13 +1540,13 @@ fn prepare_receipt(
         destination_owner,
         provider_generation: destination_generation,
         rights,
-        source_execution_epoch: source.3 as u64,
+        source_execution_epoch: durable_u64(source.3, "execution_epoch")?,
         core_receipt: core_prepare_receipt(
             request,
             &destination_binding_id,
             destination_generation,
         ),
-    }
+    })
 }
 
 fn core_commit_receipt(
@@ -1297,6 +1558,7 @@ fn core_commit_receipt(
         operation: request.operation,
         continuation: request.continuation,
         snapshot: request.snapshot,
+        snapshot_digest: request.preparation.snapshot_digest,
         source: request.source.clone(),
         source_fence_epoch: source_epoch,
         destination: request.destination.clone(),
@@ -1312,18 +1574,35 @@ fn commit_receipt_from_row(
     request: &CommitRequest,
     request_digest: Digest,
     row: &CommitRow,
-) -> AuthorityCommitReceipt {
-    AuthorityCommitReceipt {
+) -> Result<AuthorityCommitReceipt, AuthorityError> {
+    let core_receipt: CoreCommitReceipt = postcard::from_bytes(&row.10).map_err(|error| {
+        AuthorityError::Invalid(format!("durable commit receipt is corrupt: {error}"))
+    })?;
+    core_receipt.verify().map_err(|error| {
+        AuthorityError::Invalid(format!("durable commit receipt is invalid: {error}"))
+    })?;
+    if core_receipt
+        != core_commit_receipt(
+            request,
+            durable_u64(row.8, "source_epoch")?,
+            durable_u64(row.9, "destination_epoch")?,
+        )
+    {
+        return Err(AuthorityError::Conflict { operation_id: operation_text(request.operation) });
+    }
+    Ok(AuthorityCommitReceipt {
         request_digest,
         source_binding_id: row.2.clone(),
         destination_binding_id: row.3.clone(),
         source_owner: row.4.clone(),
-        provider_generation: row.5 as u64 + 1,
-        granted_rights: Rights::from_bits(row.6 as u64),
-        source_execution_epoch: row.8 as u64,
-        destination_execution_epoch: row.9 as u64,
-        core_receipt: core_commit_receipt(request, row.8 as u64, row.9 as u64),
-    }
+        provider_generation: durable_u64(row.5, "provider_generation")?
+            .checked_add(1)
+            .ok_or_else(|| AuthorityError::Invalid("provider generation overflow".into()))?,
+        granted_rights: Rights::from_bits(durable_u64(row.6, "rights")?),
+        source_execution_epoch: durable_u64(row.8, "source_epoch")?,
+        destination_execution_epoch: durable_u64(row.9, "destination_epoch")?,
+        core_receipt,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1340,7 +1619,7 @@ fn validate_commit_row(
         || row.1 != request_digest.0
         || row.2 != source_binding_id
         || row.3 != destination_binding_id
-        || row.6 as u64 != rights.bits()
+        || durable_u64(row.6, "rights")? != rights.bits()
     {
         return Err(AuthorityError::Conflict { operation_id: operation_id.to_owned() });
     }
@@ -1407,7 +1686,7 @@ fn commit_row(
         .query_row(
             "SELECT preparation_operation_id, request_digest, source_binding_id,
                     destination_binding_id, source_owner, provider_generation, rights, status,
-                    source_epoch, destination_epoch
+                    source_epoch, destination_epoch, core_receipt
              FROM visa_authority_commits WHERE operation_id = ?1",
             params![operation_id],
             |row| {
@@ -1422,6 +1701,7 @@ fn commit_row(
                     row.get(7)?,
                     row.get(8)?,
                     row.get(9)?,
+                    row.get(10)?,
                 ))
             },
         )
@@ -1560,5 +1840,51 @@ mod tests {
         ));
         authority.resume_source(&source.binding_id).unwrap();
         assert!(authority.binding(&source.binding_id).unwrap().unwrap().dispatch_open);
+    }
+
+    #[test]
+    fn empty_requirements_are_rejected_before_preparation_state_changes() {
+        let (authority, source) = setup();
+        let mut request = prepare_request(&source);
+        request.requirements.clear();
+        assert!(matches!(
+            authority.prepare(request),
+            Err(AuthorityError::Invalid(message)) if message.contains("at least one")
+        ));
+        let binding = authority.binding(&source.binding_id).unwrap().unwrap();
+        assert!(binding.active && !binding.fenced && !binding.dispatch_open);
+    }
+
+    #[test]
+    fn activation_requires_the_exact_durable_core_commit_receipt() {
+        let (authority, source) = setup();
+        let prepare = prepare_request(&source);
+        let prepared = authority.prepare(prepare.clone()).unwrap();
+        let commit = CommitRequest {
+            operation: OperationId::from_u128(40),
+            continuation: prepare.continuation,
+            snapshot: prepare.snapshot,
+            source: prepare.source,
+            destination: prepare.destination,
+            requirements: prepare.requirements,
+            preparation_digest: prepare.preparation_digest,
+            preparation: prepared.core_receipt,
+        };
+        let receipt = authority.commit(commit).unwrap();
+        let mut forged = receipt.core_receipt.clone();
+        forged.source_fence_epoch += 1;
+        forged = forged.seal().unwrap();
+        let request = ActivationAdmissionRequest {
+            operation: forged.operation,
+            continuation: forged.continuation,
+            snapshot: forged.snapshot,
+            destination: forged.destination.clone(),
+            destination_binding_id: receipt.destination_binding_id,
+            commit: forged,
+        };
+        assert!(matches!(
+            authority.open_destination(&request),
+            Err(AuthorityError::Conflict { .. })
+        ));
     }
 }

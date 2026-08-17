@@ -27,8 +27,8 @@ The implementation is intentionally small:
 - `visa-core`: `no_std + alloc` contract, portable snapshot vocabulary, exact
   receipts, lineage, and a pure preflight/apply reducer;
 - `visa-coordinator`: durable pending operations, exact lost-ack queries,
-  process-local opaque runtime tokens, restart recovery, and atomic lineage
-  updates;
+  restart discovery, structured process-local diagnostics, deterministic
+  control-path counters, opaque runtime tokens, and atomic lineage updates;
 - `visa-profile`: typed portable-state codecs and resource rebind semantics;
 - `visa-wasi`: a real Wasmtime Component frontend with cooperative freeze,
   restore, and activation gating;
@@ -69,23 +69,61 @@ durable permit lets a restarted coordinator resolve a lost activation
 acknowledgement without creating a second runtime owner. Exact
 source-restoration receipts likewise prevent a repeated `recover()` call from
 replaying an old snapshot over resumed work. If the restored source's host
-process later disappears, a fresh adapter reports a recovery requirement
-instead of using that receipt to synthesize a live runtime.
+process later disappears, that is a new runtime fault: the durable receipt
+completes the old continuation but never synthesizes a live process or grants
+authority to replay its old snapshot.
 
-Durable crash recovery starts when the coordinator has atomically recorded the
-sealed snapshot (`SnapshotRecorded`). Before that boundary, the embedding
-runtime remains responsible for its live source. If both the coordinator and
-source runtime disappear after the local freeze begins but before that record
-is durable, vISA cannot reconstruct the guest state without runtime-owned
-continuous persistence. That stronger mechanism is deliberately outside this
-first control-path engine; vISA does not invent a successful, failed, or
-aborted outcome for the missing state.
+Source capture now has an explicit durability capability. The reference
+runtime implements `AuthorityDurableQueryable`: it stores the sealed snapshot,
+safe-point receipt, and capture receipt under the exact capture operation
+before acknowledging the coordinator. It durably arms that operation before
+freezing the source, so a crash between freeze and sealed-state persistence is
+reported as `Indeterminate`, never as retryable absence. If an acknowledgement
+and the whole source process disappear after capture persistence, a fresh
+coordinator discovers the unfinished continuation, queries the same operation,
+validates the exact receipt, and continues without calling capture again. A
+queried result whose coordinator CAS acknowledgement is lost also remains a
+query, never a duplicate capture.
+
+An embedding that can only return process-local capture state declares
+`ProcessLocal`. An indeterminate capture then becomes the explicit
+`ProcessLocalCaptureDualCrashRisk` recovery requirement; it is never hidden
+behind a promise that the runtime cannot satisfy. Missing or corrupt durable
+facts remain recovery requirements or fatal receipt conflicts rather than
+being guessed into success, absence, retry, or abort.
 
 This first profile deliberately excludes unresolved escaped effects, timers,
 networking, transparent native-process migration, and direct TheKernel or
 Nexus integration. Unknown external outcomes fail closed. Future World,
 runtime, authority, and effect integrations implement the narrow coordinator
 ports without moving their authority into vISA.
+
+## Diagnostics and measurement
+
+Embeddings may use the structured step API to observe the current control
+stage, exact operation, capture capability, recovery cause, rejection text,
+and qualitative retry/backoff hint. These diagnostics are process-local and
+never become authority facts. `discover_unfinished` supplies restart work from
+the durable record store, while deterministic counters expose loads, CAS,
+reducer applications, external calls, and exact queries.
+
+Timing is opt-in and lives only in the reference measurement harness; the
+ordinary guest/provider path has no vISA probes. The release runner measures a
+real SQLite/Wasmtime continuation with warmup and median/p95 reporting:
+
+```sh
+cargo run --release -p visa-reference --example control_path_measure -- \
+  --warmup 2 --samples 12 --max-coordinator-ratio-pct 35
+```
+
+The release gate compares coordinator-owned record/reducer/dispatch work with
+aggregate external control work (component preflight and instantiation,
+runtime capture, resource rebind/restore, authority prepare/commit,
+activation, and exact recovery query). The report also exposes the stricter
+in-flow ratio, which excludes preflight and instantiation, so slow setup cannot
+hide control-path overhead. Both are reproducible local engineering signals,
+not portable latency guarantees. Ordinary guest and provider calls do not
+enter the coordinator.
 
 ## Development
 

@@ -2,87 +2,75 @@
 
 # vISA Route
 
-vISA 将重构为 Semantic World 的 portable semantic-continuation layer。当前
-仓库没有外部用户、兼容承诺或需要由新实现维持的历史证据边界；API、WIT、
-schema、snapshot、journal、crate 和持久化格式都可以为更清晰的设计直接破坏。
+vISA 已建立新的 Semantic Continuation Engine 基线。下一段路线不等待 TheKernel
+或 Nexus/CSER，也不提前猜测它们尚未稳定的 authority API；它继续完成 vISA 自己
+能够独立证明的 durability、embedding 和 control-path efficiency。
 
-## 1. 建立新的项目真相
+## 1. Durable source capture
 
-以 `AGENTS.md` 和 maproom 取代旧 roadmap、claim 与 evidence 叙事，明确 vISA
-只拥有 portable continuation lineage、profile、snapshot、runtime safe-point
-语义和 continuation recovery。TheKernel、Nexus/CSER、runtime 与 artifact
-authority 保持独立。
+把 source capture 从一次 process-local runtime 返回值改成可恢复的 exact
+operation。Coordinator 在 freeze 前持久化稳定 operation identity；runtime 或
+独立 capture authority 在返回前持久化 sealed portable snapshot 和 capture
+receipt；重启后的 coordinator 可以查询同一 operation，而不是依赖已经消失的
+runtime token。
 
-## 2. 破坏性收缩仓库
+这一步关闭 `source frozen -> SnapshotRecorded` 之间的 dual-crash 边界。未知
+capture 或 rollback 结果继续进入 `recovery-required`，不能由 timeout 或本地记录
+猜成成功、失败、absent 或 aborted。
 
-删除历史 claims、evidence、qualification matrices、oracles、reference kernel、
-Linux service crates、旧 runtime/ISA paths、joint-handoff 产品壳层、release
-readiness、publication tooling 及其文档。不创建 legacy 或 archive workspace；
-需要考古时使用 Git history。
+## 2. 提炼 profile 与 frontend seam
 
-从旧实现中只提取经过重新审查且直接服务新纵向路径的思想或小段机制，随后
-删除旧依赖。目标是把 active workspace 收敛到 continuity core、coordinator、
-profile、WASI frontend 和 reference vertical 所需的少量 crate。
+让第一条 reference vertical 证明 profile identity、typed state、resource
+requirements 和 binding-grant validation 确实贯穿 capture 与 restore。逐步解除
+`visa-wasi` 对 `CounterSessionState` 的硬编码，但只抽象第二个真实 state/profile
+seam 所要求的部分，不建立 profile registry、transform graph 或兼容层。
 
-## 3. 恢复最小工具链基线
+WASI/Component 仍是第一套 frontend，不成为 core 的永久 ABI。Snapshot、receipt
+和 profile 的具体字段、postcard 格式与 identifier 分配继续允许破坏。
 
-在仓库收缩后迁移到用户选定的 Rust 工具链，只修复剩余 active path 的机械
-构建问题。日常 gate 保持为 format、Clippy、focused core tests 和一条真实
-integration test，不重新建设旧 claim/evidence 系统。
+## 3. 形成可嵌入的 coordinator contract
 
-## 4. 重写 continuity core
+从现有 `begin`、`drive`、`recover` 和 `abort` 提炼清晰的 step outcome、pending
+operation、recovery requirement 和 process-local diagnostic。外部 rejection 的原因
+应能被 embedding host 观察，但不能写进 core record 并冒充 authority fact。
 
-建立小型 `no_std` contract、portable snapshot、continuity profile vocabulary
-和 pure reducer。Core 只维护 continuity scope、state lineage、合法状态转换、
-profile compatibility 和 receipt requirements。
+为 restart ownership 提供最小必要的 unfinished-continuation discovery 与查询能力，
+并整理 reference-only `Rights`、coordinate、binding 和测试默认值，避免 reference
+便利接口被误认为跨 TheKernel/Nexus 的稳定协议。
 
-建立 restartable coordinator，但不让它拥有 TheKernel binding、capability、
-native resource 或 Nexus effect outcome。Coordinator 持久化的是可恢复 intent
-和收到的精确 receipt，而不是外部权威的平行 ledger。
+## 4. 测量完整 control path
 
-## 5. 完成第一条 reference vertical
+围绕唯一 reference vertical 分阶段测量 component preflight/compile、fresh
+instantiate、semantic freeze、portable encode/seal、record CAS、authority
+prepare/commit、destination restore、activation permit 和 lost-ack recovery query。
+同时记录 indeterminate 状态下的 drive/query 次数，识别紧密 polling 和锁竞争。
 
-第一条路径使用两个隔离的 Wasmtime Component 实例、portable counter/session
-state、同步 durable SQLite KV 和一个最小 reference authority/provider。
+测量只服务当前实现决策，不重新建设 runtime、ISA、profile 和 fault 的笛卡尔矩阵，
+也不产生 claim/evidence publication 系统。
 
-它验证 cooperative safe point、portable snapshot、equal-or-narrower
-reauthorization、fresh destination binding、provider-bound source fencing、
-destination restore，以及重复 prepare/commit 不产生第二个 active owner。该路径
-不包含 timer、network、Nexus、TheKernel、通用 effect journal 或多 runtime
-qualification。
+## 5. 只优化已经确认的主导成本
 
-## 6. 建立持久化恢复
+优先考虑 adapter/scheduler 层的查询退避，以及 Wasmtime Engine、compiled
+Component 和 Linker 的安全复用；每个 continuation 仍使用 fresh Store/Instance。
+只有完整 record 重编码、canonical digest 或 clone 已被证明主导时，才调整 reducer
+借用、编码缓冲或持久化表示。
 
-让 continuation 在 source capture、destination preparation、binding commit 和
-activation 周围的必要 crash cut 上可恢复。Pre-commit failure 可以恢复 source；
-post-commit failure 只能恢复 destination；lost acknowledgement 必须通过真实
-authority 查询得到唯一结果。
+不得通过减少 durability、跳过 receipt/snapshot 验证或把 unknown 映射成 absent 来
+换取性能。普通 guest call、provider call 和 syscall 热路径不属于 vISA 优化面。
 
-## 7. 接入 TheKernel
+## 6. 等待真实外部 authority
 
-当 TheKernel 已有最小 `WorldId`、provider generation、generation-bound object
-handle、binding publication 和 execution fence 后，通过窄 adapter 接入 vISA。
-TheKernel 分配并拥有这些坐标，vISA 只携带、验证并消费 receipt。
+TheKernel 具备稳定的 World、provider generation、generation-bound handle、binding
+publication 和 execution fence 后，再实现一条窄 adapter。Nexus/CSER 具备稳定的
+effect identity、outcome、custody 和 closure query 后，才加入第一个 bounded
+escaped-effect profile。
 
-第一条 kernel 路径是同一 x86_64 guest 中一个 provider cohort 的 `g0 -> g1`
-cooperative continuation：先迁移不含 native handle 的 logical state，再增加一个
-真实 regular-file/object rebind。vISA 不进入 syscall 热路径，也不从完整 Linux
-process 或透明 FD migration 起步。
+在此之前，vISA 不冻结相应 wire API，不维护模拟兼容层，也不以 reference SQLite
+角色替代外部系统的最终权威。
 
-## 8. 按需接入 Nexus/CSER
+## 7. 由第一个真实消费者决定扩展
 
-只有当 Nexus provider-generation-aware core 已稳定，并且真实 workload 出现
-跨 executor/provider lifetime 的 escaped effect 时，才接入一个 bounded CSER
-profile。在此之前，vISA 遇到 unresolved escaped effect 时 fail closed。
-
-接入后，一个 vISA logical operation 可以引用零个、一个或多个 Nexus
-`EffectId`；outcome、custody、physical retirement 和 recovery-root release 仍只由
-Nexus 推进。首条组合路径只覆盖一个真实 async I/O 或 logical request，不恢复
-旧式 runtime × ISA × profile × fault 笛卡尔矩阵。
-
-## 9. 由真实消费者决定扩展
-
-三方首条组合路径成立后，再由真实需求决定是否加入第二 runtime、更多 resource
-profile、transparent compute carrier、cross-host placement、semantic package 或
-agent-facing action。每次扩展只增加一个新的责任或 proof obligation，不以生成
-更多 schema、receipt 或 evidence bundle 作为进展。
+完成 durable capture、embedding seam 和测量驱动优化后，再由真实 workload
+决定是否加入第二 runtime、regular-file/object rebind、更多 profile、cross-host
+placement 或 bounded effect continuity。每次只增加一个真实 consumer 或 invariant，
+不以增加矩阵、schema、receipt 数量或产品壳层作为进展。

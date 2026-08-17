@@ -6,15 +6,21 @@
 //! and [`Instance`] are kept in opaque host-local types.  Portable state is
 //! always the canonical [`visa_core::SnapshotEnvelope`] produced by the
 //! selected [`WasiProfile`]; no runtime object is copied into it.
+//!
+//! [`ProfileRef`] is the portable compatibility boundary.  It identifies the
+//! profile contract and state schema, not one particular component binary.
+//! [`ComponentDigest`] is instead an embedding-local preflight identity: an
+//! embedding may require an exact artifact before preparing an instance, but
+//! the digest is intentionally not part of portable snapshot compatibility.
 
 use std::fmt;
 
 use visa_core::{
-    AuthorityCommitReceipt, AuthorityId, ContinuationId, ContractError, Digest, ExternalCoordinate,
-    LineageAdvance, LineageId, LineagePoint, PortableSnapshot, ProfileRef, SafePointReceipt,
-    ScopeId, SnapshotEnvelope, SnapshotId, SourceSemanticCut,
+    AuthorityCommitReceipt, ContinuationId, ContractError, Digest, ExternalCoordinate,
+    LineageAdvance, PortableSnapshot, ProfileRef, SafePointReceipt, ScopeId, SnapshotEnvelope,
+    SnapshotId, SourceSemanticCut,
 };
-use visa_profile::{ContinuityProfile, CounterSessionState, DurableKvProfile};
+use visa_profile::{ContinuityProfile, CounterSessionState, DurableKvProfile, PortableStateCodec};
 use wasmtime::component::types::ComponentItem;
 use wasmtime::component::{Component, Instance, Linker, Type};
 use wasmtime::{Config, Engine, Store};
@@ -26,59 +32,70 @@ pub type ComponentDigest = Digest;
 ///
 /// The profile owns typed encoding, strict decoding, validation, and logical
 /// resource requirements.  The frontend only transports the resulting bytes.
-pub trait WasiProfile: Clone + Send + Sync + 'static {
-    /// Exact profile identity, including contract and state schema digests.
-    fn profile_ref(&self) -> ProfileRef;
-
-    /// Encode the complete typed portable state.
-    fn encode_state(&self, state: &CounterSessionState) -> Result<Vec<u8>, ProfileError>;
-
-    /// Strictly decode the complete typed portable state.
-    fn decode_state(&self, bytes: &[u8]) -> Result<CounterSessionState, ProfileError>;
-
-    /// Validate decoded state before it reaches a destination guest.
-    fn validate_state(&self, state: &CounterSessionState) -> Result<(), ProfileError>;
-
-    /// Describe logical resources needed after restore.
-    fn resource_requirements(
+pub trait WasiProfile: ContinuityProfile + Clone + Send + Sync + 'static {
+    /// Build the associated typed state at the runtime's cooperative cut.
+    ///
+    /// The scalar counter and session metadata are frontend inputs only; the
+    /// profile decides how (or whether) they belong in its portable state.
+    fn capture_state(
         &self,
-        state: &CounterSessionState,
-    ) -> Result<Vec<visa_core::ResourceRequirement>, ProfileError>;
+        counter: u64,
+        session_key: Vec<u8>,
+        last_seen_version: Option<u64>,
+    ) -> Result<Self::State, ProfileError>;
+
+    /// Project the profile state back into the scalar runtime contract.
+    fn runtime_counter(&self, state: &Self::State) -> u64;
+
+    /// Return frontend session metadata retained for a subsequent capture.
+    /// A profile may return empty/default metadata when it does not use it.
+    fn session_metadata(&self, state: &Self::State) -> (Vec<u8>, Option<u64>);
+
+    /// Return initial metadata for a fresh instance.  The default is only a
+    /// compatibility value for profiles that use the first scalar example;
+    /// profiles with different metadata requirements should override it.
+    fn initial_session_metadata(&self) -> (Vec<u8>, Option<u64>) {
+        (b"counter".to_vec(), None)
+    }
+
+    /// Encode the complete typed portable state using the profile's codec.
+    fn encode_state(&self, state: &Self::State) -> Result<Vec<u8>, ProfileError> {
+        self.state_codec().encode(state).map_err(|error| ProfileError::new(format!("{error:?}")))
+    }
+
+    /// Strictly decode and validate one complete typed portable state.
+    fn decode_state(&self, bytes: &[u8]) -> Result<Self::State, ProfileError> {
+        let state = self
+            .state_codec()
+            .decode(bytes)
+            .map_err(|error| ProfileError::new(format!("{error:?}")))?;
+        self.validate_state(&state).map_err(|error| ProfileError::new(format!("{error:?}")))?;
+        Ok(state)
+    }
 }
 
 /// The first profile's typed state codec is reusable by this frontend.
 pub type CounterProfile = DurableKvProfile;
 
 impl WasiProfile for DurableKvProfile {
-    fn profile_ref(&self) -> ProfileRef {
-        ContinuityProfile::profile_ref(self)
-    }
-
-    fn encode_state(&self, state: &CounterSessionState) -> Result<Vec<u8>, ProfileError> {
-        self.state_codec().encode(state).map_err(|error| ProfileError::new(format!("{error:?}")))
-    }
-
-    fn decode_state(&self, bytes: &[u8]) -> Result<CounterSessionState, ProfileError> {
-        let state = self
-            .state_codec()
-            .decode(bytes)
-            .map_err(|error| ProfileError::new(format!("{error:?}")))?;
+    fn capture_state(
+        &self,
+        counter: u64,
+        session_key: Vec<u8>,
+        last_seen_version: Option<u64>,
+    ) -> Result<Self::State, ProfileError> {
+        let state = CounterSessionState { counter, session_key, last_seen_version };
         ContinuityProfile::validate_state(self, &state)
             .map_err(|error| ProfileError::new(format!("{error:?}")))?;
         Ok(state)
     }
 
-    fn validate_state(&self, state: &CounterSessionState) -> Result<(), ProfileError> {
-        ContinuityProfile::validate_state(self, state)
-            .map_err(|error| ProfileError::new(format!("{error:?}")))
+    fn runtime_counter(&self, state: &Self::State) -> u64 {
+        state.counter
     }
 
-    fn resource_requirements(
-        &self,
-        state: &CounterSessionState,
-    ) -> Result<Vec<visa_core::ResourceRequirement>, ProfileError> {
-        ContinuityProfile::resource_requirements(self, state)
-            .map_err(|error| ProfileError::new(format!("{error:?}")))
+    fn session_metadata(&self, state: &Self::State) -> (Vec<u8>, Option<u64>) {
+        (state.session_key.clone(), state.last_seen_version)
     }
 }
 
@@ -92,6 +109,10 @@ impl ProfileError {
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self { message: message.into() }
+    }
+
+    fn from_profile(error: visa_profile::ProfileError) -> Self {
+        Self::new(format!("{error:?}"))
     }
 }
 
@@ -149,8 +170,11 @@ impl ActivationGate {
     }
 }
 
-/// Inputs needed to seal a core snapshot.  Defaults are deterministic test
-/// coordinates; a real coordinator supplies its own exact values.
+/// Inputs needed to seal a core snapshot.
+///
+/// There is intentionally no `Default` implementation: these coordinates are
+/// owned by the embedding coordinator and silently substituting test values
+/// would permit a runtime to activate or seal against the wrong continuation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotContext {
     pub snapshot: SnapshotId,
@@ -162,31 +186,8 @@ pub struct SnapshotContext {
     pub receipt_digest: Digest,
 }
 
-impl Default for SnapshotContext {
-    fn default() -> Self {
-        Self {
-            snapshot: SnapshotId::from_u128(1),
-            continuation: ContinuationId::from_u128(1),
-            scope: ScopeId::from_u128(1),
-            lineage: LineageAdvance {
-                parent: LineagePoint {
-                    lineage: LineageId::from_u128(1),
-                    generation: 0,
-                    state_digest: Digest::ZERO,
-                },
-                successor_generation: 1,
-            },
-            runtime: ExternalCoordinate {
-                authority: AuthorityId::from_u128(1),
-                value: b"wasmtime".to_vec(),
-            },
-            cut_sequence: 0,
-            receipt_digest: Digest::ZERO,
-        }
-    }
-}
-
-/// Component identity and profile identity required for exact preflight.
+/// Embedding-local component identity and portable profile identity required
+/// for exact preflight.  The component digest is not a portable profile key.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreflightExpectations {
     pub component_digest: ComponentDigest,
@@ -201,7 +202,9 @@ impl PreflightExpectations {
 }
 
 /// Compile/type-check a component without creating a Store or running guest
-/// code.  The profile is copied into each fresh prepared instance.
+/// code.  The profile is copied into each fresh prepared instance.  Digest
+/// expectations are an embedding-local artifact check; they do not narrow the
+/// portable [`ProfileRef`] compatibility boundary.
 pub struct WasiFrontend<P> {
     profile: P,
     expected_component_digest: Option<ComponentDigest>,
@@ -225,11 +228,12 @@ impl<P: WasiProfile> WasiFrontend<P> {
     }
 
     pub fn preflight(&self, component_bytes: &[u8]) -> Result<PreparedComponent<P>, WasiError> {
-        let digest = component_digest(component_bytes);
-        self.preflight_with_expectations(
+        let actual_digest = component_digest(component_bytes);
+        self.preflight_validated(
             component_bytes,
+            actual_digest,
             PreflightExpectations::new(
-                self.expected_component_digest.unwrap_or(digest),
+                self.expected_component_digest.unwrap_or(actual_digest),
                 self.profile.profile_ref(),
             ),
         )
@@ -241,6 +245,15 @@ impl<P: WasiProfile> WasiFrontend<P> {
         expectations: PreflightExpectations,
     ) -> Result<PreparedComponent<P>, WasiError> {
         let actual_digest = component_digest(component_bytes);
+        self.preflight_validated(component_bytes, actual_digest, expectations)
+    }
+
+    fn preflight_validated(
+        &self,
+        component_bytes: &[u8],
+        actual_digest: ComponentDigest,
+        expectations: PreflightExpectations,
+    ) -> Result<PreparedComponent<P>, WasiError> {
         if actual_digest != expectations.component_digest {
             return Err(WasiError::ComponentDigestMismatch {
                 expected: expectations.component_digest,
@@ -259,9 +272,11 @@ impl<P: WasiProfile> WasiFrontend<P> {
         let component = Component::new(&engine, component_bytes)
             .map_err(|error| WasiError::Compile(format!("{error:#}")))?;
         validate_component_contract(&component, &engine)?;
+        let linker = Linker::<HostState>::new(&engine);
         Ok(PreparedComponent {
             engine,
             component,
+            linker,
             profile: self.profile.clone(),
             component_digest: actual_digest,
         })
@@ -311,10 +326,12 @@ fn validate_component_contract(component: &Component, engine: &Engine) -> Result
 }
 
 /// Compiled Wasmtime objects.  This type intentionally has no serialization
-/// implementation and never appears in a portable snapshot.
+/// implementation and never appears in a portable snapshot.  Its digest is
+/// useful for local preflight/audit decisions, not as portable state identity.
 pub struct PreparedComponent<P> {
     engine: Engine,
     component: Component,
+    linker: Linker<HostState>,
     profile: P,
     component_digest: ComponentDigest,
 }
@@ -341,9 +358,10 @@ impl<P: WasiProfile> PreparedComponent<P> {
 
     /// Always instantiate a new Store and Instance.
     pub fn instantiate(&self, execution_epoch: u64) -> Result<WasiInstance<P>, WasiError> {
+        let (session_key, last_seen_version) = self.profile.initial_session_metadata();
         let mut store = Store::new(&self.engine, HostState { dispatch_open: false });
-        let linker = Linker::<HostState>::new(&self.engine);
-        let instance = linker
+        let instance = self
+            .linker
             .instantiate(&mut store, &self.component)
             .map_err(|error| WasiError::Instantiate(error.to_string()))?;
         Ok(WasiInstance {
@@ -355,11 +373,12 @@ impl<P: WasiProfile> PreparedComponent<P> {
             activated: false,
             activation_prepared: false,
             frozen: false,
-            context: SnapshotContext::default(),
+            restored: false,
+            context: None,
             safe_point: None,
             staged_counter: None,
-            session_key: b"counter".to_vec(),
-            last_seen_version: None,
+            session_key,
+            last_seen_version,
         })
     }
 
@@ -382,7 +401,8 @@ pub struct WasiInstance<P> {
     activated: bool,
     activation_prepared: bool,
     frozen: bool,
-    context: SnapshotContext,
+    restored: bool,
+    context: Option<SnapshotContext>,
     safe_point: Option<SafePointCapture>,
     staged_counter: Option<u64>,
     session_key: Vec<u8>,
@@ -397,6 +417,7 @@ impl<P> fmt::Debug for WasiInstance<P> {
             .field("execution_epoch", &self.execution_epoch)
             .field("activated", &self.activated)
             .field("frozen", &self.frozen)
+            .field("restored", &self.restored)
             .finish_non_exhaustive()
     }
 }
@@ -424,10 +445,12 @@ impl<P: WasiProfile> WasiInstance<P> {
 
     /// Replace default test coordinates with coordinator-owned exact values.
     pub fn set_snapshot_context(&mut self, context: SnapshotContext) -> Result<(), WasiError> {
-        if self.activated || self.activation_prepared || self.frozen {
+        // A successful restore binds this instance to the context it used;
+        // callers must create a fresh instance for a different snapshot.
+        if self.restored || self.activated || self.activation_prepared || self.frozen {
             return Err(WasiError::ContextLocked);
         }
-        self.context = context;
+        self.context = Some(context);
         Ok(())
     }
 
@@ -438,7 +461,7 @@ impl<P: WasiProfile> WasiInstance<P> {
         if !self.activated || self.frozen {
             return Err(WasiError::ContextLocked);
         }
-        self.context = context;
+        self.context = Some(context);
         self.safe_point = None;
         Ok(())
     }
@@ -458,9 +481,9 @@ impl<P: WasiProfile> WasiInstance<P> {
         if self.frozen {
             return Err(WasiError::AlreadyFrozen);
         }
-        let state =
-            CounterSessionState { counter: 0, session_key: session_key.clone(), last_seen_version };
-        self.profile.validate_state(&state).map_err(WasiError::ProfileValidation)?;
+        self.profile
+            .capture_state(0, session_key.clone(), last_seen_version)
+            .map_err(WasiError::ProfileValidation)?;
         self.session_key = session_key;
         self.last_seen_version = last_seen_version;
         Ok(())
@@ -480,9 +503,21 @@ impl<P: WasiProfile> WasiInstance<P> {
     /// Validate and stage an exact activation while guest business dispatch
     /// remains closed. The host can now acquire its external admission fence.
     pub fn prepare_activation(&mut self, gate: &ActivationGate) -> Result<(), WasiError> {
-        if gate.continuation != self.context.continuation
-            || gate.snapshot != self.context.snapshot
-            || gate.runtime != self.context.runtime
+        if self.frozen {
+            return Err(WasiError::AlreadyFrozen);
+        }
+        if self.activated {
+            return Err(WasiError::AlreadyActivated);
+        }
+        if self.activation_prepared {
+            return Err(WasiError::ActivationAlreadyPrepared);
+        }
+        let Some(context) = self.context.as_ref() else {
+            return Err(WasiError::SnapshotContextRequired);
+        };
+        if gate.continuation != context.continuation
+            || gate.snapshot != context.snapshot
+            || gate.runtime != context.runtime
         {
             return Err(WasiError::ActivationGateMismatch);
         }
@@ -500,7 +535,10 @@ impl<P: WasiProfile> WasiInstance<P> {
 
     /// Complete a previously validated activation after provider admission.
     pub fn enable_activation(&mut self) -> Result<(), WasiError> {
-        if !self.activation_prepared || self.frozen {
+        if self.frozen {
+            return Err(WasiError::AlreadyFrozen);
+        }
+        if !self.activation_prepared {
             return Err(WasiError::ActivationRequired);
         }
         self.activation_prepared = false;
@@ -568,34 +606,36 @@ impl<P: WasiProfile> WasiInstance<P> {
         session_key: Vec<u8>,
         last_seen_version: Option<u64>,
     ) -> Result<SnapshotEnvelope, WasiError> {
+        let context = self.context.clone().ok_or(WasiError::SnapshotContextRequired)?;
         let counter = self.staged_counter.ok_or(WasiError::NotFrozen)?;
-        let typed_state = CounterSessionState { counter, session_key, last_seen_version };
-        self.profile.validate_state(&typed_state).map_err(WasiError::ProfileValidation)?;
+        let typed_state = self
+            .profile
+            .capture_state(counter, session_key, last_seen_version)
+            .map_err(WasiError::ProfileValidation)?;
         let state = self.profile.encode_state(&typed_state).map_err(WasiError::ProfileEncoding)?;
         let decoded = self.profile.decode_state(&state).map_err(WasiError::ProfileDecoding)?;
-        self.profile.validate_state(&decoded).map_err(WasiError::ProfileValidation)?;
-        let resources =
-            self.profile.resource_requirements(&decoded).map_err(WasiError::ProfileValidation)?;
+        let resources = ContinuityProfile::resource_requirements(&self.profile, &decoded)
+            .map_err(|error| WasiError::ProfileValidation(ProfileError::from_profile(error)))?;
         let state_digest = Digest::of_bytes(&state);
         let safe_point = SafePointReceipt {
-            continuation: self.context.continuation,
-            scope: self.context.scope,
-            runtime: self.context.runtime.clone(),
-            cut_sequence: self.context.cut_sequence,
+            continuation: context.continuation,
+            scope: context.scope,
+            runtime: context.runtime.clone(),
+            cut_sequence: context.cut_sequence,
             portable_state_digest: state_digest,
             receipt_digest: Digest::ZERO,
         }
         .seal()
         .map_err(WasiError::Contract)?;
         let body = PortableSnapshot {
-            snapshot: self.context.snapshot,
-            continuation: self.context.continuation,
-            scope: self.context.scope,
-            lineage: self.context.lineage.clone(),
+            snapshot: context.snapshot,
+            continuation: context.continuation,
+            scope: context.scope,
+            lineage: context.lineage.clone(),
             profile: self.profile.profile_ref(),
             source_cut: SourceSemanticCut {
-                runtime: self.context.runtime.clone(),
-                cut_sequence: self.context.cut_sequence,
+                runtime: context.runtime.clone(),
+                cut_sequence: context.cut_sequence,
                 receipt_digest: safe_point.receipt_digest,
             },
             state,
@@ -609,8 +649,7 @@ impl<P: WasiProfile> WasiInstance<P> {
             execution_epoch: self.execution_epoch,
             safe_point,
         });
-        self.session_key = typed_state.session_key;
-        self.last_seen_version = typed_state.last_seen_version;
+        (self.session_key, self.last_seen_version) = self.profile.session_metadata(&typed_state);
         self.staged_counter = None;
         Ok(envelope)
     }
@@ -623,6 +662,10 @@ impl<P: WasiProfile> WasiInstance<P> {
         }
         self.frozen = false;
         self.staged_counter = None;
+        // Defensive cleanup: activation preparation must never survive a
+        // cancelled safe-point attempt, even if a future path stages it
+        // before freezing.
+        self.activation_prepared = false;
         self.store.data_mut().dispatch_open = true;
         Ok(())
     }
@@ -633,14 +676,26 @@ impl<P: WasiProfile> WasiInstance<P> {
         self.complete_freeze(self.session_key.clone(), self.last_seen_version)
     }
 
-    /// Verify the core envelope/profile/schema and restore into this fresh
-    /// destination.  Activation remains closed until a matching receipt.
+    /// Verify the core envelope/profile/schema and restore into a fresh
+    /// destination.  A successful restore is one-shot and locks the
+    /// instance's snapshot context; activation remains closed until a matching
+    /// receipt.
     pub fn restore(&mut self, snapshot: &SnapshotEnvelope) -> Result<(), WasiError> {
+        if self.restored
+            || self.activated
+            || self.activation_prepared
+            || self.frozen
+            || self.safe_point.is_some()
+            || self.staged_counter.is_some()
+        {
+            return Err(WasiError::RestoreRequiresFresh);
+        }
         snapshot.verify().map_err(WasiError::Contract)?;
-        if snapshot.body.continuation != self.context.continuation
-            || snapshot.body.snapshot != self.context.snapshot
-            || snapshot.body.scope != self.context.scope
-            || snapshot.body.lineage != self.context.lineage
+        let context = self.context.as_ref().ok_or(WasiError::SnapshotContextRequired)?;
+        if snapshot.body.continuation != context.continuation
+            || snapshot.body.snapshot != context.snapshot
+            || snapshot.body.scope != context.scope
+            || snapshot.body.lineage != context.lineage
         {
             return Err(WasiError::SnapshotContextMismatch);
         }
@@ -653,21 +708,22 @@ impl<P: WasiProfile> WasiInstance<P> {
         }
         let state =
             self.profile.decode_state(&snapshot.body.state).map_err(WasiError::ProfileDecoding)?;
-        self.profile.validate_state(&state).map_err(WasiError::ProfileValidation)?;
+        ContinuityProfile::validate_resources(&self.profile, &state, &snapshot.body.resources)
+            .map_err(|error| WasiError::ProfileValidation(ProfileError::from_profile(error)))?;
         let function = self
             .instance
             .get_typed_func::<(u64,), ()>(&mut self.store, "restore-counter")
             .map_err(|error| WasiError::MissingExport(error.to_string()))?;
         function
-            .call(&mut self.store, (state.counter,))
+            .call(&mut self.store, (self.profile.runtime_counter(&state),))
             .map_err(|error| WasiError::GuestTrap(error.to_string()))?;
-        self.session_key = state.session_key;
-        self.last_seen_version = state.last_seen_version;
+        (self.session_key, self.last_seen_version) = self.profile.session_metadata(&state);
         self.frozen = false;
         self.activated = false;
         self.activation_prepared = false;
         self.safe_point = None;
         self.staged_counter = None;
+        self.restored = true;
         self.store.data_mut().dispatch_open = false;
         Ok(())
     }
@@ -699,11 +755,15 @@ pub enum WasiError {
     ExecutionEpochMismatch { expected: u64, actual: u64 },
     ActivationGateMismatch,
     SnapshotContextMismatch,
+    SnapshotContextRequired,
     ContextLocked,
     NotActivated,
     ActivationRequired,
+    AlreadyActivated,
+    ActivationAlreadyPrepared,
     AlreadyFrozen,
     NotFrozen,
+    RestoreRequiresFresh,
 }
 
 impl fmt::Display for WasiError {
@@ -748,11 +808,21 @@ impl fmt::Display for WasiError {
             Self::SnapshotContextMismatch => {
                 formatter.write_str("snapshot does not bind this continuation context")
             }
+            Self::SnapshotContextRequired => {
+                formatter.write_str("an explicit snapshot context is required")
+            }
             Self::ContextLocked => formatter.write_str("snapshot context is already locked"),
             Self::NotActivated => formatter.write_str("freeze requires an activated instance"),
             Self::ActivationRequired => formatter.write_str("business call requires activation"),
+            Self::AlreadyActivated => formatter.write_str("instance is already activated"),
+            Self::ActivationAlreadyPrepared => {
+                formatter.write_str("activation is already prepared")
+            }
             Self::AlreadyFrozen => formatter.write_str("instance is already frozen"),
             Self::NotFrozen => formatter.write_str("instance has no staged freeze"),
+            Self::RestoreRequiresFresh => {
+                formatter.write_str("restore requires a fresh, unused instance")
+            }
         }
     }
 }
@@ -811,14 +881,46 @@ pub const fn counter_component_wat() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use visa_profile::{
+        ApplicationRecoveryDecision, CodecError, PortableStateCodec,
+        ProfileError as ProfileSdkError,
+    };
 
     fn prepared() -> PreparedComponent<CounterProfile> {
         let bytes = counter_component_bytes().unwrap();
         WasiFrontend::new(CounterProfile::default()).preflight(&bytes).unwrap()
     }
 
+    fn context() -> SnapshotContext {
+        SnapshotContext {
+            snapshot: SnapshotId::from_u128(1),
+            continuation: ContinuationId::from_u128(1),
+            scope: ScopeId::from_u128(1),
+            lineage: LineageAdvance {
+                parent: visa_core::LineagePoint {
+                    lineage: visa_core::LineageId::from_u128(1),
+                    generation: 0,
+                    state_digest: Digest::ZERO,
+                },
+                successor_generation: 1,
+            },
+            runtime: ExternalCoordinate {
+                authority: visa_core::AuthorityId::from_u128(1),
+                value: b"wasmtime".to_vec(),
+            },
+            cut_sequence: 0,
+            receipt_digest: Digest::ZERO,
+        }
+    }
+
     fn gate(execution_epoch: u64) -> ActivationGate {
-        ActivationGate::for_active_source(&SnapshotContext::default(), execution_epoch)
+        let context = context();
+        ActivationGate::for_active_source(&context, execution_epoch)
+    }
+
+    fn activate(instance: &mut WasiInstance<CounterProfile>, execution_epoch: u64) {
+        instance.set_snapshot_context(context()).unwrap();
+        instance.activate(&gate(execution_epoch)).unwrap();
     }
 
     #[test]
@@ -847,8 +949,8 @@ mod tests {
         let mut first = prepared.instantiate(7).unwrap();
         let mut second = prepared.instantiate(7).unwrap();
         assert!(matches!(first.increment(), Err(WasiError::ActivationRequired)));
-        first.activate(&gate(7)).unwrap();
-        second.activate(&gate(7)).unwrap();
+        activate(&mut first, 7);
+        activate(&mut second, 7);
         assert_eq!(first.increment().unwrap(), 1);
         assert_eq!(first.value().unwrap(), 1);
         assert_eq!(second.value().unwrap(), 0);
@@ -858,7 +960,7 @@ mod tests {
     fn freeze_restore_is_monotonic_and_snapshot_has_no_host_token() {
         let prepared = prepared();
         let mut source = prepared.instantiate(7).unwrap();
-        source.activate(&gate(7)).unwrap();
+        activate(&mut source, 7);
         assert_eq!(source.increment().unwrap(), 1);
         assert_eq!(source.increment().unwrap(), 2);
         let snapshot = source.freeze().unwrap();
@@ -866,6 +968,7 @@ mod tests {
         assert_eq!(snapshot.body.resources.len(), 1);
         assert_eq!(snapshot.body.resources[0].logical_name, b"counter");
         let mut destination = prepared.instantiate(9).unwrap();
+        destination.set_snapshot_context(context()).unwrap();
         destination.restore(&snapshot).unwrap();
         assert!(destination.increment().is_err());
         destination.activate(&gate(9)).unwrap();
@@ -873,10 +976,57 @@ mod tests {
     }
 
     #[test]
+    fn restore_requires_fresh_instance_once_and_locks_context() {
+        let prepared = prepared();
+        let mut source = prepared.instantiate(7).unwrap();
+        activate(&mut source, 7);
+        let snapshot = source.freeze().unwrap();
+
+        let mut destination = prepared.instantiate(9).unwrap();
+        destination.set_snapshot_context(context()).unwrap();
+        destination.restore(&snapshot).unwrap();
+        assert!(matches!(destination.restore(&snapshot), Err(WasiError::RestoreRequiresFresh)));
+        assert!(matches!(
+            destination.set_snapshot_context(context()),
+            Err(WasiError::ContextLocked)
+        ));
+
+        let mut active = prepared.instantiate(9).unwrap();
+        activate(&mut active, 9);
+        assert!(matches!(active.restore(&snapshot), Err(WasiError::RestoreRequiresFresh)));
+    }
+
+    #[test]
+    fn activation_guards_and_cancelled_freeze_clear_staged_defense() {
+        let prepared = prepared();
+        let mut source = prepared.instantiate(7).unwrap();
+        activate(&mut source, 7);
+        source.begin_freeze().unwrap();
+        assert!(matches!(source.prepare_activation(&gate(7)), Err(WasiError::AlreadyFrozen)));
+
+        // Exercise the cancellation defense even if a future path were to
+        // stage activation before entering the freeze state.
+        source.activation_prepared = true;
+        source.cancel_freeze().unwrap();
+        assert!(!source.activation_prepared);
+        assert!(matches!(source.enable_activation(), Err(WasiError::ActivationRequired)));
+        assert!(matches!(source.prepare_activation(&gate(7)), Err(WasiError::AlreadyActivated)));
+
+        let mut staged = prepared.instantiate(7).unwrap();
+        staged.set_snapshot_context(context()).unwrap();
+        staged.prepare_activation(&gate(7)).unwrap();
+        assert!(matches!(
+            staged.prepare_activation(&gate(7)),
+            Err(WasiError::ActivationAlreadyPrepared)
+        ));
+        staged.enable_activation().unwrap();
+    }
+
+    #[test]
     fn staged_freeze_can_cancel_or_seal_after_provider_capture() {
         let prepared = prepared();
         let mut source = prepared.instantiate(7).unwrap();
-        source.activate(&gate(7)).unwrap();
+        activate(&mut source, 7);
         assert_eq!(source.increment().unwrap(), 1);
 
         source.begin_freeze().unwrap();
@@ -896,7 +1046,7 @@ mod tests {
     fn malformed_state_is_rejected() {
         let prepared = prepared();
         let mut source = prepared.instantiate(7).unwrap();
-        source.activate(&gate(7)).unwrap();
+        activate(&mut source, 7);
         let mut snapshot = source.freeze().unwrap();
         snapshot.body.state.push(1);
         assert!(matches!(destination_restore(&prepared, &snapshot), Err(WasiError::Contract(_))));
@@ -906,6 +1056,200 @@ mod tests {
         prepared: &PreparedComponent<CounterProfile>,
         snapshot: &SnapshotEnvelope,
     ) -> Result<(), WasiError> {
-        prepared.instantiate(7)?.restore(snapshot)
+        let mut destination = prepared.instantiate(7)?;
+        destination.set_snapshot_context(context())?;
+        destination.restore(snapshot)
+    }
+
+    /// A deliberately different typed state and codec.  The frontend should
+    /// only know how to obtain/project the scalar runtime value; the marker
+    /// and its wire format belong entirely to this profile.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct MarkerState {
+        counter: u64,
+        marker: Vec<u8>,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct MarkerCodec;
+
+    impl PortableStateCodec<MarkerState> for MarkerCodec {
+        fn encode(&self, value: &MarkerState) -> Result<Vec<u8>, CodecError> {
+            if value.marker.len() > u8::MAX as usize {
+                return Err(CodecError::Oversize {
+                    len: value.marker.len(),
+                    max: u8::MAX as usize,
+                });
+            }
+            let mut bytes = value.counter.to_le_bytes().to_vec();
+            bytes.push(value.marker.len() as u8);
+            bytes.extend_from_slice(&value.marker);
+            Ok(bytes)
+        }
+
+        fn decode(&self, bytes: &[u8]) -> Result<MarkerState, CodecError> {
+            if bytes.len() < 9 {
+                return Err(CodecError::Deserialize);
+            }
+            let mut counter = [0; 8];
+            counter.copy_from_slice(&bytes[..8]);
+            let marker_len = bytes[8] as usize;
+            if bytes.len() != 9 + marker_len {
+                return if bytes.len() > 9 + marker_len {
+                    Err(CodecError::TrailingBytes)
+                } else {
+                    Err(CodecError::Deserialize)
+                };
+            }
+            Ok(MarkerState { counter: u64::from_le_bytes(counter), marker: bytes[9..].to_vec() })
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct MarkerProfile;
+
+    impl ContinuityProfile for MarkerProfile {
+        type State = MarkerState;
+        type Codec = MarkerCodec;
+
+        fn profile_ref(&self) -> ProfileRef {
+            ProfileRef {
+                id: visa_core::ProfileId::from_u128(2),
+                version: visa_core::ProfileVersion { major: 1, minor: 0 },
+                contract_digest: Digest::of_bytes(b"visa-wasi/test-marker/1"),
+                state_schema: visa_core::SchemaRef {
+                    id: visa_core::SchemaId::from_u128(2),
+                    version: 1,
+                },
+            }
+        }
+
+        fn state_codec(&self) -> Self::Codec {
+            MarkerCodec
+        }
+
+        fn validate_state(&self, state: &Self::State) -> Result<(), ProfileSdkError> {
+            if state.marker.is_empty() {
+                return Err(ProfileSdkError::EmptySessionKey);
+            }
+            if state.marker.len() > 32 {
+                return Err(ProfileSdkError::SessionKeyTooLong);
+            }
+            Ok(())
+        }
+
+        fn resource_requirements(
+            &self,
+            state: &Self::State,
+        ) -> Result<Vec<visa_core::ResourceRequirement>, ProfileSdkError> {
+            self.validate_state(state)?;
+            Ok(vec![visa_core::ResourceRequirement {
+                id: visa_core::RequirementId::from_u128(2),
+                kind: b"marker-resource".to_vec(),
+                profile_data: Vec::new(),
+                required_rights: visa_core::Rights(1),
+                disposition: visa_core::RebindDisposition::Recreate,
+                logical_name: state.marker.clone(),
+            }])
+        }
+
+        fn validate_binding_grant(
+            &self,
+            requirement: &visa_core::ResourceRequirement,
+            grant: &visa_core::BindingGrant,
+        ) -> Result<(), ProfileSdkError> {
+            if requirement.id != visa_core::RequirementId::from_u128(2)
+                || grant.requirement != requirement.id
+                || requirement.kind != b"marker-resource"
+                || requirement.disposition != visa_core::RebindDisposition::Recreate
+                || grant.granted_rights != visa_core::Rights(1)
+            {
+                return Err(ProfileSdkError::WrongRequirement);
+            }
+            Ok(())
+        }
+
+        fn validate_binding(
+            &self,
+            state: &Self::State,
+            requirement: &visa_core::ResourceRequirement,
+            grant: &visa_core::BindingGrant,
+        ) -> Result<(), ProfileSdkError> {
+            self.validate_state(state)?;
+            self.validate_binding_grant(requirement, grant)?;
+            if requirement.logical_name != state.marker {
+                return Err(ProfileSdkError::WrongLogicalName);
+            }
+            Ok(())
+        }
+
+        fn project_effects(
+            &self,
+            receipts: &[visa_core::EffectClosureReceipt],
+        ) -> ApplicationRecoveryDecision {
+            if receipts.is_empty() {
+                ApplicationRecoveryDecision::Continue
+            } else {
+                ApplicationRecoveryDecision::RecoveryRequired
+            }
+        }
+    }
+
+    impl WasiProfile for MarkerProfile {
+        fn capture_state(
+            &self,
+            counter: u64,
+            session_key: Vec<u8>,
+            _last_seen_version: Option<u64>,
+        ) -> Result<Self::State, ProfileError> {
+            let state = MarkerState { counter, marker: session_key };
+            self.validate_state(&state).map_err(ProfileError::from_profile)?;
+            Ok(state)
+        }
+
+        fn runtime_counter(&self, state: &Self::State) -> u64 {
+            state.counter
+        }
+
+        fn session_metadata(&self, state: &Self::State) -> (Vec<u8>, Option<u64>) {
+            (state.marker.clone(), None)
+        }
+    }
+
+    #[test]
+    fn custom_profile_state_codec_and_binding_flow_through_frontend() {
+        let bytes = counter_component_bytes().unwrap();
+        let prepared = WasiFrontend::new(MarkerProfile).preflight(&bytes).unwrap();
+        let mut source = prepared.instantiate(7).unwrap();
+        source.set_snapshot_context(context()).unwrap();
+        source.activate(&gate(7)).unwrap();
+        assert_eq!(source.increment().unwrap(), 1);
+        source.begin_freeze().unwrap();
+        let snapshot = source.complete_freeze(b"marker-v1".to_vec(), Some(99)).unwrap();
+
+        let state = MarkerCodec.decode(&snapshot.body.state).unwrap();
+        assert_eq!(state, MarkerState { counter: 1, marker: b"marker-v1".to_vec() });
+        assert_eq!(snapshot.body.profile, MarkerProfile.profile_ref());
+        let requirement = &snapshot.body.resources[0];
+        let grant = visa_core::BindingGrant {
+            requirement: requirement.id,
+            provider: ExternalCoordinate {
+                authority: visa_core::AuthorityId::from_u128(2),
+                value: b"provider".to_vec(),
+            },
+            provider_generation: 1,
+            binding: ExternalCoordinate {
+                authority: visa_core::AuthorityId::from_u128(2),
+                value: b"binding".to_vec(),
+            },
+            granted_rights: visa_core::Rights(1),
+        };
+        MarkerProfile.validate_binding(&state, requirement, &grant).unwrap();
+
+        let mut destination = prepared.instantiate(9).unwrap();
+        destination.set_snapshot_context(context()).unwrap();
+        destination.restore(&snapshot).unwrap();
+        destination.activate(&gate(9)).unwrap();
+        assert_eq!(destination.increment().unwrap(), 2);
     }
 }
