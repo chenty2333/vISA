@@ -1,25 +1,8 @@
-# Repository build and CI outputs
 /target/
-/.ci-cache/
-/.ci-artifacts/
-# compose.ci.yaml exposes .ci-artifacts through this in-worktree bind alias.
-/evidence/
-/.ci-nexus/
-__pycache__/
-*.py[cod]
-
-# Root-local environment files; templates remain visible
-/.env*
-!/.env.example
-!/.env.sample
-!/.env.template
-
-# Root-local editor state
-/.vscode/
-/.idea/
+/.cargo/
 *.swp
 *.swo
-
-# OS metadata
+__pycache__/
+*.py[cod]
 .DS_Store
 Thumbs.db

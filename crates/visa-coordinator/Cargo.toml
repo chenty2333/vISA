@@ -1,0 +1,12 @@
+[package]
+name = "visa-coordinator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+visa-core = { path = "../visa-core" }
+
+[lints]
+workspace = true
