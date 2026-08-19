@@ -479,6 +479,7 @@ mod tests {
             source: coordinate(&source.binding_id),
             destination: coordinate("next-world"),
             requirements: vec![requirement],
+            capture_receipt: None,
             preparation_digest: Digest::of_bytes(b"snapshot"),
         };
         let prepared = authority.prepare(prepare.clone()).unwrap();
@@ -490,6 +491,7 @@ mod tests {
                 source: prepare.source,
                 destination: prepare.destination,
                 requirements: prepare.requirements,
+                capture_receipt: prepare.capture_receipt,
                 preparation_digest: prepare.preparation_digest,
                 preparation: prepared.core_receipt,
             })

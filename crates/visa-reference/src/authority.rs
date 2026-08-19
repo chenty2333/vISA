@@ -10,8 +10,8 @@ use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use visa_core::{
     AbortPreparationReceipt, AuthorityCommitReceipt as CoreCommitReceipt, AuthorityId,
-    BindingGrant, BindingPreparationReceipt, ContinuationId, Digest, ExternalCoordinate,
-    OperationId, ResourceRequirement, SnapshotId, canonical_digest,
+    BindingGrant, BindingPreparationReceipt, CaptureReceipt, ContinuationId, Digest,
+    ExternalCoordinate, OperationId, ResourceRequirement, SnapshotId, canonical_digest,
 };
 
 use crate::db::{
@@ -89,6 +89,7 @@ pub struct PrepareRequest {
     pub source: ExternalCoordinate,
     pub destination: ExternalCoordinate,
     pub requirements: Vec<ResourceRequirement>,
+    pub capture_receipt: Option<CaptureReceipt>,
     pub preparation_digest: Digest,
 }
 
@@ -114,6 +115,7 @@ pub struct CommitRequest {
     pub source: ExternalCoordinate,
     pub destination: ExternalCoordinate,
     pub requirements: Vec<ResourceRequirement>,
+    pub capture_receipt: Option<CaptureReceipt>,
     pub preparation_digest: Digest,
     pub preparation: BindingPreparationReceipt,
 }
@@ -126,6 +128,7 @@ pub struct AbortRequest {
     pub source: ExternalCoordinate,
     pub destination: ExternalCoordinate,
     pub requirements: Vec<ResourceRequirement>,
+    pub capture_receipt: Option<CaptureReceipt>,
     pub preparation_digest: Digest,
     pub preparation: BindingPreparationReceipt,
 }
@@ -252,6 +255,7 @@ struct BindingDigestMaterial<'a> {
     source: &'a ExternalCoordinate,
     destination: &'a ExternalCoordinate,
     requirements: &'a [ResourceRequirement],
+    capture_receipt: Option<&'a CaptureReceipt>,
     preparation_digest: Digest,
 }
 
@@ -334,6 +338,13 @@ impl Authority {
             ));
         }
         validate_coordinate(&request.source)?;
+        validate_capture_receipt(
+            request.continuation,
+            request.snapshot,
+            &request.source,
+            request.preparation_digest,
+            request.capture_receipt.as_ref(),
+        )?;
         let source_binding_id = coordinate_text(&request.source)?;
         let destination_owner = coordinate_text(&request.destination)?;
         let operation_id = operation_text(request.operation);
@@ -463,6 +474,13 @@ impl Authority {
             ));
         }
         validate_coordinate(&request.source)?;
+        validate_capture_receipt(
+            request.continuation,
+            request.snapshot,
+            &request.source,
+            request.preparation_digest,
+            request.capture_receipt.as_ref(),
+        )?;
         let source_binding_id = coordinate_text(&request.source)?;
         let destination_owner = coordinate_text(&request.destination)?;
         let operation_id = operation_text(request.operation);
@@ -517,6 +535,13 @@ impl Authority {
 
     pub fn commit(&self, request: CommitRequest) -> Result<AuthorityCommitReceipt, AuthorityError> {
         validate_coordinate(&request.source)?;
+        validate_capture_receipt(
+            request.continuation,
+            request.snapshot,
+            &request.source,
+            request.preparation_digest,
+            request.capture_receipt.as_ref(),
+        )?;
         let source_binding_id = coordinate_text(&request.source)?;
         let destination_owner = coordinate_text(&request.destination)?;
         let destination_binding_id = preparation_binding(&request.preparation)?;
@@ -569,6 +594,7 @@ impl Authority {
                 source: request.source.clone(),
                 destination: request.destination.clone(),
                 requirements: request.requirements.clone(),
+                capture_receipt: request.capture_receipt.clone(),
                 preparation_digest: request.preparation_digest,
             },
             &destination_binding_id,
@@ -694,6 +720,13 @@ impl Authority {
 
     pub fn query_commit(&self, request: &CommitRequest) -> Result<OperationQuery, AuthorityError> {
         validate_coordinate(&request.source)?;
+        validate_capture_receipt(
+            request.continuation,
+            request.snapshot,
+            &request.source,
+            request.preparation_digest,
+            request.capture_receipt.as_ref(),
+        )?;
         let operation_id = operation_text(request.operation);
         let preparation_operation_id = operation_text(request.preparation.operation);
         let request_digest = commit_digest(request)?;
@@ -1225,6 +1258,29 @@ fn validate_coordinate(coordinate: &ExternalCoordinate) -> Result<(), AuthorityE
     Ok(())
 }
 
+fn validate_capture_receipt(
+    continuation: ContinuationId,
+    snapshot: SnapshotId,
+    source: &ExternalCoordinate,
+    preparation_digest: Digest,
+    receipt: Option<&CaptureReceipt>,
+) -> Result<(), AuthorityError> {
+    let Some(receipt) = receipt else { return Ok(()) };
+    receipt
+        .verify()
+        .map_err(|error| AuthorityError::Invalid(format!("invalid capture receipt: {error}")))?;
+    if receipt.continuation != continuation
+        || receipt.snapshot != snapshot
+        || receipt.source != *source
+        || receipt.snapshot_digest != preparation_digest
+    {
+        return Err(AuthorityError::Invalid(
+            "capture receipt does not match the binding request".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_activation_admission(
     connection: &rusqlite::Connection,
     request: &ActivationAdmissionRequest,
@@ -1328,6 +1384,7 @@ fn binding_material(request: &PrepareRequest) -> BindingDigestMaterial<'_> {
         source: &request.source,
         destination: &request.destination,
         requirements: &request.requirements,
+        capture_receipt: request.capture_receipt.as_ref(),
         preparation_digest: request.preparation_digest,
     }
 }
@@ -1345,6 +1402,7 @@ fn commit_digest(request: &CommitRequest) -> Result<Digest, AuthorityError> {
             source: &request.source,
             destination: &request.destination,
             requirements: &request.requirements,
+            capture_receipt: request.capture_receipt.as_ref(),
             preparation_digest: request.preparation_digest,
         },
         preparation: &request.preparation,
@@ -1360,6 +1418,7 @@ fn abort_digest(request: &AbortRequest) -> Result<Digest, AuthorityError> {
             source: &request.source,
             destination: &request.destination,
             requirements: &request.requirements,
+            capture_receipt: request.capture_receipt.as_ref(),
             preparation_digest: request.preparation_digest,
         },
         preparation: &request.preparation,
@@ -1385,6 +1444,13 @@ fn validate_abort_request(
     })?;
     validate_coordinate(&request.source)?;
     validate_coordinate(&request.destination)?;
+    validate_capture_receipt(
+        request.continuation,
+        request.snapshot,
+        &request.source,
+        request.preparation_digest,
+        request.capture_receipt.as_ref(),
+    )?;
     let source_binding_id = coordinate_text(&request.source)?;
     let destination_binding_id = preparation_binding(&request.preparation)?;
     let preparation_operation_id = operation_text(request.preparation.operation);
@@ -1409,6 +1475,7 @@ fn validate_abort_request(
         source: request.source.clone(),
         destination: request.destination.clone(),
         requirements: request.requirements.clone(),
+        capture_receipt: request.capture_receipt.clone(),
         preparation_digest: request.preparation_digest,
     };
     let binding_request_digest = binding_digest(&prepare_request)?;
@@ -1725,7 +1792,10 @@ fn abort_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use visa_core::{RebindDisposition, RequirementId, Rights as CoreRights};
+    use visa_core::{
+        LineageAdvance, LineageId, LineagePoint, ProfileId, ProfileRef, ProfileVersion,
+        RebindDisposition, RequirementId, Rights as CoreRights, SchemaId, SchemaRef, ScopeId,
+    };
 
     fn coordinate(value: &str) -> ExternalCoordinate {
         ExternalCoordinate { authority: REFERENCE_AUTHORITY_ID, value: value.as_bytes().to_vec() }
@@ -1750,8 +1820,39 @@ mod tests {
             source: coordinate(&source.binding_id),
             destination: coordinate("next-world"),
             requirements: vec![requirement()],
+            capture_receipt: None,
             preparation_digest: Digest::of_bytes(b"snapshot"),
         }
+    }
+
+    fn capture_receipt(request: &PrepareRequest) -> CaptureReceipt {
+        CaptureReceipt {
+            operation: OperationId::from_u128(9),
+            continuation: request.continuation,
+            scope: ScopeId::from_u128(13),
+            snapshot: request.snapshot,
+            source: request.source.clone(),
+            profile: ProfileRef {
+                id: ProfileId::from_u128(14),
+                version: ProfileVersion { major: 1, minor: 0 },
+                contract_digest: Digest::of_bytes(b"profile"),
+                state_schema: SchemaRef { id: SchemaId::from_u128(15), version: 1 },
+            },
+            lineage: LineageAdvance {
+                parent: LineagePoint {
+                    lineage: LineageId::from_u128(16),
+                    generation: 0,
+                    state_digest: Digest::of_bytes(b"parent"),
+                },
+                successor_generation: 1,
+            },
+            state_digest: Digest::of_bytes(b"state"),
+            snapshot_digest: request.preparation_digest,
+            safe_point_digest: Digest::of_bytes(b"safe-point"),
+            receipt_digest: Digest::ZERO,
+        }
+        .seal()
+        .unwrap()
     }
 
     fn setup() -> (Authority, SourceBinding) {
@@ -1775,9 +1876,11 @@ mod tests {
     #[test]
     fn exact_prepare_commit_and_query_are_idempotent() {
         let (authority, source) = setup();
-        let prepare = prepare_request(&source);
+        let mut prepare = prepare_request(&source);
+        prepare.capture_receipt = Some(capture_receipt(&prepare));
         let prepared = authority.prepare(prepare.clone()).unwrap();
         assert_eq!(prepared, authority.prepare(prepare.clone()).unwrap());
+        assert_eq!(authority.query_preparation(&prepare).unwrap(), Some(prepared.clone()));
         assert_eq!(prepared.provider_generation, 8);
         let commit = CommitRequest {
             operation: OperationId::from_u128(20),
@@ -1786,6 +1889,7 @@ mod tests {
             source: prepare.source,
             destination: prepare.destination,
             requirements: prepare.requirements,
+            capture_receipt: prepare.capture_receipt,
             preparation_digest: prepare.preparation_digest,
             preparation: prepared.core_receipt,
         };
@@ -1795,6 +1899,32 @@ mod tests {
         let mut wrong = commit;
         wrong.operation = OperationId::from_u128(21);
         assert_eq!(authority.query_commit(&wrong).unwrap(), OperationQuery::Absent);
+    }
+
+    #[test]
+    fn capture_receipt_is_verified_and_bound_to_the_binding_request() {
+        let (authority, source) = setup();
+        let mut request = prepare_request(&source);
+        request.capture_receipt = Some(capture_receipt(&request));
+        authority.prepare(request.clone()).unwrap();
+
+        let mut invalid = request.clone();
+        let mut receipt = invalid.capture_receipt.take().unwrap();
+        receipt.receipt_digest = Digest::ZERO;
+        invalid.capture_receipt = Some(receipt);
+        assert!(matches!(
+            authority.query_preparation(&invalid),
+            Err(AuthorityError::Invalid(message)) if message.contains("capture receipt")
+        ));
+
+        let mut mismatched = request;
+        let mut receipt = mismatched.capture_receipt.take().unwrap();
+        receipt.snapshot = SnapshotId::from_u128(999);
+        mismatched.capture_receipt = Some(receipt.seal().unwrap());
+        assert!(matches!(
+            authority.prepare(mismatched),
+            Err(AuthorityError::Invalid(message)) if message.contains("binding request")
+        ));
     }
 
     #[test]
@@ -1822,6 +1952,7 @@ mod tests {
             source: prepare.source,
             destination: prepare.destination,
             requirements: prepare.requirements,
+            capture_receipt: prepare.capture_receipt,
             preparation_digest: prepare.preparation_digest,
             preparation: prepared.core_receipt,
         };
@@ -1867,6 +1998,7 @@ mod tests {
             source: prepare.source,
             destination: prepare.destination,
             requirements: prepare.requirements,
+            capture_receipt: prepare.capture_receipt,
             preparation_digest: prepare.preparation_digest,
             preparation: prepared.core_receipt,
         };

@@ -5,7 +5,12 @@
 //! preparation values are associated opaque types and are kept only in the
 //! coordinator process.
 
-use std::{collections::BTreeMap, fmt};
+#![no_std]
+
+extern crate alloc;
+
+use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
+use core::{fmt, mem};
 
 use visa_core::{
     self, AbortPreparationReceipt, ActivationReceipt, AuthorityCommitReceipt,
@@ -19,6 +24,8 @@ use visa_core::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    extern crate std;
     use std::collections::VecDeque;
 
     fn id(value: u128) -> [u8; 16] {
@@ -1507,6 +1514,9 @@ pub struct AuthorityBinding {
     pub source: ExternalCoordinate,
     pub destination: ExternalCoordinate,
     pub requirements: Vec<ResourceRequirement>,
+    /// The exact durable source capture fact, when the runtime supplied one.
+    /// This is an input to authority preparation, not a capability grant.
+    pub capture_receipt: Option<CaptureReceipt>,
     pub preparation_digest: Digest,
 }
 
@@ -2243,7 +2253,7 @@ where
 
     /// Return and reset process-local control-path counters.
     pub fn take_control_counts(&mut self) -> CoordinatorControlCounts {
-        std::mem::take(&mut self.control_counts)
+        mem::take(&mut self.control_counts)
     }
 
     /// Discover all non-terminal continuations known by the backing store.
@@ -2700,6 +2710,7 @@ where
             source: record.intent.source.clone(),
             destination: record.intent.destination.clone(),
             requirements: snapshot.body.resources.clone(),
+            capture_receipt: record.capture_receipt.clone(),
             preparation_digest: snapshot.body_digest,
         })
     }

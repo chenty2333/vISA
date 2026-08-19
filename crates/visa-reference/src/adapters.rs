@@ -135,6 +135,7 @@ impl CoordinatorAuthorityAdapter {
             source: binding.source.clone(),
             destination: binding.destination.clone(),
             requirements: binding.requirements.clone(),
+            capture_receipt: binding.capture_receipt.clone(),
             preparation_digest: binding.preparation_digest,
         }
     }
@@ -147,6 +148,7 @@ impl CoordinatorAuthorityAdapter {
             source: request.binding.source.clone(),
             destination: request.binding.destination.clone(),
             requirements: request.binding.requirements.clone(),
+            capture_receipt: request.binding.capture_receipt.clone(),
             preparation_digest: request.binding.preparation_digest,
             preparation: request.preparation.clone(),
         }
@@ -164,6 +166,7 @@ impl CoordinatorAuthorityAdapter {
             source: binding.source.clone(),
             destination: binding.destination.clone(),
             requirements: binding.requirements.clone(),
+            capture_receipt: binding.capture_receipt.clone(),
             preparation_digest: binding.preparation_digest,
             preparation: preparation.clone(),
         }
@@ -230,6 +233,7 @@ impl coordinator::AuthorityPort for CoordinatorAuthorityAdapter {
             source: request.binding.source.clone(),
             destination: request.binding.destination.clone(),
             requirements: request.binding.requirements.clone(),
+            capture_receipt: request.binding.capture_receipt.clone(),
             preparation_digest: request.binding.preparation_digest,
             preparation: request.preparation,
         };
