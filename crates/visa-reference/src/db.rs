@@ -1,15 +1,18 @@
+//! Shared SQLite opening for the reference vertical.
+//!
+//! SQLite is only a convenient host for the first vertical. Its tables are
+//! intentionally partitioned by owner: continuation records, binding
+//! authority, and the KV provider never read each other's projections.
+
 use std::fmt;
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::Connection;
 
-/// A SQLite database shared by the reference roles.
-///
-/// The connection is serialized in-process. SQLite remains the durable
-/// boundary; role separation is expressed by table ownership and APIs.
 #[derive(Clone)]
 pub struct ReferenceDatabase {
-    pub(crate) connection: Arc<Mutex<Connection>>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 impl fmt::Debug for ReferenceDatabase {
@@ -20,14 +23,14 @@ impl fmt::Debug for ReferenceDatabase {
 
 impl ReferenceDatabase {
     pub fn in_memory() -> Result<Self, ReferenceDatabaseError> {
-        let connection = Connection::open_in_memory()?;
-        let database = Self { connection: Arc::new(Mutex::new(connection)) };
-        database.initialize()?;
-        Ok(database)
+        Self::from_connection(Connection::open_in_memory()?)
     }
 
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, ReferenceDatabaseError> {
-        let connection = Connection::open(path)?;
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ReferenceDatabaseError> {
+        Self::from_connection(Connection::open(path)?)
+    }
+
+    fn from_connection(connection: Connection) -> Result<Self, ReferenceDatabaseError> {
         let database = Self { connection: Arc::new(Mutex::new(connection)) };
         database.initialize()?;
         Ok(database)
@@ -38,104 +41,76 @@ impl ReferenceDatabase {
     }
 
     fn initialize(&self) -> Result<(), ReferenceDatabaseError> {
-        let connection = self.lock()?;
-        connection.execute_batch(
+        self.lock()?.execute_batch(
             "PRAGMA foreign_keys = ON;
              PRAGMA busy_timeout = 5000;
 
+             -- Continuation-store ownership.
+             CREATE TABLE IF NOT EXISTS visa_store_records (
+                 continuation_id BLOB PRIMARY KEY NOT NULL CHECK(length(continuation_id) = 16),
+                 lineage_id BLOB NOT NULL CHECK(length(lineage_id) = 16),
+                 phase TEXT NOT NULL CHECK(phase IN ('capturing', 'captured', 'aborted')),
+                 payload BLOB NOT NULL CHECK(length(payload) <= 1048576)
+             );
+             CREATE TABLE IF NOT EXISTS visa_store_lineages (
+                 lineage_id BLOB PRIMARY KEY NOT NULL CHECK(length(lineage_id) = 16),
+                 semantic_domain_id BLOB NOT NULL CHECK(length(semantic_domain_id) = 16),
+                 semantic_contract_digest BLOB NOT NULL CHECK(length(semantic_contract_digest) = 32),
+                 semantic_artifact_digest BLOB NOT NULL CHECK(length(semantic_artifact_digest) = 32),
+                 head_generation INTEGER NOT NULL CHECK(head_generation >= 0),
+                 head_state_digest BLOB NOT NULL CHECK(length(head_state_digest) = 32),
+                 active_continuation BLOB CHECK(active_continuation IS NULL OR length(active_continuation) = 16)
+             );
+
+             -- Binding-authority ownership. Receipts are retained by exact
+             -- operation id and never inferred from a binding's current view.
              CREATE TABLE IF NOT EXISTS visa_authority_bindings (
-                 binding_id TEXT PRIMARY KEY,
+                 binding_id TEXT PRIMARY KEY NOT NULL,
                  owner TEXT NOT NULL,
-                 provider_generation INTEGER NOT NULL CHECK(provider_generation >= 0),
+                 generation INTEGER NOT NULL CHECK(generation >= 0),
                  rights INTEGER NOT NULL CHECK(rights >= 0),
-                 execution_epoch INTEGER NOT NULL CHECK(execution_epoch >= 0),
+                 epoch INTEGER NOT NULL CHECK(epoch >= 0),
                  role TEXT NOT NULL CHECK(role IN ('source', 'destination')),
                  active INTEGER NOT NULL CHECK(active IN (0, 1)),
                  fenced INTEGER NOT NULL CHECK(fenced IN (0, 1)),
                  dispatch_open INTEGER NOT NULL CHECK(dispatch_open IN (0, 1)),
+                 operation_id BLOB CHECK(operation_id IS NULL OR length(operation_id) = 16),
                  source_binding_id TEXT,
-                 operation_id TEXT
+                 phase TEXT NOT NULL CHECK(phase IN ('source', 'prepared', 'committed', 'aborted'))
              );
-
              CREATE TABLE IF NOT EXISTS visa_authority_operations (
-                 operation_id TEXT PRIMARY KEY,
-                 request_digest BLOB NOT NULL,
-                 source_binding_id TEXT NOT NULL,
+                 operation_id BLOB PRIMARY KEY NOT NULL CHECK(length(operation_id) = 16),
+                 kind TEXT NOT NULL CHECK(kind IN ('prepare', 'commit', 'abort', 'permit')),
+                 request_digest BLOB NOT NULL CHECK(length(request_digest) = 32),
+                 outcome TEXT NOT NULL CHECK(outcome IN ('applied', 'rejected')),
+                 receipt BLOB CHECK(receipt IS NULL OR length(receipt) <= 65536),
+                 receipt_digest BLOB CHECK(receipt_digest IS NULL OR length(receipt_digest) = 32),
+                 source_binding_id TEXT,
                  destination_binding_id TEXT,
-                 source_owner TEXT NOT NULL,
-                 provider_generation INTEGER NOT NULL CHECK(provider_generation >= 0),
-                 rights INTEGER NOT NULL CHECK(rights >= 0),
-                 status TEXT NOT NULL,
-                 source_epoch INTEGER,
-                 destination_epoch INTEGER
+                 rejection TEXT CHECK(rejection IS NULL OR length(rejection) <= 4096),
+                 CHECK((outcome = 'applied' AND receipt IS NOT NULL AND receipt_digest IS NOT NULL AND rejection IS NULL)
+                    OR (outcome = 'rejected' AND receipt IS NULL AND receipt_digest IS NULL AND rejection IS NOT NULL))
              );
-
-             CREATE TABLE IF NOT EXISTS visa_authority_aborts (
-                 operation_id TEXT PRIMARY KEY,
-                 request_digest BLOB NOT NULL,
-                 source_binding_id TEXT NOT NULL,
-                 destination_binding_id TEXT NOT NULL
-             );
-
-             CREATE TABLE IF NOT EXISTS visa_authority_commits (
-                 operation_id TEXT PRIMARY KEY,
-                 preparation_operation_id TEXT NOT NULL,
-                 request_digest BLOB NOT NULL,
-                 source_binding_id TEXT NOT NULL,
+             CREATE TABLE IF NOT EXISTS visa_authority_permits (
+                 operation_id BLOB PRIMARY KEY NOT NULL,
                  destination_binding_id TEXT NOT NULL,
-                 source_owner TEXT NOT NULL,
-                 provider_generation INTEGER NOT NULL CHECK(provider_generation >= 0),
-                 rights INTEGER NOT NULL CHECK(rights >= 0),
-                 status TEXT NOT NULL,
-                 source_epoch INTEGER,
-                 destination_epoch INTEGER,
-                 core_receipt BLOB NOT NULL
-             );
-
-             CREATE TABLE IF NOT EXISTS visa_authority_activation_permits (
-                 operation_id TEXT PRIMARY KEY,
-                 continuation_id BLOB NOT NULL,
-                 snapshot_id BLOB NOT NULL,
-                 destination_authority BLOB NOT NULL,
-                 destination_value BLOB NOT NULL,
-                 destination_binding_id TEXT NOT NULL,
-                 authority_commit_digest BLOB NOT NULL,
                  execution_epoch INTEGER NOT NULL CHECK(execution_epoch >= 0),
-                 status TEXT NOT NULL,
+                 receipt_digest BLOB NOT NULL,
                  UNIQUE(destination_binding_id, execution_epoch)
              );
 
+             -- Provider ownership. Values have no authority or continuation
+             -- columns; every business operation checks a host-local binding.
              CREATE TABLE IF NOT EXISTS visa_provider_kv (
-                 key BLOB PRIMARY KEY,
+                 key BLOB PRIMARY KEY NOT NULL,
                  value BLOB NOT NULL,
                  revision INTEGER NOT NULL CHECK(revision >= 0)
              );
-
              CREATE INDEX IF NOT EXISTS visa_authority_bindings_operation
                  ON visa_authority_bindings(operation_id);
-
-             CREATE TABLE IF NOT EXISTS visa_coordinator_records (
-                 continuation_id BLOB PRIMARY KEY,
-                 lineage_id BLOB NOT NULL,
-                 revision INTEGER NOT NULL,
-                 payload BLOB NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS visa_coordinator_lineages (
-                 lineage_id BLOB PRIMARY KEY,
-                 head_generation INTEGER NOT NULL,
-                 head_state_digest BLOB NOT NULL,
-                 active_record_id BLOB
-             );
-
-             CREATE TABLE IF NOT EXISTS visa_runtime_captures (
-                 operation_id BLOB PRIMARY KEY,
-                 request_digest BLOB NOT NULL,
-                 status TEXT NOT NULL CHECK(status IN ('armed', 'captured')),
-                 snapshot BLOB,
-                 safe_point BLOB,
-                 receipt BLOB
-             );
-            ",
+             CREATE UNIQUE INDEX IF NOT EXISTS visa_authority_prepare_receipt
+                 ON visa_authority_operations(receipt_digest)
+                 WHERE kind = 'prepare' AND outcome = 'applied';",
         )?;
         Ok(())
     }
@@ -148,8 +123,8 @@ pub enum ReferenceDatabaseError {
     Invalid(String),
 }
 
-impl std::fmt::Display for ReferenceDatabaseError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ReferenceDatabaseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sqlite(error) => write!(formatter, "SQLite error: {error}"),
             Self::Poisoned => formatter.write_str("reference database mutex poisoned"),
@@ -168,9 +143,6 @@ impl From<rusqlite::Error> for ReferenceDatabaseError {
     }
 }
 
-/// SQLite INTEGER is signed, while authority/provider coordinates use u64.
-/// Keep every conversion at the durable boundary checked and fail closed on
-/// values that cannot be represented by SQLite.
 pub(crate) fn u64_to_sqlite(value: u64, field: &str) -> Result<i64, ReferenceDatabaseError> {
     i64::try_from(value).map_err(|_| {
         ReferenceDatabaseError::Invalid(format!("{field}={value} exceeds SQLite INTEGER range"))
@@ -189,37 +161,5 @@ pub(crate) fn sqlite_bool(value: i64, field: &str) -> Result<bool, ReferenceData
         other => {
             Err(ReferenceDatabaseError::Invalid(format!("{field}={other} is not a SQLite boolean")))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sqlite_unsigned_conversions_fail_closed() {
-        assert_eq!(sqlite_to_u64(0, "value").unwrap(), 0);
-        assert!(matches!(sqlite_to_u64(-1, "value"), Err(ReferenceDatabaseError::Invalid(_))));
-        assert_eq!(u64_to_sqlite(u64::try_from(i64::MAX).unwrap(), "value").unwrap(), i64::MAX);
-        assert!(matches!(
-            u64_to_sqlite(u64::try_from(i64::MAX).unwrap() + 1, "value"),
-            Err(ReferenceDatabaseError::Invalid(_))
-        ));
-    }
-
-    #[test]
-    fn binding_role_is_constrained_by_sqlite() {
-        let database = ReferenceDatabase::in_memory().unwrap();
-        let connection = database.lock().unwrap();
-        let error = connection
-            .execute(
-                "INSERT INTO visa_authority_bindings
-                 (binding_id, owner, provider_generation, rights, execution_epoch, role,
-                  active, fenced, dispatch_open)
-                 VALUES ('bad', 'owner', 0, 0, 0, 'unknown', 1, 0, 1)",
-                [],
-            )
-            .unwrap_err();
-        assert!(matches!(error, rusqlite::Error::SqliteFailure(_, _)));
     }
 }

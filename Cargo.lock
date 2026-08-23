@@ -929,6 +929,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "visa-coordinator"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "visa-core",
 ]
 
@@ -942,15 +943,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "visa-profile"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "visa-core",
-]
-
-[[package]]
 name = "visa-reference"
 version = "0.1.0"
 dependencies = [
@@ -960,16 +952,6 @@ dependencies = [
  "tempfile",
  "visa-coordinator",
  "visa-core",
- "visa-profile",
- "visa-wasi",
-]
-
-[[package]]
-name = "visa-wasi"
-version = "0.1.0"
-dependencies = [
- "visa-core",
- "visa-profile",
  "wasmtime",
  "wat",
 ]

@@ -3,8 +3,6 @@ resolver = "3"
 members = [
     "crates/visa-core",
     "crates/visa-coordinator",
-    "crates/visa-profile",
-    "crates/visa-wasi",
     "crates/visa-reference",
 ]
 
@@ -12,7 +10,6 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.95"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

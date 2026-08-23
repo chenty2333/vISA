@@ -1,1362 +1,1267 @@
-//! Runtime-local adapter for the real Wasmtime Component path.
+//! Runtime-owned half of the one Counter/KV continuation vertical.
+//!
+//! Exact operation results live in a runtime table. Wasmtime stores, instances,
+//! and provider handles remain process-local: a receipt never fakes a live one.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use rusqlite::{OptionalExtension, params};
-use visa_coordinator::{self as coordinator, CallOutcome, QueryOutcome};
+use serde::{Deserialize, Serialize};
+use visa_coordinator::{Action, ActionRequest, CapturedSnapshot, Observation, RuntimePort};
 use visa_core::{
-    ActivationReceipt, AuthorityCommitReceipt as CoreCommitReceipt, BindingGrant, CaptureReceipt,
-    Digest, ExternalCoordinate, SafePointReceipt, SnapshotEnvelope, SnapshotId,
-    SourceRestorationReceipt, canonical_digest,
+    DestinationRestoreReceipt, Digest, ExternalCoordinate, OpaqueBytes, OperationId,
+    RetirementReceipt, RuntimeActivationReceipt, RuntimePreparationReceipt, SnapshotEnvelope,
+    SnapshotReceipt, SourceRestorationReceipt, canonical_digest,
 };
-use visa_profile::{ContinuityProfile, DurableKvProfile};
-use visa_wasi::{ActivationGate, PreparedComponent, SnapshotContext, WasiError, WasiInstance};
 
-use crate::authority::{
-    ActivationAdmissionRequest, ActivationAdmissionState, Authority, AuthorityError,
+pub use crate::component::SnapshotContext;
+
+use crate::authority::{Authority, AuthorityError, REFERENCE_AUTHORITY_ID, SourceBinding};
+use crate::component::{
+    ActivationGate, PreparedComponent, WasiError, WasiFrontend, WasiInstance,
+    counter_component_bytes,
 };
-use crate::provider::{BindingHandle, DurableKvProvider, KvEntry, ProviderError};
-
-const MAX_CAPTURE_FACT_BYTES: usize = 1024 * 1024;
+use crate::db::{ReferenceDatabase, ReferenceDatabaseError, u64_to_sqlite};
+use crate::profile::DurableKvProfile;
+use crate::provider::{BindingHandle, DurableKvProvider, ProviderError};
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    Wasi(WasiError),
+    Database(ReferenceDatabaseError),
+    Authority(AuthorityError),
+    Component(String),
     Provider(ProviderError),
-    SessionRevisionMismatch { expected: Option<u64>, actual: Option<u64> },
+    Rejected(String),
+    Conflict(String),
+    Corrupt(String),
+    RetiredCapture,
+    MissingSource,
+    MissingPreparedInstance,
+    NativeStateIndeterminate,
 }
+
 impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Wasi(e) => write!(f, "WASI runtime error: {e}"),
-            Self::Provider(e) => write!(f, "provider runtime error: {e}"),
-            Self::SessionRevisionMismatch { expected, actual } => {
-                write!(f, "session revision mismatch: expected {expected:?}, actual {actual:?}")
+            Self::Database(error) => write!(formatter, "runtime database error: {error}"),
+            Self::Authority(error) => write!(formatter, "runtime authority error: {error}"),
+            Self::Component(error) => write!(formatter, "Wasmtime component error: {error}"),
+            Self::Provider(error) => write!(formatter, "durable KV provider error: {error}"),
+            Self::Rejected(reason) => write!(formatter, "runtime rejected request: {reason}"),
+            Self::Conflict(operation) => {
+                write!(formatter, "conflicting runtime operation: {operation}")
             }
+            Self::Corrupt(reason) => write!(formatter, "corrupt runtime outcome: {reason}"),
+            Self::RetiredCapture => formatter.write_str("the durable source capture was retired"),
+            Self::MissingSource => {
+                formatter.write_str("source instance is unavailable in this process")
+            }
+            Self::MissingPreparedInstance => {
+                formatter.write_str("prepared destination instance is unavailable in this process")
+            }
+            Self::NativeStateIndeterminate => formatter.write_str(
+                "the exact runtime operation is durable but its host-local state is unavailable",
+            ),
         }
     }
 }
 impl std::error::Error for RuntimeError {}
+impl From<ReferenceDatabaseError> for RuntimeError {
+    fn from(value: ReferenceDatabaseError) -> Self {
+        Self::Database(value)
+    }
+}
+impl From<AuthorityError> for RuntimeError {
+    fn from(value: AuthorityError) -> Self {
+        Self::Authority(value)
+    }
+}
+impl From<rusqlite::Error> for RuntimeError {
+    fn from(value: rusqlite::Error) -> Self {
+        Self::Database(value.into())
+    }
+}
 impl From<WasiError> for RuntimeError {
-    fn from(e: WasiError) -> Self {
-        Self::Wasi(e)
+    fn from(value: WasiError) -> Self {
+        Self::Component(value.to_string())
     }
 }
 impl From<ProviderError> for RuntimeError {
-    fn from(e: ProviderError) -> Self {
-        Self::Provider(e)
+    fn from(value: ProviderError) -> Self {
+        Self::Provider(value)
     }
 }
 
-/// One isolated Wasmtime instance plus one host-local provider handle.
-pub struct ReferenceInstance {
-    instance: WasiInstance<DurableKvProfile>,
-    binding: BindingHandle,
+/// The sole reference runtime. Durable records contain receipts, not opaque
+/// instance or binding material.
+pub struct ReferenceRuntime {
+    database: ReferenceDatabase,
+    authority: Authority,
     provider: DurableKvProvider,
+    prepared: PreparedComponent,
+    source: Option<LiveSource>,
+    destinations: HashMap<OperationId, PreparedDestination>,
 }
-impl fmt::Debug for ReferenceInstance {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ReferenceInstance")
-            .field("binding_id", &self.binding.binding_id())
-            .field("execution_epoch", &self.binding.execution_epoch())
-            .finish_non_exhaustive()
-    }
+struct LiveSource {
+    coordinate: ExternalCoordinate,
+    instance: WasiInstance,
+    frozen_snapshot: Option<SnapshotEnvelope>,
+}
+struct PreparedDestination {
+    instance: WasiInstance,
+    snapshot: SnapshotEnvelope,
+    destination: ExternalCoordinate,
+    restored: bool,
+    activated: bool,
 }
 
-impl ReferenceInstance {
-    /// Construct an activated source using coordinator-owned snapshot
-    /// coordinates.  The authority receipt is still only a local activation
-    /// gate; no runtime object is carried in the portable envelope.
-    pub fn source_with_context(
-        prepared: &PreparedComponent<DurableKvProfile>,
-        provider: DurableKvProvider,
-        binding: BindingHandle,
-        context: SnapshotContext,
-    ) -> Result<Self, RuntimeError> {
-        let mut instance = prepared.instantiate(binding.execution_epoch())?;
-        let gate = ActivationGate::for_active_source(&context, binding.execution_epoch());
-        instance.set_snapshot_context(context)?;
-        instance.activate(&gate)?;
-        Ok(Self { instance, binding, provider })
-    }
-
-    pub(crate) fn destination_unactivated(
-        prepared: &PreparedComponent<DurableKvProfile>,
-        provider: DurableKvProvider,
-        binding: BindingHandle,
-        snapshot: &SnapshotEnvelope,
-        receipt: &CoreCommitReceipt,
-    ) -> Result<Self, RuntimeError> {
-        if receipt.execution_epoch != binding.execution_epoch() {
-            return Err(RuntimeError::SessionRevisionMismatch {
-                expected: Some(receipt.execution_epoch),
-                actual: Some(binding.execution_epoch()),
-            });
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeOperationKind {
+    Capture,
+    PrepareDestination,
+    RestoreSource,
+    RestoreDestination,
+    Activate,
+    Retire,
+}
+impl RuntimeOperationKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Capture => "capture",
+            Self::PrepareDestination => "prepare_destination",
+            Self::RestoreSource => "restore_source",
+            Self::RestoreDestination => "restore_destination",
+            Self::Activate => "activate",
+            Self::Retire => "retire",
         }
-        let mut instance = prepared.instantiate(binding.execution_epoch())?;
-        let context = SnapshotContext {
-            snapshot: receipt.snapshot,
-            continuation: receipt.continuation,
-            scope: snapshot.body.scope,
-            lineage: snapshot.body.lineage.clone(),
-            runtime: receipt.destination.clone(),
-            cut_sequence: snapshot.body.source_cut.cut_sequence,
-            receipt_digest: snapshot.body.source_cut.receipt_digest,
-        };
-        instance.set_snapshot_context(context)?;
-        instance.restore(snapshot)?;
-        Ok(Self { instance, binding, provider })
+    }
+}
+enum RuntimeOperationState {
+    Applied(Vec<u8>),
+    Rejected(String),
+    Conflict(String),
+    Armed,
+    Retired,
+    Absent,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct DurableCapture {
+    snapshot: SnapshotEnvelope,
+    receipt: SnapshotReceipt,
+}
+
+impl ReferenceRuntime {
+    pub fn profile_ref() -> visa_core::ProfileRef {
+        DurableKvProfile.profile_ref()
     }
 
-    /// Recreate a source after a coordinator/runtime process restart.  The
-    /// provider binding is freshly opened from the still-active authority
-    /// coordinate; only the portable snapshot crosses the restart boundary.
-    pub(crate) fn source_from_snapshot(
-        prepared: &PreparedComponent<DurableKvProfile>,
-        provider: DurableKvProvider,
-        binding: BindingHandle,
-        snapshot: &SnapshotEnvelope,
+    pub fn semantic_domain_ref() -> Result<visa_core::SemanticDomainRef, RuntimeError> {
+        let bytes = counter_component_bytes()?;
+        Ok(DurableKvProfile.semantic_domain(Digest::of_bytes(&bytes)))
+    }
+
+    /// Opens a query-only runtime after restart. It deliberately has no source.
+    pub fn new(database: ReferenceDatabase, authority: Authority) -> Result<Self, RuntimeError> {
+        initialize_runtime_tables(&database)?;
+        let bytes = counter_component_bytes()?;
+        Ok(Self {
+            provider: DurableKvProvider::new(database.clone()),
+            database,
+            authority,
+            prepared: WasiFrontend::preflight(&bytes)?,
+            source: None,
+            destinations: HashMap::new(),
+        })
+    }
+
+    /// Starts the unique bootstrap source before its first capture.
+    pub fn with_source(
+        database: ReferenceDatabase,
+        authority: Authority,
+        source: SourceBinding,
     ) -> Result<Self, RuntimeError> {
-        let mut instance = prepared.instantiate(binding.execution_epoch())?;
-        instance.set_snapshot_context(SnapshotContext {
-            snapshot: snapshot.body.snapshot,
-            continuation: snapshot.body.continuation,
-            scope: snapshot.body.scope,
-            lineage: snapshot.body.lineage.clone(),
-            runtime: snapshot.body.source_cut.runtime.clone(),
-            cut_sequence: snapshot.body.source_cut.cut_sequence,
-            receipt_digest: snapshot.body.source_cut.receipt_digest,
+        let mut runtime = Self::new(database, authority)?;
+        let coordinate = binding_coordinate(&source.binding_id);
+        let handle = runtime.provider.bind_bootstrap_source(&runtime.authority, &source)?;
+        let mut instance = runtime.prepared.instantiate(source.execution_epoch, handle)?;
+        let context = bootstrap_context(coordinate.clone());
+        instance.set_snapshot_context(context.clone())?;
+        instance.activate(&ActivationGate::for_active_source(&context, source.execution_epoch))?;
+        runtime.source = Some(LiveSource { coordinate, instance, frozen_snapshot: None });
+        Ok(runtime)
+    }
+
+    /// One reference business call: guest counter plus matching durable KV revision.
+    pub fn increment_counter(&mut self) -> Result<(u64, u64), RuntimeError> {
+        let source = self.source.as_mut().ok_or(RuntimeError::MissingSource)?;
+        let counter = source.instance.increment()?;
+        let revision = source.instance.last_seen_version().ok_or_else(|| {
+            RuntimeError::Corrupt("guest increment returned without a durable KV revision".into())
         })?;
-        instance.restore(snapshot)?;
-        Ok(Self { instance, binding, provider })
+        Ok((counter, revision))
     }
-
-    pub(crate) fn prepare_activation_core(
+    pub fn source_value(&mut self) -> Result<u64, RuntimeError> {
+        self.source
+            .as_mut()
+            .ok_or(RuntimeError::MissingSource)?
+            .instance
+            .value()
+            .map_err(Into::into)
+    }
+    pub fn destination_value(
         &mut self,
-        receipt: &CoreCommitReceipt,
-    ) -> Result<(), RuntimeError> {
-        self.instance.prepare_activation(&ActivationGate::from_authority_commit(receipt))?;
-        Ok(())
+        preparation_operation: OperationId,
+    ) -> Result<u64, RuntimeError> {
+        self.destinations
+            .get_mut(&preparation_operation)
+            .ok_or(RuntimeError::MissingPreparedInstance)?
+            .instance
+            .value()
+            .map_err(Into::into)
     }
-
-    pub(crate) fn enable_activation(&mut self) -> Result<(), RuntimeError> {
-        self.instance.enable_activation()?;
-        Ok(())
-    }
-
-    pub(crate) fn activate_source(
+    pub fn increment_destination_counter(
         &mut self,
-        snapshot: &SnapshotEnvelope,
+        preparation_operation: OperationId,
+    ) -> Result<(u64, u64), RuntimeError> {
+        let destination = self
+            .destinations
+            .get_mut(&preparation_operation)
+            .ok_or(RuntimeError::MissingPreparedInstance)?;
+        let counter = destination.instance.increment()?;
+        let revision = destination.instance.last_seen_version().ok_or_else(|| {
+            RuntimeError::Corrupt("guest increment returned without a durable KV revision".into())
+        })?;
+        Ok((counter, revision))
+    }
+    pub fn destination_provider_value(
+        &self,
+        preparation_operation: OperationId,
+    ) -> Result<Option<(Vec<u8>, u64)>, RuntimeError> {
+        let destination = self
+            .destinations
+            .get(&preparation_operation)
+            .ok_or(RuntimeError::MissingPreparedInstance)?;
+        Ok(self
+            .provider
+            .get_for_handle(destination.instance.binding(), b"counter")?
+            .map(|entry| (entry.value, entry.revision)))
+    }
+    /// A precise test fault cut: durable arm is present but no snapshot is sealed.
+    #[doc(hidden)]
+    pub fn arm_capture_without_sealing_for_test(
+        &self,
+        action: &Action,
     ) -> Result<(), RuntimeError> {
-        let context = SnapshotContext {
-            snapshot: snapshot.body.snapshot,
-            continuation: snapshot.body.continuation,
-            scope: snapshot.body.scope,
-            lineage: snapshot.body.lineage.clone(),
-            runtime: snapshot.body.source_cut.runtime.clone(),
-            cut_sequence: snapshot.body.source_cut.cut_sequence,
-            receipt_digest: snapshot.body.source_cut.receipt_digest,
+        require_kind(action, RuntimeOperationKind::Capture)?;
+        match self.operation(action, RuntimeOperationKind::Capture)? {
+            RuntimeOperationState::Absent => self.arm(action, RuntimeOperationKind::Capture),
+            RuntimeOperationState::Armed => Ok(()),
+            _ => Err(RuntimeError::Conflict(hex(&action.operation.0))),
+        }
+    }
+
+    fn capture_action(&mut self, action: &Action) -> Result<CapturedSnapshot, RuntimeError> {
+        require_kind(action, RuntimeOperationKind::Capture)?;
+        match self.operation(action, RuntimeOperationKind::Capture)? {
+            RuntimeOperationState::Applied(bytes) => return decode_capture(&bytes),
+            RuntimeOperationState::Rejected(reason) => return Err(RuntimeError::Rejected(reason)),
+            RuntimeOperationState::Conflict(reason) => return Err(RuntimeError::Conflict(reason)),
+            RuntimeOperationState::Armed => {
+                return Err(RuntimeError::Rejected(
+                    "capture is armed without a sealed snapshot".into(),
+                ));
+            }
+            RuntimeOperationState::Retired => return Err(RuntimeError::RetiredCapture),
+            RuntimeOperationState::Absent => self.arm(action, RuntimeOperationKind::Capture)?,
+        }
+        let ActionRequest::Capture { continuation, scope, source, lineage_parent, profile } =
+            &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a capture action".into()));
         };
-        self.instance.activate(&ActivationGate::for_active_source(
-            &context,
-            self.binding.execution_epoch(),
-        ))?;
-        Ok(())
-    }
-
-    pub fn increment(&mut self) -> Result<u64, RuntimeError> {
-        self.provider.ensure_live(&self.binding)?;
-        Ok(self.instance.increment()?)
-    }
-    pub fn value(&mut self) -> Result<u64, RuntimeError> {
-        self.provider.ensure_live(&self.binding)?;
-        Ok(self.instance.value()?)
-    }
-    pub fn binding(&self) -> &BindingHandle {
-        &self.binding
-    }
-    pub(crate) fn safe_point(&self) -> Option<SafePointReceipt> {
-        self.instance.safe_point().map(|capture| capture.safe_point.clone())
-    }
-    pub(crate) fn begin_continuation(
-        &mut self,
-        context: SnapshotContext,
-    ) -> Result<(), RuntimeError> {
-        self.instance.begin_continuation(context)?;
-        Ok(())
-    }
-    pub fn set_session(&self, value: &[u8]) -> Result<KvEntry, RuntimeError> {
-        let current = self.provider.get_for_handle(&self.binding, b"counter")?;
-        Ok(self.provider.cas_for_handle(
-            &self.binding,
-            b"counter",
-            current.as_ref().map(|e| e.revision),
-            value,
-        )?)
-    }
-    pub fn session(&self) -> Result<Option<KvEntry>, RuntimeError> {
-        Ok(self.provider.get_for_handle(&self.binding, b"counter")?)
-    }
-    pub(crate) fn freeze(&mut self, session_key: &[u8]) -> Result<SnapshotEnvelope, RuntimeError> {
-        self.instance.begin_freeze()?;
-        let session = match self.provider.capture_and_close(&self.binding, session_key) {
-            Ok(session) => session,
+        if *profile != DurableKvProfile.profile_ref()
+            || lineage_parent.semantic_domain != Self::semantic_domain_ref()?
+        {
+            return Err(RuntimeError::Rejected(
+                "capture profile differs from reference profile".into(),
+            ));
+        }
+        let provider = self.provider.clone();
+        let live = self.source.as_mut().ok_or(RuntimeError::MissingSource)?;
+        if &live.coordinate != source || live.frozen_snapshot.is_some() {
+            return Err(RuntimeError::Rejected("capture source is not current".into()));
+        }
+        live.instance.begin_continuation(SnapshotContext {
+            snapshot: snapshot_id(action.operation),
+            continuation: *continuation,
+            scope: *scope,
+            lineage: visa_core::LineageAdvance {
+                parent: lineage_parent.clone(),
+                successor_generation: lineage_parent
+                    .generation
+                    .checked_add(1)
+                    .ok_or_else(|| RuntimeError::Rejected("lineage overflow".into()))?,
+                successor_digest: Digest::ZERO,
+            },
+            runtime: source.clone(),
+            cut_sequence: lineage_parent.generation,
+            receipt_digest: Digest::ZERO,
+        })?;
+        live.instance.begin_freeze()?;
+        let revision = match provider.capture_and_close(live.instance.binding(), b"counter") {
+            Ok(entry) => entry.map(|value| value.revision),
             Err(error) => {
-                self.instance.cancel_freeze()?;
+                let _ = live.instance.cancel_freeze();
                 return Err(error.into());
             }
         };
-        match self
-            .instance
-            .complete_freeze(session_key.to_vec(), session.map(|entry| entry.revision))
-        {
-            Ok(snapshot) => Ok(snapshot),
-            Err(error) => {
-                self.instance.cancel_freeze()?;
-                Err(error.into())
-            }
-        }
-    }
-}
-
-pub struct WasmtimeVertical {
-    pub prepared: PreparedComponent<DurableKvProfile>,
-}
-
-/// A coordinator-facing runtime port backed by the real Wasmtime component
-/// frontend.  Its associated values are deliberately host-local tokens; only
-/// the core snapshot and receipts cross the coordinator's durable boundary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CoordinatorRuntimeError(pub String);
-
-impl fmt::Display for CoordinatorRuntimeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for CoordinatorRuntimeError {}
-
-pub struct PreparedDestination {
-    snapshot: SnapshotEnvelope,
-    destination: ExternalCoordinate,
-}
-
-pub struct RestoredDestination {
-    instance: ReferenceInstance,
-}
-
-/// A sealed capture that has crossed the runtime safe point but has not yet
-/// been observed as durable by this adapter.  The source provider dispatch is
-/// already closed at this point, so dropping this value would strand the
-/// source and make a subsequent exact query incorrectly look retryable.
-#[derive(Clone)]
-struct PendingCapture {
-    request_digest: Digest,
-    captured: coordinator::CapturedSnapshot,
-}
-
-enum CapturePersistence {
-    Persisted(Box<coordinator::CapturedSnapshot>),
-    Indeterminate,
-    Rejected(CoordinatorRuntimeError),
-}
-
-enum CaptureReadError {
-    Indeterminate,
-    Rejected(CoordinatorRuntimeError),
-}
-
-enum DurableCapture {
-    Absent,
-    Armed,
-    Captured(Box<coordinator::CapturedSnapshot>),
-}
-
-enum CaptureArming {
-    Armed,
-    AlreadyArmed,
-    AlreadyCaptured,
-    Indeterminate,
-    Rejected(CoordinatorRuntimeError),
-}
-
-pub struct CoordinatorRuntimeAdapter {
-    authority: Authority,
-    provider: DurableKvProvider,
-    pub vertical: WasmtimeVertical,
-    source: Option<ReferenceInstance>,
-    source_restoration: Option<SourceRestorationReceipt>,
-    destination: Option<ReferenceInstance>,
-    activation: Option<ActivationReceipt>,
-    lose_capture_ack_once: bool,
-    fail_capture_persistence_once: bool,
-    pending_captures: Vec<PendingCapture>,
-    retired_captures: Vec<(visa_core::OperationId, Digest)>,
-}
-
-impl CoordinatorRuntimeAdapter {
-    pub fn new(
-        authority: Authority,
-        provider: DurableKvProvider,
-        vertical: WasmtimeVertical,
-    ) -> Self {
-        Self {
-            authority,
-            provider,
-            vertical,
-            source: None,
-            source_restoration: None,
-            destination: None,
-            activation: None,
-            lose_capture_ack_once: false,
-            fail_capture_persistence_once: false,
-            pending_captures: Vec::new(),
-            retired_captures: Vec::new(),
-        }
-    }
-
-    /// Install the already-running source owned by the embedding host. The
-    /// instance remains host-local and is never written to the record store.
-    pub fn install_source(&mut self, source: ReferenceInstance) {
-        self.source = Some(source);
-        self.source_restoration = None;
-    }
-
-    /// Test/reference fault injection after the runtime-owned durable capture
-    /// transaction commits but before the coordinator receives its receipt.
-    pub fn inject_capture_lost_ack_once(&mut self) {
-        self.lose_capture_ack_once = true;
-    }
-
-    /// Test/reference fault injection after source capture seals but before
-    /// its durable capture row is written. The sealed value remains in this
-    /// adapter and the next exact query retries that write without freezing
-    /// the source a second time.
-    pub fn inject_capture_persistence_failure_once(&mut self) {
-        self.fail_capture_persistence_once = true;
-    }
-
-    fn error(error: impl fmt::Display) -> CoordinatorRuntimeError {
-        CoordinatorRuntimeError(error.to_string())
-    }
-
-    fn authority_indeterminate(error: &AuthorityError) -> bool {
-        matches!(error, AuthorityError::Database(_) | AuthorityError::Indeterminate)
-    }
-
-    fn provider_indeterminate(error: &ProviderError) -> bool {
-        matches!(
-            error,
-            ProviderError::Database(_)
-                | ProviderError::Authority(
-                    AuthorityError::Database(_) | AuthorityError::Indeterminate
-                )
-        )
-    }
-
-    fn runtime_indeterminate(error: &RuntimeError) -> bool {
-        matches!(error, RuntimeError::Provider(error) if Self::provider_indeterminate(error))
-    }
-
-    fn source_context(request: &coordinator::FreezeSourceRequest) -> SnapshotContext {
-        SnapshotContext {
-            snapshot: SnapshotId(request.continuation.0),
-            continuation: request.continuation,
-            scope: request.scope,
-            lineage: request.lineage.clone(),
-            // The source binding is an authority coordinate and must never be
-            // copied into portable state.  The runtime coordinate identifies
-            // the Wasmtime frontend instead.
-            runtime: Self::reference_runtime_coordinate(),
-            cut_sequence: request.lineage.successor_generation,
+        let snapshot = live.instance.complete_freeze(b"counter".to_vec(), revision)?;
+        debug_assert_eq!(snapshot.body.profile, *profile);
+        let receipt = SnapshotReceipt {
+            operation: action.operation,
+            request_digest: action.request_digest,
+            continuation: *continuation,
+            scope: *scope,
+            snapshot: snapshot.body.snapshot,
+            snapshot_digest: snapshot.body_digest,
+            lineage: snapshot.body.lineage.clone(),
+            profile: snapshot.body.profile.clone(),
+            source: snapshot.body.source.clone(),
+            semantic_cut: snapshot.body.semantic_cut,
             receipt_digest: Digest::ZERO,
         }
-    }
-
-    fn reference_runtime_coordinate() -> ExternalCoordinate {
-        ExternalCoordinate {
-            authority: visa_core::AuthorityId::from_u128(2),
-            value: b"reference-wasmtime".to_vec(),
-        }
-    }
-
-    fn local_binding(coordinate: &ExternalCoordinate) -> Result<String, CoordinatorRuntimeError> {
-        if coordinate.authority != visa_core::AuthorityId::from_u128(1) {
-            return Err(Self::error("binding belongs to a different authority"));
-        }
-        String::from_utf8(coordinate.value.clone())
-            .map_err(|_| Self::error("binding coordinate is not exact UTF-8"))
-    }
-
-    /// In the reference authority a provider coordinate identifies the
-    /// provider generation, not the destination binding. Binding coordinates
-    /// carry the `destination:{operation}` row id separately.
-    fn reference_provider_coordinate(provider_generation: u64) -> ExternalCoordinate {
-        ExternalCoordinate {
-            authority: visa_core::AuthorityId::from_u128(1),
-            value: format!("provider:g{provider_generation}").into_bytes(),
-        }
-    }
-
-    pub fn destination_mut(&mut self) -> Option<&mut ReferenceInstance> {
-        self.destination.as_mut()
-    }
-
-    pub fn source_mut(&mut self) -> Option<&mut ReferenceInstance> {
-        self.source.as_mut()
-    }
-}
-
-impl coordinator::RuntimePort for CoordinatorRuntimeAdapter {
-    type Frozen = ();
-    type Prepared = PreparedDestination;
-    type Restored = RestoredDestination;
-    type ActivationRejection = CoordinatorRuntimeError;
-    type Error = CoordinatorRuntimeError;
-
-    fn capture_durability(&self) -> coordinator::CaptureDurability {
-        coordinator::CaptureDurability::AuthorityDurableQueryable
-    }
-
-    fn capture(
-        &mut self,
-        request: coordinator::CaptureRequest,
-    ) -> CallOutcome<coordinator::CapturedRuntime<Self::Frozen>, Self::Error> {
-        let query = coordinator::QueryCaptureRequest {
-            operation: request.operation,
-            continuation: request.continuation,
-            scope: request.scope,
-            source: request.source.clone(),
-            profile: request.profile.clone(),
-            lineage: request.lineage.clone(),
-        };
-        let request_digest = match Self::capture_request_digest(
-            request.operation,
-            request.continuation,
-            request.scope,
-            &request.source,
-            &request.profile,
-            &request.lineage,
-        ) {
-            Ok(digest) => digest,
-            Err(error) => return CallOutcome::Rejected(error),
-        };
-        match self.query_capture(query.clone()) {
-            QueryOutcome::Applied(captured) => {
-                return CallOutcome::Applied(coordinator::CapturedRuntime {
-                    snapshot: captured.snapshot,
-                    safe_point: captured.safe_point,
-                    receipt: Some(captured.receipt),
-                    frozen: (),
-                });
-            }
-            QueryOutcome::Rejected(error) => return CallOutcome::Rejected(error),
-            QueryOutcome::Indeterminate => return CallOutcome::Indeterminate,
-            QueryOutcome::Absent => {}
-        }
-
-        // The operation marker is the runtime authority's durable source
-        // fence for this capture. It must commit before freeze_source can
-        // close provider dispatch; otherwise a fresh process cannot tell an
-        // unstarted capture from one that may already have frozen the source.
-        match self.arm_durable_capture(request.operation, request_digest) {
-            CaptureArming::Armed => {}
-            CaptureArming::AlreadyArmed => return CallOutcome::Indeterminate,
-            CaptureArming::AlreadyCaptured => {
-                return match self.query_capture(query) {
-                    QueryOutcome::Applied(captured) => {
-                        CallOutcome::Applied(coordinator::CapturedRuntime {
-                            snapshot: captured.snapshot,
-                            safe_point: captured.safe_point,
-                            receipt: Some(captured.receipt),
-                            frozen: (),
-                        })
-                    }
-                    QueryOutcome::Rejected(error) => CallOutcome::Rejected(error),
-                    QueryOutcome::Indeterminate | QueryOutcome::Absent => {
-                        CallOutcome::Indeterminate
-                    }
-                };
-            }
-            CaptureArming::Rejected(error) => return CallOutcome::Rejected(error),
-            CaptureArming::Indeterminate => return CallOutcome::Indeterminate,
-        }
-
-        let frozen = match self.freeze_source(coordinator::FreezeSourceRequest {
-            operation: request.operation,
-            continuation: request.continuation,
-            scope: request.scope,
-            source: request.source.clone(),
-            profile: request.profile.clone(),
-            lineage: request.lineage.clone(),
-        }) {
-            CallOutcome::Applied(frozen) => frozen,
-            CallOutcome::Rejected(error) => return CallOutcome::Rejected(error),
-            CallOutcome::Indeterminate => return CallOutcome::Indeterminate,
-        };
-        let receipt = match (CaptureReceipt {
-            operation: request.operation,
-            continuation: request.continuation,
-            scope: request.scope,
-            snapshot: frozen.snapshot.body.snapshot,
-            source: request.source,
-            profile: request.profile,
-            lineage: request.lineage,
-            state_digest: frozen.snapshot.body.state_digest,
-            snapshot_digest: frozen.snapshot.body_digest,
-            safe_point_digest: frozen.safe_point.receipt_digest,
-            receipt_digest: Digest::ZERO,
-        })
         .seal()
-        {
-            Ok(receipt) => receipt,
-            Err(error) => return CallOutcome::Rejected(Self::error(format!("{error:?}"))),
-        };
-        let request_digest = match Self::capture_request_digest(
-            receipt.operation,
-            receipt.continuation,
-            receipt.scope,
-            &receipt.source,
-            &receipt.profile,
-            &receipt.lineage,
-        ) {
-            Ok(digest) => digest,
-            Err(error) => return CallOutcome::Rejected(error),
-        };
-        let pending = PendingCapture {
-            request_digest,
-            captured: coordinator::CapturedSnapshot {
-                snapshot: frozen.snapshot,
-                safe_point: frozen.safe_point,
-                receipt,
-            },
-        };
-        if let Err(error) = self.remember_capture(pending.clone()) {
-            return CallOutcome::Rejected(error);
-        }
-        let captured = match self.persist_pending_capture(&pending) {
-            CapturePersistence::Persisted(captured) => *captured,
-            CapturePersistence::Rejected(error) => return CallOutcome::Rejected(error),
-            CapturePersistence::Indeterminate => return CallOutcome::Indeterminate,
-        };
-        if self.lose_capture_ack_once {
-            self.lose_capture_ack_once = false;
-            return CallOutcome::Indeterminate;
-        }
-        self.forget_capture(request.operation);
-        CallOutcome::Applied(coordinator::CapturedRuntime {
-            snapshot: captured.snapshot,
-            safe_point: captured.safe_point,
-            receipt: Some(captured.receipt),
-            frozen: (),
-        })
-    }
-
-    fn query_capture(
-        &mut self,
-        request: coordinator::QueryCaptureRequest,
-    ) -> QueryOutcome<coordinator::CapturedSnapshot, Self::Error> {
-        let request_digest = match Self::capture_request_digest(
-            request.operation,
-            request.continuation,
-            request.scope,
-            &request.source,
-            &request.profile,
-            &request.lineage,
-        ) {
-            Ok(digest) => digest,
-            Err(error) => return QueryOutcome::Rejected(error),
-        };
-        match self.read_durable_capture(&request, request_digest) {
-            Ok(DurableCapture::Captured(captured)) => {
-                self.forget_capture(request.operation);
-                QueryOutcome::Applied(*captured)
-            }
-            Ok(DurableCapture::Absent) => QueryOutcome::Absent,
-            Ok(DurableCapture::Armed) => {
-                // A process-local sealed value can complete the armed row
-                // without freezing a second time. A fresh runtime has no
-                // such token and must report the armed/not-captured state as
-                // indeterminate, never as absent or retry authority.
-                let pending = match self.pending_capture(request.operation, request_digest) {
-                    Ok(Some(pending)) => pending,
-                    Ok(None) => return QueryOutcome::Indeterminate,
-                    Err(error) => return QueryOutcome::Rejected(error),
-                };
-                match self.persist_pending_capture(&pending) {
-                    CapturePersistence::Persisted(captured) => {
-                        self.forget_capture(request.operation);
-                        QueryOutcome::Applied(*captured)
-                    }
-                    CapturePersistence::Rejected(error) => QueryOutcome::Rejected(error),
-                    CapturePersistence::Indeterminate => QueryOutcome::Indeterminate,
-                }
-            }
-            Err(CaptureReadError::Rejected(error)) => QueryOutcome::Rejected(error),
-            Err(CaptureReadError::Indeterminate) => QueryOutcome::Indeterminate,
-        }
-    }
-
-    fn retire_capture(&mut self, receipt: &CaptureReceipt) -> Result<(), Self::Error> {
-        receipt
-            .verify()
-            .map_err(|error| Self::error(format!("invalid capture retirement receipt: {error}")))?;
-        let request_digest = Self::capture_request_digest(
-            receipt.operation,
-            receipt.continuation,
-            receipt.scope,
-            &receipt.source,
-            &receipt.profile,
-            &receipt.lineage,
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        let captured = CapturedSnapshot { snapshot: snapshot.clone(), receipt };
+        live.frozen_snapshot = Some(captured.snapshot.clone());
+        let _ = live;
+        self.persist_applied(
+            action,
+            RuntimeOperationKind::Capture,
+            &DurableCapture { snapshot, receipt: captured.receipt.clone() },
         )?;
-        if self.retired_captures.contains(&(receipt.operation, request_digest)) {
-            return Ok(());
-        }
-        let receipt_bytes = postcard::to_allocvec(receipt)
-            .map_err(|error| Self::error(format!("cannot encode capture receipt: {error}")))?;
-        let database = self.provider.database();
-        let connection = database.lock().map_err(Self::error)?;
-        let transaction = connection.unchecked_transaction().map_err(Self::error)?;
-        let stored: Option<(Vec<u8>, String, Option<Vec<u8>>)> = transaction
-            .query_row(
-                "SELECT request_digest, status, receipt FROM visa_runtime_captures
-                 WHERE operation_id = ?1",
-                params![receipt.operation.0.to_vec()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()
-            .map_err(Self::error)?;
-        let Some((stored_digest, status, stored_receipt)) = stored else {
-            self.retired_captures.push((receipt.operation, request_digest));
-            return Ok(());
-        };
-        if stored_digest.as_slice() != request_digest.0
-            || status != "captured"
-            || stored_receipt.as_deref() != Some(receipt_bytes.as_slice())
-        {
-            return Err(Self::error("capture retirement does not match durable facts"));
-        }
-        if transaction
-            .execute(
-                "DELETE FROM visa_runtime_captures
-                 WHERE operation_id = ?1 AND request_digest = ?2 AND status = 'captured'
-                   AND receipt = ?3",
-                params![receipt.operation.0.to_vec(), request_digest.0.to_vec(), receipt_bytes,],
-            )
-            .map_err(Self::error)?
-            != 1
-        {
-            return Err(Self::error("capture retirement lost its exact durable row"));
-        }
-        transaction.commit().map_err(Self::error)?;
-        self.forget_capture(receipt.operation);
-        self.retired_captures.push((receipt.operation, request_digest));
-        Ok(())
+        Ok(captured)
     }
 
-    fn freeze_source(
+    fn prepare_destination_action(
         &mut self,
-        request: coordinator::FreezeSourceRequest,
-    ) -> CallOutcome<coordinator::FrozenRuntime<Self::Frozen>, Self::Error> {
-        if request.profile != self.vertical.prepared.profile_ref() {
-            return CallOutcome::Rejected(Self::error(
-                "source profile does not match prepared component",
-            ));
-        }
-        let binding_id = match Self::local_binding(&request.source) {
-            Ok(binding_id) => binding_id,
-            Err(error) => return CallOutcome::Rejected(error),
-        };
-        if self.source.as_ref().is_some_and(|source| source.binding().binding_id() != binding_id) {
-            self.source = None;
-        }
-        if self.source.is_none()
-            && self
-                .destination
-                .as_ref()
-                .is_some_and(|destination| destination.binding().binding_id() == binding_id)
-        {
-            self.source = self.destination.take();
-        }
-        let Some(source) = self.source.as_mut() else {
-            return CallOutcome::Rejected(Self::error(
-                "live source is unavailable before the durable snapshot boundary",
-            ));
-        };
-        self.source_restoration = None;
-        if let Err(error) = source.begin_continuation(Self::source_context(&request)) {
-            return CallOutcome::Rejected(Self::error(format!("{error:?}")));
-        }
-        let snapshot = match source.freeze(b"counter") {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                if let Err(resume_error) =
-                    self.authority.resume_source(source.binding().binding_id())
-                {
-                    if Self::authority_indeterminate(&resume_error) {
-                        return CallOutcome::Indeterminate;
-                    }
-                    return CallOutcome::Rejected(Self::error(resume_error));
-                }
-                if Self::runtime_indeterminate(&error) {
-                    return CallOutcome::Indeterminate;
-                }
-                return CallOutcome::Rejected(Self::error(format!("{error:?}")));
+        action: &Action,
+    ) -> Result<RuntimePreparationReceipt, RuntimeError> {
+        require_kind(action, RuntimeOperationKind::PrepareDestination)?;
+        match self.operation(action, RuntimeOperationKind::PrepareDestination)? {
+            RuntimeOperationState::Applied(bytes) => {
+                let receipt = decode(&bytes)?;
+                self.materialize_preparation_action(action)?;
+                return Ok(receipt);
             }
+            RuntimeOperationState::Rejected(reason) => return Err(RuntimeError::Rejected(reason)),
+            RuntimeOperationState::Conflict(reason) => return Err(RuntimeError::Conflict(reason)),
+            RuntimeOperationState::Armed => {
+                return Err(RuntimeError::NativeStateIndeterminate);
+            }
+            RuntimeOperationState::Retired => {
+                return Err(RuntimeError::Corrupt(
+                    "preparation operation is a capture tombstone".into(),
+                ));
+            }
+            RuntimeOperationState::Absent => {
+                self.arm(action, RuntimeOperationKind::PrepareDestination)?
+            }
+        }
+        let ActionRequest::PrepareDestination { continuation, snapshot, destination, bindings } =
+            &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a prepare-destination action".into()));
         };
-        let Some(safe_point) = source.safe_point() else {
-            return CallOutcome::Rejected(Self::error("source did not report a safe point"));
-        };
-        CallOutcome::Applied(coordinator::FrozenRuntime { snapshot, safe_point, frozen: () })
+        validate_snapshot(snapshot, *continuation)?;
+        bindings.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        if bindings.continuation != *continuation
+            || bindings.snapshot != snapshot.body.snapshot
+            || bindings.snapshot_digest != snapshot.body_digest
+            || bindings.destination != *destination
+        {
+            return Err(RuntimeError::Rejected(
+                "binding preparation does not match snapshot".into(),
+            ));
+        }
+        self.ensure_prepared(action.operation, snapshot, destination, bindings)?;
+        let receipt = RuntimePreparationReceipt {
+            operation: action.operation,
+            continuation: *continuation,
+            snapshot: snapshot.body.snapshot,
+            snapshot_digest: snapshot.body_digest,
+            destination: destination.clone(),
+            binding_receipt_digest: bindings.receipt_digest,
+            request_digest: action.request_digest,
+            receipt_digest: Digest::ZERO,
+        }
+        .seal()
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.persist_applied(action, RuntimeOperationKind::PrepareDestination, &receipt)?;
+        Ok(receipt)
     }
 
-    fn restore_source(
+    fn restore_source_action(
         &mut self,
-        request: coordinator::RestoreSourceRequest,
-    ) -> CallOutcome<SourceRestorationReceipt, Self::Error> {
-        if request.snapshot.body.source_cut.runtime != Self::reference_runtime_coordinate() {
-            return CallOutcome::Rejected(Self::error(
-                "source snapshot runtime coordinate does not belong to the reference runtime",
-            ));
-        }
-        if let Some(receipt) = self.source_restoration.clone()
-            && receipt.continuation == request.continuation
-            && receipt.snapshot == request.snapshot.body.snapshot
-            && receipt.source == request.source
-            && receipt.snapshot_digest == request.snapshot.body_digest
-        {
-            return CallOutcome::Applied(receipt);
-        }
-        if self.source.is_none() {
-            let binding_id = match Self::local_binding(&request.source) {
-                Ok(binding_id) => binding_id,
-                Err(error) => return CallOutcome::Rejected(error),
-            };
-            let binding = match self.provider.bind(&self.authority, &binding_id) {
-                Ok(binding) => binding,
-                Err(error) if Self::provider_indeterminate(&error) => {
-                    return CallOutcome::Indeterminate;
-                }
-                Err(error) => return CallOutcome::Rejected(Self::error(error)),
-            };
-            let source = match ReferenceInstance::source_from_snapshot(
-                &self.vertical.prepared,
-                self.provider.clone(),
-                binding,
-                &request.snapshot,
-            ) {
-                Ok(source) => source,
-                Err(error) => return CallOutcome::Rejected(Self::error(error)),
-            };
-            if let Err(error) = self.authority.resume_source(source.binding().binding_id()) {
-                if Self::authority_indeterminate(&error) {
-                    return CallOutcome::Indeterminate;
-                }
-                return CallOutcome::Rejected(Self::error(error));
+        action: &Action,
+    ) -> Result<SourceRestorationReceipt, RuntimeError> {
+        require_kind(action, RuntimeOperationKind::RestoreSource)?;
+        match self.operation(action, RuntimeOperationKind::RestoreSource)? {
+            RuntimeOperationState::Applied(bytes) => return decode(&bytes),
+            RuntimeOperationState::Rejected(reason) => return Err(RuntimeError::Rejected(reason)),
+            RuntimeOperationState::Conflict(reason) => return Err(RuntimeError::Conflict(reason)),
+            RuntimeOperationState::Armed => {
+                return Err(RuntimeError::Rejected("source restoration cannot be armed".into()));
             }
-            let mut source = source;
-            if let Err(error) = source.activate_source(&request.snapshot) {
-                let _ = self.authority.close_source(source.binding().binding_id());
-                return CallOutcome::Rejected(Self::error(error));
+            RuntimeOperationState::Retired => {
+                return Err(RuntimeError::Corrupt(
+                    "source restore operation is a capture tombstone".into(),
+                ));
             }
+            RuntimeOperationState::Absent => {
+                self.arm(action, RuntimeOperationKind::RestoreSource)?
+            }
+        }
+        let ActionRequest::RestoreSource { continuation, source, snapshot } = &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a restore-source action".into()));
+        };
+        validate_snapshot(snapshot, *continuation)?;
+        let mut live = self.source.take().ok_or(RuntimeError::MissingSource)?;
+        let result = (|| {
+            if &live.coordinate != source || live.frozen_snapshot.as_ref() != Some(snapshot) {
+                return Err(RuntimeError::Rejected(
+                    "source restoration is not for the frozen snapshot".into(),
+                ));
+            }
+            reopen_source_dispatch(&self.database, live.instance.binding())?;
+            live.instance.cancel_freeze()?;
             let receipt = SourceRestorationReceipt {
-                continuation: request.continuation,
-                snapshot: request.snapshot.body.snapshot,
-                snapshot_digest: request.snapshot.body_digest,
-                source: request.source,
-                execution_epoch: source.binding().execution_epoch(),
+                operation: action.operation,
+                continuation: *continuation,
+                snapshot: snapshot.body.snapshot,
+                snapshot_digest: snapshot.body_digest,
+                source: source.clone(),
+                execution_epoch: live.instance.binding().execution_epoch(),
+                request_digest: action.request_digest,
                 receipt_digest: Digest::ZERO,
             }
             .seal()
-            .expect("reference source restoration receipt is encodable");
-            self.source_restoration = Some(receipt.clone());
-            self.source = Some(source);
-            return CallOutcome::Applied(receipt);
-        }
-        let requested_binding = match Self::local_binding(&request.source) {
-            Ok(binding_id) => binding_id,
-            Err(error) => return CallOutcome::Rejected(error),
-        };
-        let source = self.source.as_mut().expect("source was checked above");
-        if source.binding().binding_id() != requested_binding {
-            return CallOutcome::Rejected(Self::error(
-                "restore source binding coordinate does not match the live source",
-            ));
-        }
-        // A captured source is frozen and the frontend deliberately forbids
-        // restoring over it. Drop that host-local instance and rebuild a
-        // fresh source from portable state through the same path used after a
-        // process restart. The exact restoration receipt above makes repeats
-        // idempotent after this succeeds.
-        self.source = None;
-        self.restore_source(request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+            self.persist_applied(action, RuntimeOperationKind::RestoreSource, &receipt)?;
+            live.frozen_snapshot = None;
+            Ok(receipt)
+        })();
+        self.source = Some(live);
+        result
     }
 
-    fn prepare_destination(
+    fn restore_destination_action(
         &mut self,
-        request: coordinator::PrepareDestinationRequest,
-    ) -> CallOutcome<Self::Prepared, Self::Error> {
-        if request.snapshot.body.profile != self.vertical.prepared.profile_ref()
-            || request.snapshot.body.resources != request.requirements
-        {
-            return CallOutcome::Rejected(Self::error(
-                "destination profile or requirements mismatch",
-            ));
-        }
-        CallOutcome::Applied(PreparedDestination {
-            snapshot: request.snapshot,
-            destination: request.destination,
-        })
-    }
-
-    fn restore_destination(
-        &mut self,
-        request: coordinator::RestoreDestinationRequest<Self::Prepared>,
-    ) -> CallOutcome<Self::Restored, Self::Error> {
-        if request.prepared.snapshot != request.snapshot
-            || request.prepared.destination != request.destination
-        {
-            return CallOutcome::Rejected(Self::error("destination preparation token mismatch"));
-        }
-        let profile = DurableKvProfile;
-        let state = match profile.state_codec().decode(&request.snapshot.body.state) {
-            Ok(state) => state,
-            Err(error) => return CallOutcome::Rejected(Self::error(error)),
-        };
-        if request.preparation.destination != request.destination
-            || request.commit.continuation != request.continuation
-            || request.commit.snapshot != request.snapshot.body.snapshot
-            || request.commit.destination != request.destination
-            || request.commit.binding_receipt_digest != request.preparation.receipt_digest
-        {
-            return CallOutcome::Rejected(Self::error(
-                "destination restore request does not match preparation or commit",
-            ));
-        }
-        if let Err(error) = profile.validate_resources(&state, &request.snapshot.body.resources) {
-            return CallOutcome::Rejected(Self::error(format!("{error:?}")));
-        }
-        if request.preparation.grants.len() != request.snapshot.body.resources.len() {
-            return CallOutcome::Rejected(Self::error(
-                "authority returned a grant set that does not match profile requirements",
-            ));
-        }
-        let mut destination_grant: Option<&BindingGrant> = None;
-        for requirement in &request.snapshot.body.resources {
-            let mut matches = request
-                .preparation
-                .grants
-                .iter()
-                .filter(|grant| grant.requirement == requirement.id);
-            let Some(grant) = matches.next() else {
-                return CallOutcome::Rejected(Self::error(
-                    "authority returned no grant for a profile requirement",
-                ));
-            };
-            if matches.next().is_some() {
-                return CallOutcome::Rejected(Self::error(
-                    "authority returned multiple grants for a profile requirement",
+        action: &Action,
+    ) -> Result<DestinationRestoreReceipt, RuntimeError> {
+        require_kind(action, RuntimeOperationKind::RestoreDestination)?;
+        match self.operation(action, RuntimeOperationKind::RestoreDestination)? {
+            RuntimeOperationState::Applied(bytes) => {
+                let receipt = decode(&bytes)?;
+                self.materialize_restoration_action(action)?;
+                return Ok(receipt);
+            }
+            RuntimeOperationState::Rejected(reason) => return Err(RuntimeError::Rejected(reason)),
+            RuntimeOperationState::Conflict(reason) => return Err(RuntimeError::Conflict(reason)),
+            RuntimeOperationState::Armed => {
+                return Err(RuntimeError::NativeStateIndeterminate);
+            }
+            RuntimeOperationState::Retired => {
+                return Err(RuntimeError::Corrupt(
+                    "destination restore operation is a capture tombstone".into(),
                 ));
             }
-            if let Err(error) = profile.validate_binding(&state, requirement, grant) {
-                return CallOutcome::Rejected(Self::error(format!("{error:?}")));
+            RuntimeOperationState::Absent => {
+                self.arm(action, RuntimeOperationKind::RestoreDestination)?
             }
-            if let Some(selected) = destination_grant
-                && (selected.binding != grant.binding
-                    || selected.provider != grant.provider
-                    || selected.provider_generation != grant.provider_generation)
-            {
-                return CallOutcome::Rejected(Self::error(
-                    "authority grants disagree on the reference destination binding",
-                ));
-            }
-            destination_grant = Some(grant);
         }
-        let Some(grant) = destination_grant else {
-            return CallOutcome::Rejected(Self::error("authority returned no destination grant"));
+        let ActionRequest::RestoreDestination {
+            continuation,
+            destination,
+            snapshot,
+            preparation,
+            bindings,
+        } = &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a restore-destination action".into()));
         };
-        if grant.provider != Self::reference_provider_coordinate(grant.provider_generation) {
-            return CallOutcome::Rejected(Self::error(
-                "authority grant names an unknown reference provider",
+        validate_snapshot(snapshot, *continuation)?;
+        preparation.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        bindings.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        if preparation.continuation != *continuation
+            || preparation.snapshot != snapshot.body.snapshot
+            || preparation.snapshot_digest != snapshot.body_digest
+            || preparation.destination != *destination
+            || bindings.snapshot != snapshot.body.snapshot
+            || bindings.snapshot_digest != snapshot.body_digest
+        {
+            return Err(RuntimeError::Rejected(
+                "destination receipts do not match snapshot".into(),
             ));
         }
-        let destination_owner = match Self::local_binding(&request.destination) {
-            Ok(owner) => owner,
-            Err(error) => return CallOutcome::Rejected(error),
-        };
-        let binding_id = match Self::local_binding(&grant.binding) {
-            Ok(binding_id) => binding_id,
-            Err(error) => return CallOutcome::Rejected(error),
-        };
-        let binding = match self.provider.bind(&self.authority, &binding_id) {
-            Ok(binding) => binding,
-            Err(error) if Self::provider_indeterminate(&error) => {
-                return CallOutcome::Indeterminate;
-            }
-            Err(error) => return CallOutcome::Rejected(Self::error(error)),
-        };
-        if binding.provider_generation() != grant.provider_generation
-            || binding.rights().bits() != grant.granted_rights.0
-            || binding.execution_epoch() != request.commit.execution_epoch
-            || binding.owner() != destination_owner
-        {
-            return CallOutcome::Rejected(Self::error(
-                "authority grant does not match the live provider binding",
-            ));
-        }
-        match ReferenceInstance::destination_unactivated(
-            &self.vertical.prepared,
-            self.provider.clone(),
-            binding,
-            &request.snapshot,
-            &request.commit,
-        ) {
-            Ok(instance) => CallOutcome::Applied(RestoredDestination { instance }),
-            Err(error) => CallOutcome::Rejected(Self::error(error)),
-        }
-    }
-
-    fn activate(
-        &mut self,
-        request: coordinator::ActivateRequest<Self::Restored>,
-    ) -> CallOutcome<ActivationReceipt, Self::ActivationRejection> {
-        let mut restored = request.restored.instance;
-        if request.commit.continuation != request.continuation
-            || request.commit.snapshot != request.snapshot
-            || request.commit.destination != request.destination
-        {
-            return CallOutcome::Rejected(Self::error("activation request does not match commit"));
-        }
-        if let Err(error) = restored.prepare_activation_core(&request.commit) {
-            return CallOutcome::Rejected(Self::error(error));
-        }
-        let admission = ActivationAdmissionRequest {
-            operation: request.operation,
-            continuation: request.continuation,
-            snapshot: request.snapshot,
-            destination: request.destination.clone(),
-            destination_binding_id: restored.binding().binding_id().to_owned(),
-            commit: request.commit.clone(),
-        };
-        if let Err(error) = self.authority.open_destination(&admission) {
-            return if Self::authority_indeterminate(&error) {
-                CallOutcome::Indeterminate
-            } else {
-                CallOutcome::Rejected(Self::error(error))
-            };
-        }
-        if let Err(error) = restored.enable_activation() {
-            return match self.authority.close_destination(&admission) {
-                Ok(()) => CallOutcome::Rejected(Self::error(error)),
-                Err(_) => CallOutcome::Indeterminate,
-            };
-        }
-        let receipt = ActivationReceipt {
-            operation: request.operation,
-            continuation: request.continuation,
-            snapshot: request.snapshot,
-            snapshot_digest: request.commit.snapshot_digest,
-            destination: request.destination,
-            authority_commit_digest: request.commit.receipt_digest,
-            execution_epoch: request.commit.execution_epoch,
+        self.ensure_restored(preparation, snapshot, destination, bindings)?;
+        let receipt = DestinationRestoreReceipt {
+            operation: action.operation,
+            continuation: *continuation,
+            snapshot: snapshot.body.snapshot,
+            snapshot_digest: snapshot.body_digest,
+            destination: destination.clone(),
+            preparation_receipt_digest: preparation.receipt_digest,
+            request_digest: action.request_digest,
             receipt_digest: Digest::ZERO,
         }
         .seal()
-        .expect("reference activation receipt is encodable");
-        self.destination = Some(restored);
-        self.activation = Some(receipt.clone());
-        match self.authority.confirm_destination_activation(&admission) {
-            Ok(()) => CallOutcome::Applied(receipt),
-            Err(_) => CallOutcome::Indeterminate,
-        }
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.persist_applied(action, RuntimeOperationKind::RestoreDestination, &receipt)?;
+        Ok(receipt)
     }
 
-    fn query_activation(
+    fn activate_action(
         &mut self,
-        request: coordinator::QueryActivationRequest,
-    ) -> QueryOutcome<ActivationReceipt, Self::ActivationRejection> {
-        let Some(binding) = request.binding.as_ref() else {
-            return QueryOutcome::Indeterminate;
+        action: &Action,
+    ) -> Result<RuntimeActivationReceipt, RuntimeError> {
+        require_kind(action, RuntimeOperationKind::Activate)?;
+        match self.operation(action, RuntimeOperationKind::Activate)? {
+            RuntimeOperationState::Applied(bytes) => {
+                let receipt = decode(&bytes)?;
+                self.materialize_activation_action(action)?;
+                return Ok(receipt);
+            }
+            RuntimeOperationState::Rejected(reason) => return Err(RuntimeError::Rejected(reason)),
+            RuntimeOperationState::Conflict(reason) => return Err(RuntimeError::Conflict(reason)),
+            RuntimeOperationState::Armed => {
+                return Err(RuntimeError::NativeStateIndeterminate);
+            }
+            RuntimeOperationState::Retired => {
+                return Err(RuntimeError::Corrupt(
+                    "activation operation is a capture tombstone".into(),
+                ));
+            }
+            RuntimeOperationState::Absent => self.arm(action, RuntimeOperationKind::Activate)?,
+        }
+        let ActionRequest::Activate { continuation, destination, snapshot, preparation, permit } =
+            &action.request
+        else {
+            return Err(RuntimeError::Rejected("not an activate action".into()));
         };
-        let binding_id = match Self::local_binding(binding) {
-            Ok(binding_id) => binding_id,
-            Err(error) => return QueryOutcome::Rejected(error),
-        };
-        let admission = ActivationAdmissionRequest {
-            operation: request.operation,
-            continuation: request.continuation,
-            snapshot: request.snapshot,
-            destination: request.destination.clone(),
-            destination_binding_id: binding_id,
-            commit: request.commit.clone(),
-        };
-        let receipt = ActivationReceipt {
-            operation: request.operation,
-            continuation: request.continuation,
-            snapshot: request.snapshot,
-            snapshot_digest: request.commit.snapshot_digest,
-            destination: request.destination,
-            authority_commit_digest: request.commit.receipt_digest,
-            execution_epoch: request.commit.execution_epoch,
+        validate_snapshot(snapshot, *continuation)?;
+        preparation.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        permit.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        if preparation.continuation != *continuation
+            || preparation.snapshot != snapshot.body.snapshot
+            || preparation.snapshot_digest != snapshot.body_digest
+            || preparation.destination != *destination
+            || permit.continuation != *continuation
+            || permit.snapshot != snapshot.body.snapshot
+            || permit.snapshot_digest != snapshot.body_digest
+            || permit.destination != *destination
+        {
+            return Err(RuntimeError::Rejected(
+                "activation material does not match snapshot".into(),
+            ));
+        }
+        let bindings = self.authority.preparation_by_digest(preparation.binding_receipt_digest)?;
+        self.ensure_activated(preparation, snapshot, destination, &bindings, permit)?;
+        let receipt = RuntimeActivationReceipt {
+            operation: action.operation,
+            continuation: *continuation,
+            snapshot: snapshot.body.snapshot,
+            snapshot_digest: snapshot.body_digest,
+            destination: destination.clone(),
+            activation_permit_digest: permit.receipt_digest,
+            request_digest: action.request_digest,
             receipt_digest: Digest::ZERO,
         }
         .seal()
-        .expect("reference activation receipt is encodable");
-        match self.authority.query_activation_admission(&admission) {
-            Ok(ActivationAdmissionState::Activated) => QueryOutcome::Applied(receipt),
-            Ok(ActivationAdmissionState::Admitted)
-                if self.activation.as_ref() == Some(&receipt) && self.destination.is_some() =>
-            {
-                match self.authority.confirm_destination_activation(&admission) {
-                    Ok(()) => QueryOutcome::Applied(receipt),
-                    Err(_) => QueryOutcome::Indeterminate,
-                }
-            }
-            Ok(ActivationAdmissionState::Admitted) => QueryOutcome::Indeterminate,
-            Ok(ActivationAdmissionState::Absent) => QueryOutcome::Absent,
-            Err(error) if Self::authority_indeterminate(&error) => QueryOutcome::Indeterminate,
-            Err(error) => QueryOutcome::Rejected(Self::error(error)),
-        }
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.persist_applied(action, RuntimeOperationKind::Activate, &receipt)?;
+        Ok(receipt)
     }
-}
 
-impl CoordinatorRuntimeAdapter {
-    fn remember_capture(&mut self, pending: PendingCapture) -> Result<(), CoordinatorRuntimeError> {
-        if let Some(existing) = self.pending_captures.iter().find(|existing| {
-            existing.captured.receipt.operation == pending.captured.receipt.operation
-        }) {
-            if existing.request_digest != pending.request_digest
-                || existing.captured != pending.captured
-            {
-                return Err(Self::error("capture operation request mismatch"));
+    fn retire_action(&mut self, action: &Action) -> Result<RetirementReceipt, RuntimeError> {
+        require_kind(action, RuntimeOperationKind::Retire)?;
+        match self.operation(action, RuntimeOperationKind::Retire)? {
+            RuntimeOperationState::Applied(bytes) => return decode(&bytes),
+            RuntimeOperationState::Rejected(reason) => return Err(RuntimeError::Rejected(reason)),
+            RuntimeOperationState::Conflict(reason) => return Err(RuntimeError::Conflict(reason)),
+            RuntimeOperationState::Armed => {
+                return Err(RuntimeError::Rejected("retirement cannot be armed".into()));
+            }
+            RuntimeOperationState::Retired => {
+                return Err(RuntimeError::Corrupt(
+                    "retirement operation is a capture tombstone".into(),
+                ));
+            }
+            RuntimeOperationState::Absent => {}
+        }
+        let ActionRequest::Retire {
+            continuation,
+            snapshot,
+            snapshot_digest,
+            source,
+            runtime_activation,
+        } = &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a retire action".into()));
+        };
+        runtime_activation.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        if runtime_activation.continuation != *continuation
+            || runtime_activation.snapshot != *snapshot
+            || runtime_activation.snapshot_digest != *snapshot_digest
+            || runtime_activation.destination.authority != REFERENCE_AUTHORITY_ID
+        {
+            return Err(RuntimeError::Rejected(
+                "retirement activation does not match request".into(),
+            ));
+        }
+        let receipt = RetirementReceipt {
+            operation: action.operation,
+            continuation: *continuation,
+            snapshot: *snapshot,
+            snapshot_digest: *snapshot_digest,
+            source: source.clone(),
+            runtime_activation_receipt_digest: runtime_activation.receipt_digest,
+            request_digest: action.request_digest,
+            receipt_digest: Digest::ZERO,
+        }
+        .seal()
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.persist_retirement(action, &receipt, *snapshot)?;
+        Ok(receipt)
+    }
+
+    fn materialize_preparation_action(&mut self, action: &Action) -> Result<(), RuntimeError> {
+        let ActionRequest::PrepareDestination { snapshot, destination, bindings, .. } =
+            &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a prepare-destination action".into()));
+        };
+        self.ensure_prepared(action.operation, snapshot, destination, bindings)
+    }
+
+    fn materialize_restoration_action(&mut self, action: &Action) -> Result<(), RuntimeError> {
+        let ActionRequest::RestoreDestination {
+            destination, snapshot, preparation, bindings, ..
+        } = &action.request
+        else {
+            return Err(RuntimeError::Rejected("not a restore-destination action".into()));
+        };
+        self.ensure_restored(preparation, snapshot, destination, bindings)
+    }
+
+    fn materialize_activation_action(&mut self, action: &Action) -> Result<(), RuntimeError> {
+        let ActionRequest::Activate { destination, snapshot, preparation, permit, .. } =
+            &action.request
+        else {
+            return Err(RuntimeError::Rejected("not an activate action".into()));
+        };
+        let bindings = self.authority.preparation_by_digest(preparation.binding_receipt_digest)?;
+        self.ensure_activated(preparation, snapshot, destination, &bindings, permit)
+    }
+
+    fn ensure_prepared(
+        &mut self,
+        operation: OperationId,
+        snapshot: &SnapshotEnvelope,
+        destination: &ExternalCoordinate,
+        bindings: &visa_core::BindingPreparationReceipt,
+    ) -> Result<(), RuntimeError> {
+        validate_snapshot(snapshot, bindings.continuation)?;
+        bindings.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        if bindings.snapshot != snapshot.body.snapshot
+            || bindings.snapshot_digest != snapshot.body_digest
+            || bindings.destination != *destination
+        {
+            return Err(RuntimeError::Rejected(
+                "binding preparation does not match destination recipe".into(),
+            ));
+        }
+        if let Some(prepared) = self.destinations.get(&operation) {
+            if prepared.snapshot != *snapshot || prepared.destination != *destination {
+                return Err(RuntimeError::Conflict(hex(&operation.0)));
             }
             return Ok(());
         }
-        self.pending_captures.push(pending);
+        let handle = self.provider.bind_destination(&self.authority, &bindings.operation.0)?;
+        let mut instance = self.prepared.instantiate(handle.execution_epoch(), handle)?;
+        instance.set_snapshot_context(snapshot_context(snapshot, destination.clone()))?;
+        self.destinations.insert(
+            operation,
+            PreparedDestination {
+                instance,
+                snapshot: snapshot.clone(),
+                destination: destination.clone(),
+                restored: false,
+                activated: false,
+            },
+        );
         Ok(())
     }
 
-    fn pending_capture(
-        &self,
-        operation: visa_core::OperationId,
-        request_digest: Digest,
-    ) -> Result<Option<PendingCapture>, CoordinatorRuntimeError> {
-        let Some(pending) = self
-            .pending_captures
-            .iter()
-            .find(|pending| pending.captured.receipt.operation == operation)
-        else {
-            return Ok(None);
-        };
-        if pending.request_digest != request_digest {
-            return Err(Self::error("capture operation request mismatch"));
-        }
-        Ok(Some(pending.clone()))
-    }
-
-    fn forget_capture(&mut self, operation: visa_core::OperationId) {
-        self.pending_captures.retain(|pending| pending.captured.receipt.operation != operation);
-    }
-
-    fn arm_durable_capture(
-        &self,
-        operation: visa_core::OperationId,
-        request_digest: Digest,
-    ) -> CaptureArming {
-        let database = self.provider.database();
-        let armed = database.lock().and_then(|connection| {
-            let transaction = connection.unchecked_transaction()?;
-            let inserted = transaction.execute(
-                "INSERT OR IGNORE INTO visa_runtime_captures
-                 (operation_id, request_digest, status)
-                 VALUES (?1, ?2, 'armed')",
-                params![operation.0.to_vec(), request_digest.0.to_vec()],
-            )?;
-            let row: (Vec<u8>, String) = transaction.query_row(
-                "SELECT request_digest, status FROM visa_runtime_captures
-                 WHERE operation_id = ?1",
-                params![operation.0.to_vec()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
-            transaction.commit()?;
-            Ok((inserted, row))
-        });
-        let (inserted, (stored_digest, status)) = match armed {
-            Ok(result) => result,
-            Err(_) => return CaptureArming::Indeterminate,
-        };
-        if stored_digest.as_slice() != request_digest.0 {
-            return CaptureArming::Rejected(Self::error("capture operation request mismatch"));
-        }
-        match status.as_str() {
-            "armed" if inserted == 1 => CaptureArming::Armed,
-            "armed" => CaptureArming::AlreadyArmed,
-            "captured" => CaptureArming::AlreadyCaptured,
-            _ => CaptureArming::Rejected(Self::error("durable capture has an unknown status")),
-        }
-    }
-
-    fn read_durable_capture(
-        &self,
-        request: &coordinator::QueryCaptureRequest,
-        request_digest: Digest,
-    ) -> Result<DurableCapture, CaptureReadError> {
-        type CaptureRow = (Vec<u8>, String, Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>);
-        let database = self.provider.database();
-        let row: Result<Option<CaptureRow>, _> = database.lock().and_then(|connection| {
-            connection
-                .query_row(
-                    "SELECT request_digest, status, snapshot, safe_point, receipt
-                     FROM visa_runtime_captures WHERE operation_id = ?1",
-                    params![request.operation.0.to_vec()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-                )
-                .optional()
-                .map_err(Into::into)
-        });
-        let Some((stored_digest, status, snapshot, safe_point, receipt)) =
-            row.map_err(|_| CaptureReadError::Indeterminate)?
-        else {
-            return Ok(DurableCapture::Absent);
-        };
-        if stored_digest.as_slice() != request_digest.0 {
-            return Err(CaptureReadError::Rejected(Self::error(
-                "capture operation request mismatch",
-            )));
-        }
-        if status == "armed" {
-            if snapshot.is_some() || safe_point.is_some() || receipt.is_some() {
-                return Err(CaptureReadError::Rejected(Self::error(
-                    "armed capture unexpectedly contains sealed facts",
-                )));
-            }
-            return Ok(DurableCapture::Armed);
-        }
-        if status != "captured" {
-            return Err(CaptureReadError::Rejected(Self::error(
-                "durable capture has an unknown status",
-            )));
-        }
-        let (Some(snapshot), Some(safe_point), Some(receipt)) = (snapshot, safe_point, receipt)
-        else {
-            return Err(CaptureReadError::Rejected(Self::error(
-                "captured durable capture is missing sealed facts",
-            )));
-        };
-        let snapshot = postcard::from_bytes::<SnapshotEnvelope>(&snapshot)
-            .map_err(|_| CaptureReadError::Rejected(Self::error("durable capture is corrupt")))?;
-        let safe_point = postcard::from_bytes::<SafePointReceipt>(&safe_point)
-            .map_err(|_| CaptureReadError::Rejected(Self::error("durable capture is corrupt")))?;
-        let receipt = postcard::from_bytes::<CaptureReceipt>(&receipt)
-            .map_err(|_| CaptureReadError::Rejected(Self::error("durable capture is corrupt")))?;
-        Self::validate_captured(request, &snapshot, &safe_point, &receipt)
-            .map_err(CaptureReadError::Rejected)?;
-        Ok(DurableCapture::Captured(Box::new(coordinator::CapturedSnapshot {
-            snapshot,
-            safe_point,
-            receipt,
-        })))
-    }
-
-    fn validate_captured(
-        request: &coordinator::QueryCaptureRequest,
+    fn ensure_restored(
+        &mut self,
+        preparation: &RuntimePreparationReceipt,
         snapshot: &SnapshotEnvelope,
-        safe_point: &SafePointReceipt,
-        receipt: &CaptureReceipt,
-    ) -> Result<(), CoordinatorRuntimeError> {
-        snapshot
-            .verify()
-            .map_err(|error| Self::error(format!("invalid durable snapshot: {error:?}")))?;
-        safe_point
-            .verify()
-            .map_err(|error| Self::error(format!("invalid durable safe point: {error:?}")))?;
-        receipt
-            .verify()
-            .map_err(|error| Self::error(format!("invalid durable capture receipt: {error:?}")))?;
-        if snapshot.body.continuation != request.continuation
-            || snapshot.body.scope != request.scope
-            || snapshot.body.profile != request.profile
-            || snapshot.body.lineage != request.lineage
-            || snapshot.body.source_cut.runtime != Self::reference_runtime_coordinate()
-            || receipt.operation != request.operation
-            || receipt.continuation != request.continuation
-            || receipt.scope != request.scope
-            || receipt.snapshot != snapshot.body.snapshot
-            || receipt.source != request.source
-            || receipt.profile != request.profile
-            || receipt.lineage != request.lineage
-            || receipt.state_digest != snapshot.body.state_digest
-            || receipt.snapshot_digest != snapshot.body_digest
-            || receipt.safe_point_digest != safe_point.receipt_digest
-            || safe_point.continuation != snapshot.body.continuation
-            || safe_point.scope != snapshot.body.scope
-            || safe_point.runtime != snapshot.body.source_cut.runtime
-            || safe_point.cut_sequence != snapshot.body.source_cut.cut_sequence
-            || safe_point.portable_state_digest != snapshot.body.state_digest
-            || safe_point.receipt_digest != snapshot.body.source_cut.receipt_digest
+        destination: &ExternalCoordinate,
+        bindings: &visa_core::BindingPreparationReceipt,
+    ) -> Result<(), RuntimeError> {
+        preparation.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        if preparation.snapshot != snapshot.body.snapshot
+            || preparation.snapshot_digest != snapshot.body_digest
+            || preparation.destination != *destination
+            || preparation.binding_receipt_digest != bindings.receipt_digest
         {
-            return Err(Self::error("durable capture does not match its request"));
-        }
-        Ok(())
-    }
-
-    fn persist_pending_capture(&mut self, pending: &PendingCapture) -> CapturePersistence {
-        if self.fail_capture_persistence_once {
-            self.fail_capture_persistence_once = false;
-            return CapturePersistence::Indeterminate;
-        }
-        let snapshot_bytes = match postcard::to_allocvec(&pending.captured.snapshot) {
-            Ok(bytes) => bytes,
-            Err(_) => return CapturePersistence::Indeterminate,
-        };
-        let safe_point_bytes = match postcard::to_allocvec(&pending.captured.safe_point) {
-            Ok(bytes) => bytes,
-            Err(_) => return CapturePersistence::Indeterminate,
-        };
-        let receipt_bytes = match postcard::to_allocvec(&pending.captured.receipt) {
-            Ok(bytes) => bytes,
-            Err(_) => return CapturePersistence::Indeterminate,
-        };
-        if snapshot_bytes.len() > MAX_CAPTURE_FACT_BYTES
-            || safe_point_bytes.len() > MAX_CAPTURE_FACT_BYTES
-            || receipt_bytes.len() > MAX_CAPTURE_FACT_BYTES
-        {
-            return CapturePersistence::Rejected(Self::error(
-                "durable capture fact exceeds the storage limit",
+            return Err(RuntimeError::Rejected(
+                "runtime preparation does not match restore recipe".into(),
             ));
         }
-        let database = self.provider.database();
-        let persisted = database.lock().and_then(|connection| {
-            let transaction = connection.unchecked_transaction()?;
-            transaction.execute(
-                "UPDATE visa_runtime_captures
-                 SET status = 'captured', snapshot = ?3, safe_point = ?4, receipt = ?5
-                 WHERE operation_id = ?1 AND request_digest = ?2 AND status = 'armed'",
-                params![
-                    pending.captured.receipt.operation.0.to_vec(),
-                    pending.request_digest.0.to_vec(),
-                    snapshot_bytes,
-                    safe_point_bytes,
-                    receipt_bytes,
-                ],
-            )?;
-            transaction.commit()?;
-            Ok(())
-        });
-        if persisted.is_err() {
-            return CapturePersistence::Indeterminate;
+        self.ensure_prepared(preparation.operation, snapshot, destination, bindings)?;
+        validate_resource_bindings(snapshot, bindings)?;
+        let prepared = self
+            .destinations
+            .get_mut(&preparation.operation)
+            .ok_or(RuntimeError::MissingPreparedInstance)?;
+        if !prepared.restored {
+            prepared.instance.restore(snapshot)?;
+            prepared.restored = true;
         }
-        let receipt = &pending.captured.receipt;
-        let request = coordinator::QueryCaptureRequest {
-            operation: receipt.operation,
-            continuation: receipt.continuation,
-            scope: receipt.scope,
-            source: receipt.source.clone(),
-            profile: receipt.profile.clone(),
-            lineage: receipt.lineage.clone(),
-        };
-        match self.read_durable_capture(&request, pending.request_digest) {
-            Ok(DurableCapture::Captured(captured)) if *captured == pending.captured => {
-                CapturePersistence::Persisted(captured)
+        Ok(())
+    }
+
+    fn ensure_activated(
+        &mut self,
+        preparation: &RuntimePreparationReceipt,
+        snapshot: &SnapshotEnvelope,
+        destination: &ExternalCoordinate,
+        bindings: &visa_core::BindingPreparationReceipt,
+        permit: &visa_core::ActivationPermitReceipt,
+    ) -> Result<(), RuntimeError> {
+        permit.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.ensure_restored(preparation, snapshot, destination, bindings)?;
+        let prepared = self
+            .destinations
+            .get_mut(&preparation.operation)
+            .ok_or(RuntimeError::MissingPreparedInstance)?;
+        if prepared.instance.binding().execution_epoch() != permit.execution_epoch
+            || permit.continuation != preparation.continuation
+            || permit.snapshot != snapshot.body.snapshot
+            || permit.snapshot_digest != snapshot.body_digest
+            || permit.destination != *destination
+        {
+            return Err(RuntimeError::Rejected(
+                "activation permit does not match restored destination".into(),
+            ));
+        }
+        if !prepared.activated {
+            self.provider.ensure_live(prepared.instance.binding())?;
+            prepared.instance.activate(&ActivationGate::from_activation_permit(permit))?;
+            prepared.activated = true;
+        }
+        Ok(())
+    }
+
+    fn operation(
+        &self,
+        action: &Action,
+        kind: RuntimeOperationKind,
+    ) -> Result<RuntimeOperationState, RuntimeError> {
+        verify_action(action)?;
+        let connection = self.database.lock()?;
+        let row = connection.query_row(
+            "SELECT kind, request_digest, outcome, receipt, rejection FROM visa_runtime_operations WHERE operation_id = ?1",
+            params![action.operation.0.to_vec()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<Vec<u8>>>(3)?, row.get::<_, Option<String>>(4)?)),
+        ).optional()?;
+        match row {
+            None => Ok(RuntimeOperationState::Absent),
+            Some((stored_kind, digest, _, _, _))
+                if stored_kind != kind.as_str() || digest != action.request_digest.0 =>
+            {
+                Ok(RuntimeOperationState::Conflict(hex(&action.operation.0)))
             }
-            Ok(DurableCapture::Captured(_)) => CapturePersistence::Rejected(Self::error(
-                "durable capture differs from sealed process-local capture",
-            )),
-            Ok(DurableCapture::Absent | DurableCapture::Armed) => CapturePersistence::Indeterminate,
-            Err(CaptureReadError::Indeterminate) => CapturePersistence::Indeterminate,
-            Err(CaptureReadError::Rejected(error)) => CapturePersistence::Rejected(error),
+            Some((_, _, outcome, receipt, _)) if outcome == "applied" => {
+                receipt.map(RuntimeOperationState::Applied).ok_or_else(|| {
+                    RuntimeError::Rejected("applied runtime operation lacks receipt".into())
+                })
+            }
+            Some((_, _, outcome, _, rejection)) if outcome == "rejected" => {
+                Ok(RuntimeOperationState::Rejected(
+                    rejection.unwrap_or_else(|| "runtime rejected request".into()),
+                ))
+            }
+            Some((_, _, outcome, _, _)) if outcome == "armed" => Ok(RuntimeOperationState::Armed),
+            Some((_, _, outcome, _, _)) if outcome == "retired" => {
+                Ok(RuntimeOperationState::Retired)
+            }
+            Some(_) => {
+                Err(RuntimeError::Corrupt("unknown durable runtime operation outcome".into()))
+            }
         }
     }
+    fn arm(&self, action: &Action, kind: RuntimeOperationKind) -> Result<(), RuntimeError> {
+        verify_action(action)?;
+        let connection = self.database.lock()?;
+        connection.execute("INSERT INTO visa_runtime_operations (operation_id, kind, request_digest, outcome) VALUES (?1, ?2, ?3, 'armed')", params![action.operation.0.to_vec(), kind.as_str(), action.request_digest.0.to_vec()])?;
+        Ok(())
+    }
+    fn persist_applied<T: Serialize>(
+        &self,
+        action: &Action,
+        kind: RuntimeOperationKind,
+        receipt: &T,
+    ) -> Result<(), RuntimeError> {
+        let bytes = postcard::to_allocvec(receipt)
+            .map_err(|_| RuntimeError::Rejected("runtime receipt encoding failed".into()))?;
+        self.persist(action, kind, "applied", Some(&bytes), None)
+    }
+    fn persist_rejected(
+        &self,
+        action: &Action,
+        kind: RuntimeOperationKind,
+        reason: &str,
+    ) -> Result<(), RuntimeError> {
+        self.persist(action, kind, "rejected", None, Some(reason))
+    }
+    fn persist(
+        &self,
+        action: &Action,
+        kind: RuntimeOperationKind,
+        outcome: &str,
+        receipt: Option<&[u8]>,
+        rejection: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        verify_action(action)?;
+        let connection = self.database.lock()?;
+        let transaction = connection.unchecked_transaction()?;
+        persist_runtime_operation_in(&transaction, action, kind, outcome, receipt, rejection)?;
+        transaction.commit()?;
+        Ok(())
+    }
 
-    fn capture_request_digest(
-        operation: visa_core::OperationId,
-        continuation: visa_core::ContinuationId,
-        scope: visa_core::ScopeId,
-        source: &ExternalCoordinate,
-        profile: &visa_core::ProfileRef,
-        lineage: &visa_core::LineageAdvance,
-    ) -> Result<Digest, CoordinatorRuntimeError> {
-        canonical_digest(&(operation, continuation, scope, source, profile, lineage))
-            .map_err(Self::error)
+    fn persist_retirement(
+        &self,
+        action: &Action,
+        receipt: &RetirementReceipt,
+        snapshot: visa_core::SnapshotId,
+    ) -> Result<(), RuntimeError> {
+        verify_action(action)?;
+        let bytes = postcard::to_allocvec(receipt)
+            .map_err(|_| RuntimeError::Rejected("runtime receipt encoding failed".into()))?;
+        let connection = self.database.lock()?;
+        let transaction = connection.unchecked_transaction()?;
+        persist_runtime_operation_in(
+            &transaction,
+            action,
+            RuntimeOperationKind::Retire,
+            "applied",
+            Some(&bytes),
+            None,
+        )?;
+        let retired = transaction.execute(
+            "UPDATE visa_runtime_operations
+             SET outcome = 'retired', receipt = NULL, rejection = NULL
+             WHERE operation_id = ?1 AND kind = 'capture' AND outcome = 'applied'",
+            params![snapshot.0.to_vec()],
+        )?;
+        if retired != 1 {
+            return Err(RuntimeError::Conflict(hex(&snapshot.0)));
+        }
+        transaction.commit()?;
+        Ok(())
     }
 }
 
-impl WasmtimeVertical {
-    pub fn new() -> Result<Self, RuntimeError> {
-        let bytes = visa_wasi::counter_component_bytes()?;
-        Ok(Self { prepared: visa_wasi::WasiFrontend::new(DurableKvProfile).preflight(&bytes)? })
+fn persist_runtime_operation_in(
+    transaction: &rusqlite::Transaction<'_>,
+    action: &Action,
+    kind: RuntimeOperationKind,
+    outcome: &str,
+    receipt: Option<&[u8]>,
+    rejection: Option<&str>,
+) -> Result<(), RuntimeError> {
+    let state = transaction.query_row("SELECT kind, request_digest, outcome, receipt, rejection FROM visa_runtime_operations WHERE operation_id = ?1", params![action.operation.0.to_vec()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<Vec<u8>>>(3)?, row.get::<_, Option<String>>(4)?))).optional()?;
+    match state {
+        None => {
+            transaction.execute("INSERT INTO visa_runtime_operations (operation_id, kind, request_digest, outcome, receipt, rejection) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![action.operation.0.to_vec(), kind.as_str(), action.request_digest.0.to_vec(), outcome, receipt, rejection])?;
+        }
+        Some((stored_kind, digest, stored_outcome, _, _))
+            if stored_kind == kind.as_str()
+                && digest == action.request_digest.0
+                && stored_outcome == "armed" =>
+        {
+            transaction.execute("UPDATE visa_runtime_operations SET outcome = ?2, receipt = ?3, rejection = ?4 WHERE operation_id = ?1 AND outcome = 'armed'", params![action.operation.0.to_vec(), outcome, receipt, rejection])?;
+        }
+        Some((stored_kind, digest, stored_outcome, stored_receipt, stored_rejection))
+            if stored_kind == kind.as_str()
+                && digest == action.request_digest.0
+                && stored_outcome == outcome
+                && stored_receipt.as_deref() == receipt
+                && stored_rejection.as_deref() == rejection => {}
+        _ => return Err(RuntimeError::Conflict(hex(&action.operation.0))),
+    }
+    Ok(())
+}
+
+impl RuntimePort for ReferenceRuntime {
+    type Error = RuntimeError;
+    fn capture(&mut self, action: &Action) -> Observation<CapturedSnapshot, Self::Error> {
+        match self.operation(action, RuntimeOperationKind::Capture) {
+            Ok(RuntimeOperationState::Applied(bytes)) => {
+                decode_capture(&bytes).map_or_else(Observation::Rejected, Observation::Applied)
+            }
+            Ok(RuntimeOperationState::Rejected(reason)) => {
+                Observation::Rejected(RuntimeError::Rejected(reason))
+            }
+            Ok(RuntimeOperationState::Conflict(reason)) => {
+                Observation::Unverifiable(RuntimeError::Conflict(reason))
+            }
+            Ok(RuntimeOperationState::Retired) => {
+                Observation::Unverifiable(RuntimeError::RetiredCapture)
+            }
+            Ok(RuntimeOperationState::Armed) | Err(RuntimeError::Database(_)) => {
+                Observation::Indeterminate
+            }
+            Ok(RuntimeOperationState::Absent) => {
+                let result = self.capture_action(action);
+                invoke(self, action, RuntimeOperationKind::Capture, result)
+            }
+            Err(RuntimeError::Corrupt(reason)) => {
+                Observation::Unverifiable(RuntimeError::Corrupt(reason))
+            }
+            Err(error) => Observation::Rejected(error),
+        }
+    }
+    fn query_capture(&mut self, action: &Action) -> Observation<CapturedSnapshot, Self::Error> {
+        query_capture(self.operation(action, RuntimeOperationKind::Capture))
+    }
+    fn prepare_destination(
+        &mut self,
+        action: &Action,
+    ) -> Observation<RuntimePreparationReceipt, Self::Error> {
+        let result = self.prepare_destination_action(action);
+        invoke(self, action, RuntimeOperationKind::PrepareDestination, result)
+    }
+    fn query_prepare_destination(
+        &mut self,
+        action: &Action,
+    ) -> Observation<RuntimePreparationReceipt, Self::Error> {
+        match self.operation(action, RuntimeOperationKind::PrepareDestination) {
+            Ok(RuntimeOperationState::Applied(_)) => {
+                query_materialized(self.prepare_destination_action(action))
+            }
+            other => query(other),
+        }
+    }
+    fn restore_source(
+        &mut self,
+        action: &Action,
+    ) -> Observation<SourceRestorationReceipt, Self::Error> {
+        match self.operation(action, RuntimeOperationKind::RestoreSource) {
+            Ok(RuntimeOperationState::Applied(bytes)) => {
+                decode(&bytes).map_or_else(Observation::Rejected, Observation::Applied)
+            }
+            Ok(RuntimeOperationState::Rejected(reason)) => {
+                Observation::Rejected(RuntimeError::Rejected(reason))
+            }
+            Ok(RuntimeOperationState::Conflict(reason)) => {
+                Observation::Unverifiable(RuntimeError::Conflict(reason))
+            }
+            Ok(RuntimeOperationState::Retired) => Observation::Unverifiable(RuntimeError::Corrupt(
+                "source restore operation is a capture tombstone".into(),
+            )),
+            Ok(RuntimeOperationState::Armed) | Err(RuntimeError::Database(_)) => {
+                Observation::Indeterminate
+            }
+            Ok(RuntimeOperationState::Absent) => match self.restore_source_action(action) {
+                Ok(receipt) => Observation::Applied(receipt),
+                Err(_) => Observation::Indeterminate,
+            },
+            Err(RuntimeError::Corrupt(reason)) => {
+                Observation::Unverifiable(RuntimeError::Corrupt(reason))
+            }
+            Err(error) => Observation::Rejected(error),
+        }
+    }
+    fn query_restore_source(
+        &mut self,
+        action: &Action,
+    ) -> Observation<SourceRestorationReceipt, Self::Error> {
+        query(self.operation(action, RuntimeOperationKind::RestoreSource))
+    }
+    fn restore_destination(
+        &mut self,
+        action: &Action,
+    ) -> Observation<DestinationRestoreReceipt, Self::Error> {
+        let result = self.restore_destination_action(action);
+        invoke(self, action, RuntimeOperationKind::RestoreDestination, result)
+    }
+    fn query_restore_destination(
+        &mut self,
+        action: &Action,
+    ) -> Observation<DestinationRestoreReceipt, Self::Error> {
+        match self.operation(action, RuntimeOperationKind::RestoreDestination) {
+            Ok(RuntimeOperationState::Applied(_)) => {
+                query_materialized(self.restore_destination_action(action))
+            }
+            other => query(other),
+        }
+    }
+    fn activate(&mut self, action: &Action) -> Observation<RuntimeActivationReceipt, Self::Error> {
+        let result = self.activate_action(action);
+        invoke(self, action, RuntimeOperationKind::Activate, result)
+    }
+    fn query_activate(
+        &mut self,
+        action: &Action,
+    ) -> Observation<RuntimeActivationReceipt, Self::Error> {
+        match self.operation(action, RuntimeOperationKind::Activate) {
+            Ok(RuntimeOperationState::Applied(_)) => {
+                query_materialized(self.activate_action(action))
+            }
+            other => query(other),
+        }
+    }
+    fn retire(&mut self, action: &Action) -> Observation<RetirementReceipt, Self::Error> {
+        let result = self.retire_action(action);
+        invoke(self, action, RuntimeOperationKind::Retire, result)
+    }
+    fn query_retire(&mut self, action: &Action) -> Observation<RetirementReceipt, Self::Error> {
+        query(self.operation(action, RuntimeOperationKind::Retire))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use visa_coordinator::{FreezeSourceRequest, RestoreSourceRequest, RuntimePort};
-    use visa_core::{ContinuationId, LineageAdvance, LineageId, LineagePoint, ScopeId};
-
-    #[test]
-    fn in_process_abort_rebuilds_the_frozen_source_before_restore() {
-        let database = crate::db::ReferenceDatabase::in_memory().unwrap();
-        let authority = Authority::new(database.clone()).unwrap();
-        let source = authority
-            .bootstrap(
-                "runtime-restore",
-                0,
-                crate::authority::Rights::READ | crate::authority::Rights::WRITE,
-            )
-            .unwrap();
-        let provider = DurableKvProvider::new(database);
-        let binding = provider.bind_bootstrap_source(&authority, &source.binding_id).unwrap();
-        let vertical = WasmtimeVertical::new().unwrap();
-        let continuation = ContinuationId::from_u128(1);
-        let scope = ScopeId::from_u128(2);
-        let lineage = LineageAdvance {
-            parent: LineagePoint {
-                lineage: LineageId::from_u128(3),
+fn initialize_runtime_tables(database: &ReferenceDatabase) -> Result<(), RuntimeError> {
+    database.lock()?.execute_batch(
+        "CREATE TABLE IF NOT EXISTS visa_runtime_operations (
+             operation_id BLOB PRIMARY KEY NOT NULL,
+             kind TEXT NOT NULL CHECK(kind IN ('capture', 'prepare_destination', 'restore_source', 'restore_destination', 'activate', 'retire')),
+             request_digest BLOB NOT NULL,
+             outcome TEXT NOT NULL CHECK(outcome IN ('armed', 'applied', 'rejected', 'retired')),
+             receipt BLOB, rejection TEXT
+         );",
+    )?;
+    Ok(())
+}
+fn verify_action(action: &Action) -> Result<(), RuntimeError> {
+    let digest = canonical_digest(&(action.operation, &action.request))
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+    if digest == action.request_digest {
+        Ok(())
+    } else {
+        Err(RuntimeError::Conflict(hex(&action.operation.0)))
+    }
+}
+fn require_kind(action: &Action, kind: RuntimeOperationKind) -> Result<(), RuntimeError> {
+    verify_action(action)?;
+    let actual = match action.request.kind() {
+        visa_coordinator::ActionKind::Capture => RuntimeOperationKind::Capture,
+        visa_coordinator::ActionKind::PrepareDestination => {
+            RuntimeOperationKind::PrepareDestination
+        }
+        visa_coordinator::ActionKind::RestoreSource => RuntimeOperationKind::RestoreSource,
+        visa_coordinator::ActionKind::RestoreDestination => {
+            RuntimeOperationKind::RestoreDestination
+        }
+        visa_coordinator::ActionKind::Activate => RuntimeOperationKind::Activate,
+        visa_coordinator::ActionKind::Retire => RuntimeOperationKind::Retire,
+        _ => return Err(RuntimeError::Rejected("runtime received authority action".into())),
+    };
+    if actual == kind {
+        Ok(())
+    } else {
+        Err(RuntimeError::Rejected("runtime action kind mismatch".into()))
+    }
+}
+fn query<T: serde::de::DeserializeOwned>(
+    state: Result<RuntimeOperationState, RuntimeError>,
+) -> Observation<T, RuntimeError> {
+    match state {
+        Ok(RuntimeOperationState::Applied(bytes)) => {
+            decode(&bytes).map_or_else(Observation::Unverifiable, Observation::Applied)
+        }
+        Ok(RuntimeOperationState::Rejected(reason)) => {
+            Observation::Rejected(RuntimeError::Rejected(reason))
+        }
+        Ok(RuntimeOperationState::Conflict(reason)) => {
+            Observation::Unverifiable(RuntimeError::Conflict(reason))
+        }
+        Ok(RuntimeOperationState::Armed) => Observation::Indeterminate,
+        Ok(RuntimeOperationState::Retired) => {
+            Observation::Unverifiable(RuntimeError::RetiredCapture)
+        }
+        Ok(RuntimeOperationState::Absent) => Observation::Absent,
+        Err(RuntimeError::Database(_)) => Observation::Indeterminate,
+        Err(
+            error @ (RuntimeError::Conflict(_)
+            | RuntimeError::Corrupt(_)
+            | RuntimeError::RetiredCapture),
+        ) => Observation::Unverifiable(error),
+        Err(error) => Observation::Rejected(error),
+    }
+}
+fn query_materialized<T>(result: Result<T, RuntimeError>) -> Observation<T, RuntimeError> {
+    match result {
+        Ok(value) => Observation::Applied(value),
+        Err(
+            RuntimeError::Database(_)
+            | RuntimeError::Authority(AuthorityError::Database(_))
+            | RuntimeError::NativeStateIndeterminate,
+        ) => Observation::Indeterminate,
+        Err(error) => Observation::Unverifiable(error),
+    }
+}
+fn invoke<T>(
+    runtime: &ReferenceRuntime,
+    action: &Action,
+    kind: RuntimeOperationKind,
+    result: Result<T, RuntimeError>,
+) -> Observation<T, RuntimeError> {
+    match result {
+        Ok(value) => Observation::Applied(value),
+        Err(
+            RuntimeError::Database(_)
+            | RuntimeError::Authority(AuthorityError::Database(_))
+            | RuntimeError::NativeStateIndeterminate,
+        ) => Observation::Indeterminate,
+        Err(
+            error @ (RuntimeError::Conflict(_)
+            | RuntimeError::Corrupt(_)
+            | RuntimeError::RetiredCapture),
+        ) => Observation::Unverifiable(error),
+        Err(error) => {
+            let reason = error.to_string();
+            match runtime.persist_rejected(action, kind, &reason) {
+                Ok(()) => Observation::Rejected(error),
+                Err(RuntimeError::Database(_)) => Observation::Indeterminate,
+                Err(_) => Observation::Unverifiable(error),
+            }
+        }
+    }
+}
+fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, RuntimeError> {
+    postcard::from_bytes(bytes)
+        .map_err(|_| RuntimeError::Corrupt("durable runtime receipt cannot be decoded".into()))
+}
+fn decode_capture(bytes: &[u8]) -> Result<CapturedSnapshot, RuntimeError> {
+    let durable: DurableCapture = decode(bytes)?;
+    Ok(CapturedSnapshot { snapshot: durable.snapshot, receipt: durable.receipt })
+}
+fn query_capture(
+    state: Result<RuntimeOperationState, RuntimeError>,
+) -> Observation<CapturedSnapshot, RuntimeError> {
+    match state {
+        Ok(RuntimeOperationState::Applied(bytes)) => {
+            decode_capture(&bytes).map_or_else(Observation::Unverifiable, Observation::Applied)
+        }
+        Ok(RuntimeOperationState::Rejected(reason)) => {
+            Observation::Rejected(RuntimeError::Rejected(reason))
+        }
+        Ok(RuntimeOperationState::Conflict(reason)) => {
+            Observation::Unverifiable(RuntimeError::Conflict(reason))
+        }
+        Ok(RuntimeOperationState::Armed) => Observation::Indeterminate,
+        Ok(RuntimeOperationState::Retired) => {
+            Observation::Unverifiable(RuntimeError::RetiredCapture)
+        }
+        Ok(RuntimeOperationState::Absent) => Observation::Absent,
+        Err(RuntimeError::Database(_)) => Observation::Indeterminate,
+        Err(error) => Observation::Unverifiable(error),
+    }
+}
+fn binding_coordinate(binding_id: &str) -> ExternalCoordinate {
+    ExternalCoordinate {
+        authority: REFERENCE_AUTHORITY_ID,
+        value: OpaqueBytes(binding_id.as_bytes().to_vec()),
+    }
+}
+fn bootstrap_context(runtime: ExternalCoordinate) -> SnapshotContext {
+    SnapshotContext {
+        snapshot: visa_core::SnapshotId::default(),
+        continuation: visa_core::ContinuationId::default(),
+        scope: visa_core::ScopeId::default(),
+        lineage: visa_core::LineageAdvance {
+            parent: visa_core::LineagePoint {
+                semantic_domain: ReferenceRuntime::semantic_domain_ref()
+                    .expect("embedded reference component has a semantic domain"),
+                lineage: visa_core::LineageId::default(),
                 generation: 0,
                 state_digest: Digest::ZERO,
             },
             successor_generation: 1,
-        };
-        let source_coordinate = ExternalCoordinate {
-            authority: visa_core::AuthorityId::from_u128(1),
-            value: source.binding_id.as_bytes().to_vec(),
-        };
-        let instance = ReferenceInstance::source_with_context(
-            &vertical.prepared,
-            provider.clone(),
-            binding,
-            SnapshotContext {
-                snapshot: SnapshotId::from_u128(4),
-                continuation,
-                scope,
-                lineage: lineage.clone(),
-                runtime: CoordinatorRuntimeAdapter::reference_runtime_coordinate(),
-                cut_sequence: 0,
-                receipt_digest: Digest::ZERO,
-            },
-        )
-        .unwrap();
-        let mut runtime = CoordinatorRuntimeAdapter::new(authority, provider, vertical);
-        runtime.install_source(instance);
-        let frozen = match runtime.freeze_source(FreezeSourceRequest {
-            operation: visa_core::OperationId::from_u128(5),
-            continuation,
-            scope,
-            source: source_coordinate.clone(),
-            profile: DurableKvProfile.profile_ref(),
-            lineage,
-        }) {
-            CallOutcome::Applied(frozen) => frozen,
-            _ => panic!("source freeze failed"),
-        };
-        let restored = runtime.restore_source(RestoreSourceRequest {
-            continuation,
-            snapshot: frozen.snapshot,
-            source: source_coordinate,
-        });
-        assert!(matches!(restored, CallOutcome::Applied(_)));
-        assert_eq!(runtime.source_mut().unwrap().increment().unwrap(), 1);
+            successor_digest: Digest::ZERO,
+        },
+        runtime,
+        cut_sequence: 0,
+        receipt_digest: Digest::ZERO,
     }
+}
+fn snapshot_context(snapshot: &SnapshotEnvelope, runtime: ExternalCoordinate) -> SnapshotContext {
+    SnapshotContext {
+        snapshot: snapshot.body.snapshot,
+        continuation: snapshot.body.continuation,
+        scope: snapshot.body.scope,
+        lineage: snapshot.body.lineage.clone(),
+        runtime,
+        cut_sequence: snapshot.body.lineage.successor_generation,
+        receipt_digest: snapshot.body_digest,
+    }
+}
+fn snapshot_id(operation: OperationId) -> visa_core::SnapshotId {
+    visa_core::SnapshotId(operation.0)
+}
+fn validate_snapshot(
+    snapshot: &SnapshotEnvelope,
+    continuation: visa_core::ContinuationId,
+) -> Result<(), RuntimeError> {
+    snapshot.verify().map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+    if snapshot.body.continuation == continuation {
+        Ok(())
+    } else {
+        Err(RuntimeError::Rejected("snapshot continuation mismatch".into()))
+    }
+}
+fn validate_resource_bindings(
+    snapshot: &SnapshotEnvelope,
+    bindings: &visa_core::BindingPreparationReceipt,
+) -> Result<(), RuntimeError> {
+    let state = DurableKvProfile
+        .decode_state(&snapshot.body.state.0)
+        .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+    for requirement in &snapshot.body.resources {
+        let grant =
+            bindings.grants.iter().find(|grant| grant.requirement == requirement.id).ok_or_else(
+                || RuntimeError::Rejected("missing destination binding grant".into()),
+            )?;
+        DurableKvProfile
+            .validate_binding(&state, requirement, grant)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+    }
+    Ok(())
+}
+/// Only reverses the runtime's own pre-commit close. A fenced source cannot reopen.
+fn reopen_source_dispatch(
+    database: &ReferenceDatabase,
+    handle: &BindingHandle,
+) -> Result<(), RuntimeError> {
+    let changed = database.lock()?.execute(
+        "UPDATE visa_authority_bindings SET dispatch_open = 1 WHERE binding_id = ?1 AND generation = ?2 AND epoch = ?3 AND role = 'source' AND active = 1 AND fenced = 0 AND dispatch_open = 0",
+        params![handle.binding_id(), u64_to_sqlite(handle.generation(), "binding generation")?, u64_to_sqlite(handle.execution_epoch(), "execution epoch")?],
+    )?;
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(RuntimeError::Rejected(
+            "source dispatch cannot reopen after its authority fence".into(),
+        ))
+    }
+}
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

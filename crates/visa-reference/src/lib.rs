@@ -8,21 +8,18 @@
 
 #![deny(unsafe_code)]
 
+mod component;
 mod db;
+mod profile;
 
-pub mod adapters;
 pub mod authority;
-pub mod measurement;
+#[allow(dead_code)] // BindingHandle intentionally keeps the grant snapshot opaque.
 pub mod provider;
 pub mod runtime;
 pub mod store;
 
 pub use authority::{
-    Authority, AuthorityError, BindingId, BindingRole, BindingView, CommitRequest, OperationQuery,
-    PrepareRequest, SourceBinding,
+    Authority, AuthorityError, BindingId, BindingRole, BindingView, SourceBinding,
 };
 pub use db::{ReferenceDatabase, ReferenceDatabaseError};
-// Canonical portable/coordinator vocabulary is always sourced from core.  The
-// authority module's string row keys remain implementation details of the
-// SQLite adapter and are intentionally not re-exported as contract types.
-pub use visa_core::{AuthorityCommitReceipt, BindingPreparationReceipt, OperationId, Rights};
+pub use runtime::{ReferenceRuntime, RuntimeError};

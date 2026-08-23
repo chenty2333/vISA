@@ -3,16 +3,16 @@ name = "visa-reference"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
+publish = false
 
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
 postcard = { version = "1.1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
+wasmtime = { version = "=43.0.2", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wat = "1"
 visa-core = { path = "../visa-core" }
 visa-coordinator = { path = "../visa-coordinator" }
-visa-profile = { path = "../visa-profile" }
-visa-wasi = { path = "../visa-wasi" }
 
 [dev-dependencies]
 tempfile = "3"
