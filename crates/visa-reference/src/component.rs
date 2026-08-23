@@ -343,7 +343,7 @@ impl WasiInstance {
             snapshot: context.snapshot,
             continuation: context.continuation,
             scope: context.scope,
-            semantic_domain: context.lineage.parent.semantic_domain.clone(),
+            semantic_domain: context.lineage.parent.semantic_domain,
             lineage: context.lineage,
             profile: DurableKvProfile.profile_ref(),
             source: context.runtime,

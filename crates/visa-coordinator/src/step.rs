@@ -1573,7 +1573,7 @@ mod tests {
             snapshot: SnapshotId::from_u128(11),
             continuation: *continuation,
             scope: *scope,
-            semantic_domain: lineage_parent.semantic_domain.clone(),
+            semantic_domain: lineage_parent.semantic_domain,
             lineage: visa_core::LineageAdvance {
                 parent: lineage_parent.clone(),
                 successor_generation: 1,

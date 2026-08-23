@@ -167,6 +167,11 @@ mod tests {
             id: ContinuationId::from_u128(1),
             scope: ScopeId::from_u128(2),
             lineage_parent: LineagePoint {
+                semantic_domain: SemanticDomainRef {
+                    id: SemanticDomainId::from_u128(4),
+                    contract_digest: Digest::of_bytes(b"counter contract"),
+                    artifact_digest: Digest::of_bytes(b"counter artifact"),
+                },
                 lineage: LineageId::from_u128(3),
                 generation: 4,
                 state_digest: Digest::ZERO,
@@ -194,9 +199,11 @@ mod tests {
             snapshot: SnapshotId::from_u128(8),
             continuation: intent.id,
             scope: intent.scope,
+            semantic_domain: intent.lineage_parent.semantic_domain,
             lineage: LineageAdvance {
                 parent: intent.lineage_parent.clone(),
                 successor_generation: 5,
+                successor_digest: Digest::ZERO,
             },
             profile: intent.profile.clone(),
             source: source.clone(),
@@ -204,6 +211,7 @@ mod tests {
             state: OpaqueBytes(vec![1, 2, 3]),
             state_digest: Digest::ZERO,
             resources: vec![],
+            effect_closure: EffectClosure::Empty,
         })
         .unwrap();
         let receipt = SnapshotReceipt {
@@ -233,11 +241,18 @@ mod tests {
     }
 
     #[test]
-    fn lineage_successor_uses_the_portable_state_digest() {
+    fn lineage_successor_commits_to_the_canonical_snapshot_contract() {
         let intent = intent();
         let (snapshot, _) = captured(&intent);
         let successor = snapshot.successor_point().unwrap();
-        assert_eq!(successor.state_digest, snapshot.body.state_digest);
+        assert_eq!(successor.state_digest, snapshot.body.lineage.successor_digest);
+        assert_ne!(successor.state_digest, snapshot.body.state_digest);
+
+        let mut changed_body = snapshot.body.clone();
+        changed_body.semantic_cut.sequence += 1;
+        let changed = SnapshotEnvelope::seal(changed_body).unwrap();
+        assert_eq!(changed.body.state_digest, snapshot.body.state_digest);
+        assert_ne!(changed.body.lineage.successor_digest, successor.state_digest);
     }
 
     #[test]
@@ -280,6 +295,7 @@ mod tests {
             schema: SchemaRef { id: SchemaId::from_u128(11), version: 1 },
             logical_name: OpaqueBytes(vec![1]),
             required_rights: Rights(1),
+            disposition: RebindDisposition::Recreate,
             profile_data: OpaqueBytes(vec![]),
         };
         let mut body = snapshot.body.clone();
@@ -292,6 +308,7 @@ mod tests {
             schema: SchemaRef { id: SchemaId::from_u128(13), version: 1 },
             logical_name: OpaqueBytes(vec![2]),
             required_rights: Rights(1),
+            disposition: RebindDisposition::Recreate,
             profile_data: OpaqueBytes(vec![]),
         };
         malformed.body.resources = vec![requirement.clone(), requirement];
@@ -341,6 +358,7 @@ mod tests {
             schema: SchemaRef { id: SchemaId::from_u128(21), version: 1 },
             logical_name: OpaqueBytes(vec![1]),
             required_rights: Rights(3),
+            disposition: RebindDisposition::Recreate,
             profile_data: OpaqueBytes(vec![]),
         };
         let mut body = snapshot.body;
@@ -358,6 +376,7 @@ mod tests {
             destination: coordinate.clone(),
             grants: vec![BindingGrant {
                 requirement: requirement.id,
+                disposition: requirement.disposition,
                 provider: coordinate.clone(),
                 provider_generation: 1,
                 binding: coordinate,
@@ -385,6 +404,7 @@ mod tests {
             schema: SchemaRef { id: SchemaId::from_u128(25), version: 1 },
             logical_name: OpaqueBytes(vec![]),
             required_rights: Rights(1),
+            disposition: RebindDisposition::Recreate,
             profile_data: OpaqueBytes(vec![]),
         };
         let mut body = snapshot.body;
