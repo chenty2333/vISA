@@ -49,6 +49,27 @@ Timeout、进程死亡、transport unavailable、日志缺失和 polling exhaust
 保留 `recovery-required` 或拒绝继续，不能自行映射成 failure、cancelled、absent
 或 replayable。
 
+实现上必须先持久化 invoke boundary。进入 `InvokeUnknown` 后只能查询同一个 exact
+operation，不能保留可直接执行的 invoke permission。即使后续 exact query 明确返回
+`Absent`，也应结束旧 pending 并重新 arm，而不是把曾经 outcome unknown 的旧调用原样
+重放。
+
+## Captured core abort 不能替代 receipt-backed rollback
+
+Capture 前的本地 intent cancellation 可以是 pure core event；一旦 snapshot 已经由 exact
+receipt 记录，binding cleanup 和 source restoration 都属于各自 authority。把 captured
+record 直接改成 `Aborted` 会丢失 pending operation，甚至在 source 已冻结或 commit
+outcome unknown 时错误恢复 source。Captured rollback 必须由 coordinator 保存明确状态，
+并在 cleanup/restoration receipt 完整后才成为 terminal。
+
+## Lineage successor 必须承诺完整 semantic contract
+
+只把 portable state bytes 的 digest 写入 lineage head，会让 profile、artifact、source
+cut、resource requirement、rebind disposition 或 effect closure 不同的 snapshot 被视为
+同一语义后继。Canonical successor 必须覆盖完整 snapshot contract，并在 commit 后继续
+保持 active lease，直到 destination activation 或完整 rollback；commit 时立即释放会允许
+重叠后继。
+
 ## Reference all-in-one host 不能合并逻辑权威
 
 第一条 reference vertical 可以在一个进程或 SQLite database 中实现多个测试

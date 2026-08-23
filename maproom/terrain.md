@@ -4,206 +4,183 @@
 
 ## 项目命题
 
-vISA 研究并实现 **portable semantic continuation**：一段执行在旧
-runtime、world 或 provider generation 中停止后，如何只携带可移植的逻辑
-状态和连续性要求，在新的执行环境中重新获得权限、重建 native binding，
-然后以诚实且唯一的后继状态继续执行。
+vISA 是 Semantic World 架构中的 portable semantic-continuation layer。它研究并实现：
+一段执行在旧 runtime、artifact 或 provider generation 中停止后，如何只携带可移植
+逻辑状态与连续性要求，在新的执行环境中获得 fresh native binding，并以诚实且唯一的
+后继继续执行。
 
-Portable code 不是 portable running state。文件描述符、socket、native
-pointer、physical address、DMA descriptor、credential、capability object 和
-runtime-private handle 都属于具体实现，不能因为被序列化就变成可移植语义。
-vISA 搬运的是应用和 semantic provider 已经承诺的逻辑状态与恢复要求；具体
-资源必须由目的端的真实权威重新授权、重新创建、重新连接、重新附着、代理，
-或者显式拒绝。
+Portable code 不等于 portable running state。文件描述符、socket、native pointer、
+physical address、DMA state、credential、capability、runtime instance 和 provider handle
+都属于具体执行环境；把它们编码成 bytes 不会使其成为可移植语义。vISA 搬运的是由
+profile 解释的 logical state、resource requirements 和 lineage commitment，native
+资源仍由拥有它们的真实权威重新授权和创建。
 
-vISA 的核心原则是：
+核心原则是：
 
 > **Execution may move; semantic continuation must remain explicit.**
 
-## 最终形态
+## 当前选择的核心模型
 
-vISA 最终是一套小型、可嵌入的 **Semantic Continuation Engine**，而不是
-独立操作系统、通用 runtime、迁移平台大全或拥有全局真相的 daemon。它由
-portable contract、pure reducer、restartable coordinator、profile SDK 和
-少量 frontend/adapter 组成。
+### Semantic domain
 
-TheKernel 是最终系统和用户入口。TheKernel 的 world manager、runtime 或
-provider-update control path 在需要 freeze、move、restore 或 rebind 时调用
-vISA；正常 syscall、provider call 和应用热路径不经过 vISA。WASI/Component
-是第一套 frontend，但不构成 core 的永久边界。
+`SemanticDomainRef` 把一条 lineage 绑定到稳定 domain identity、contract digest 和
+artifact digest。`ScopeId` 仍是 frontend 选择的连续性单位，但不再独自承担“语义闭包
+已经成立”的含义；profile/frontend 必须以 domain contract 对其 closure inventory 和
+capture obligation 负责。
 
-## 权威边界
+第一条 reference vertical 采用 exact artifact compatibility，不声称已有通用 state
+transform。不同 artifact 只有在真实消费者提供明确兼容关系或 transform 后才能共享
+continuation domain。
 
-### vISA 拥有的事实
+### Composite source cut
 
-vISA 是 portable continuation lineage 的唯一权威。它拥有：
-
-- `ContinuityScopeId`：本次连续性操作覆盖的明确 component、component
-  group、provider cohort 或其他执行单元；
-- `StateLineageId` 与 state generation：portable state 的合法前驱和后继；
-- `ContinuityProfile`：portable-state schema、resource requirements、
-  compatibility、rebind disposition 和 logical recovery semantics；
-- `PortableSnapshot`：绑定 scope、lineage、profile、source semantic cut、
-  portable state 和逻辑资源要求的规范封装；
-- runtime semantic safe point，以及准备好的 continuation 是否满足恢复条件；
-- `ContinuationRecord`：可恢复的协调 intent、收到的外部 receipt 引用和
-  `preparing | frozen | destination-prepared | committed | aborted |
-  recovery-required | activated` 等本地连续性状态。
-
-vISA 可以判断 snapshot 是否属于某条合法 lineage、目标 profile 是否能够
-解释它、需要重建哪些逻辑资源，以及当前 receipt 集是否足以让 runtime
-继续。它不能用本地记录制造其他权威拥有的事实。
-
-### TheKernel 拥有的事实
-
-TheKernel 拥有 `WorldId`、provider identity/generation、native object、
-capability、resource accounting、semantic-provider graph、Default/Object/
-Settlement binding，以及 admission、operation 和 execution fence。它创建
-目标 native binding，并权威发布 source fence 与 destination binding。
-
-vISA 只携带这些 identity 的精确 opaque coordinate，声明所需权限，并验证
-TheKernel 返回的 receipt。Snapshot 不授予 capability，恢复只能获得目标
-权威实际签发的相等或更窄权限。
-
-### Nexus/CSER 拥有的事实
-
-Nexus/CSER 拥有已经逃逸出 executor/provider lifetime 的 effect：effect
-admission、identity、custody、logical outcome、physical claim、settlement、
-retirement 和 effect-driven recovery-root release。
-
-一次 vISA logical operation 可以对应零个、一个或多个 CSER effect。vISA
-可以保存 `EffectId` 和经过验证的 status/closure receipt，并把 CSER 已确定的
-结果投影成应用可见的 logical recovery state；它不能自行把 `pending` 或
-`indeterminate` 改成 failed、completed 或 replayable，也不能因为 destination
-已经恢复就释放旧 physical claim 或 artifact。
-
-### 其他系统拥有的事实
-
-runtime 或 compute carrier 捕获和恢复实际执行状态；artifact authority/Nix
-负责 artifact realization、持久化和 GC；resolver 选择 provider graph；远程
-trust、TEE/KMS 和 workflow 系统拥有各自协议。vISA 只消费必要的精确结果，
-不吸收这些系统。
-
-## 核心模型
-
-### Continuity scope
-
-连续性单位由显式 `ContinuityScope` 定义，不预设为整台机器、整个进程或整个
-World。scope 必须能够说明 portable state、logical resources、source cut
-以及目标恢复所需的语义闭包。实际粒度由第一个真实消费者验证，而不是由通用
-抽象提前锁死。
-
-### Continuity profile
-
-`ContinuityProfile` 是完整 semantic contract 的连续性投影，而不是新的操作
-系统 personality。它描述：
+`SemanticCut` 同时承诺：
 
 ```text
-portable state schema
-resource requirements
-required rights
-compatibility and state transform
-rebind disposition
-logical recovery semantics
+profile/runtime cut sequence
+guest semantic safe-point digest
+provider admission-closure digest
 ```
 
-资源可以选择 `recreate`、`reconnect`、`reattach`、`proxy`、
-`replay-if-authorized`、`retain-old` 或 `reject`。Profile 必须允许不可安全重建
-的资源明确失败；它不承诺所有资源都能透明迁移。
+Runtime safe point 只证明 guest state 可以捕获，不能单独证明 provider admission、
+TheKernel execution fence 或 Nexus effect closure。Reference runtime 可以在一个进程中
+扮演多个测试角色，但必须保持这些事实的逻辑所有权和 receipt material 分离。
 
 ### Portable snapshot
 
-Portable snapshot 是 committed portable truth 的规范投影，不是进程内存、
-provider 数据库或 native resource table 的 dump。它至少绑定：
+`PortableSnapshot` 绑定：
 
 ```text
-scope and state lineage
+scope and semantic domain
+lineage parent and canonical successor commitment
 profile and state schema
-portable logical bytes
-logical resource requirements
-source semantic cut
-optional external effect references
+source coordinate and composite semantic cut
+portable logical state
+resource requirements and rebind disposition
+effect closure
 ```
 
-runtime preparation、native binding 和 capability token 都是 opaque、host-local
-且不可序列化的对象。Snapshot、view、receipt 和 observation 都不能成为平行
-ledger。
+Snapshot seal 和 verify 对 state、resource count、resource bytes、external coordinate、
+duplicate requirement、lineage generation 和 arithmetic overflow 有明确边界。Snapshot
+只声明 logical requirements，不携带 runtime/provider handle，也不授予 capability。
+
+当前 effect contract 只接受可验证的 `Empty` closure；需要 escaped-effect continuation
+的 profile 显式 fail closed。当前 reference authority 只兑现 fresh `Recreate`，其他
+disposition 作为 core vocabulary 保留，但不能因为存在于 enum 中就被视为已经实现。
+
+### State lineage
+
+Lineage successor digest 承诺完整 canonical snapshot contract，而不是只哈希 portable
+state bytes。因此改变 domain、artifact、profile、source cut、resource requirement、
+disposition 或 effect closure 都会形成不同的后继。
+
+Lineage lease 从 continuation begin 起保持排他。Commit 推进 canonical successor，但在
+destination runtime activation 完成前不释放 active continuation；完整 pre-commit
+rollback 则在 binding cleanup 和 source restoration 都有 exact receipt 后释放原 parent。
+
+### Pure core 与 restartable coordination
+
+`visa-core` 只拥有 portable contract、capture truth 和 pure validation。Core 的
+`Aborted` 仅表示 capture 前的本地 intent cancellation；captured state 之后的 rollback
+属于 coordinator 与外部 authority，不能用一个 receiptless core phase 冒充。
+
+`visa-coordinator` 持久化 pending action 的 `NeverInvoked | InvokePermitted |
+InvokeUnknown` 边界。Invoke 前先把 `InvokeUnknown` 写入 store；进程重启或
+`Indeterminate` 后只能查询同一个 exact operation。只有首次 query 的权威 `Absent`
+允许调用该 operation；已经进入 unknown 的 operation即使之后查询为 absent，也不会
+直接重放旧调用，而是清除旧 pending 后重新 arm。
+
+Pre-commit rejection 或经 exact reconciliation 证明未 commit 的操作可以进入
+receipt-backed rollback。Commit 已应用或 outcome 未知时，source 永远不能被本地恢复，
+后续只允许 destination-side recovery。
+
+## 权威边界
+
+### vISA 拥有
+
+- portable semantic contract、snapshot 与 continuity profile identity；
+- state lineage、canonical successor 和本地 active-continuation 排他；
+- runtime safe-point contract 与 resource-rebinding requirements；
+- coordinator intent、pending operation、verified receipt references 和 recovery requirement；
+- prepared runtime 是否已经满足继续执行的本地验证条件。
+
+### TheKernel 拥有
+
+TheKernel 拥有 world、provider identity/generation、capability、native resource、resource
+accounting、admission/operation/execution fence 和 destination binding publication。vISA
+只能携带精确 opaque coordinate 并消费其 exact query/receipt，不能让本地 continuation
+record 成为第二本 authority ledger。
+
+### Nexus/CSER 拥有
+
+Nexus/CSER 拥有 escaped effect 的 admission、identity、custody、outcome、physical claim、
+settlement 和 retirement。vISA 当前没有 effect authority adapter；`Empty` 以外的 effect
+closure 不是尚待优化的成功路径，而是明确不被允许的路径。
+
+### Receipt trust
+
+当前 receipt digest 提供 canonical material integrity，不提供密码学 issuer
+authentication。第一条 vertical 的 authority 来自受信 port、exact durable operation
+query 和本地 SQLite 所代表的受信边界。跨进程、跨主机或不可信 transport 若成为真实
+需求，必须再绑定 issuer、deployment/replay domain 和 authenticated channel、MAC 或
+signature；当前不能把公开 hash 称为这种证明。
+
+## 当前实现形态
+
+活动 workspace 保持一条依赖方向：
+
+```text
+visa-reference -> visa-coordinator -> visa-core
+     std              no_std            no_std
+```
+
+- `visa-core`：portable contract、canonical snapshot/receipt、binding closure 和 pure reducer；
+- `visa-coordinator`：restartable plan/arm/query/invoke/observe workflow、recovery 和 lineage CAS contract；
+- `visa-reference`：唯一 Counter/KV profile、真实 Wasmtime Component import、SQLite store、binding authority、provider 和纵向测试。
+
+Profile 和 Component frontend 目前是 reference-private 的具体实现，不是已经稳定的 SDK。
+只有第二个真实 consumer 或 invariant 证明需要时，才提炼第二层抽象或独立 crate。
 
 ## Continuation 生命周期
 
-一个完整 continuation 具有如下因果关系：
+当前无 escaped effects 的完整路径是：
 
 ```text
-select scope and target
--> prepare destination artifacts/runtime/provider without execution
--> close source admission and, when needed, escaped-effect admission
--> reach a runtime semantic safe point
--> seal portable snapshot and source cut
--> settle, retain, reconcile, or reject unresolved effects
--> reauthorize and prepare fresh destination bindings
--> TheKernel commits source fence and destination binding
--> vISA validates the exact receipts and restores runtime state
--> old effects and artifacts retire under their own authorities
+persist exact capture operation
+-> close provider dispatch and reach guest safe point
+-> durably seal/query portable snapshot and composite source cut
+-> prepare source-bound fresh destination binding
+-> prepare a fresh destination runtime instance without execution
+-> authority commits source fence and durable commit receipt
+-> coordinator CASes the canonical lineage successor while retaining its lease
+-> restore destination state
+-> authority verifies durable commit provenance and opens provider admission
+-> runtime opens its local activation gate
+-> release lineage lease and retire source capture
 ```
 
-允许 destination preparation 与 source quiescence 在不执行目标 workload 的前提
-下重排，但 activation 的前置关系不能改变：没有真实 source fence、目标 binding
-和 profile 所要求的 effect closure，就不能开始目标执行。
-
-Pre-commit 失败可以清理目标并恢复 source。Commit 后失败不能复活 source；
-它进入 destination recovery。缺失、冲突或无法验证的外部事实进入
-`recovery-required`，不能由 timeout、进程死亡、日志缺失或本地猜测变成 abort、
-success 或 retry authority。
-
-## 实现边界
-
-预期的逻辑产品面是：
-
-```text
-visa-core
-  no_std contract、portable snapshot、profile vocabulary、pure reducer
-
-visa-coordinator
-  restartable continuity workflow、receipt validation、recovery decisions
-
-visa-profile
-  profile SDK、typed portable-state codec、rebind/recovery hooks
-
-visa-wasi
-  第一套 WASI/Component frontend 和 cooperative safe-point adapter
-
-visa-reference
-  最小 host authority/provider、真实 runtime 和端到端测试
-```
-
-这些名称是当前清晰的责任边界，不是需要永久保持的 crate ABI。TheKernel 和
-Nexus integration 应位于各自仓库或独立 adapter 中；vISA core 不反向依赖
-内核或 effect authority。
+Reference authority/store/runtime 可以共享 SQLite 以便测试，但 fence receipt 与 lineage CAS
+不是概念上的同一 authority transaction。Lost acknowledgement 必须通过 exact operation
+query 恢复，不能通过另一张本地表推断。
 
 ## 明确不做
 
 vISA 不负责：
 
 - 透明迁移任意未修改 native process；
-- 序列化或转移任意 live native handle；
-- WebAssembly engine、kernel、filesystem、network stack 或 device model；
-- world/provider resolver、plugin loader、workflow DAG 或 artifact store；
-- escaped-effect custody、physical retirement 或通用 exactly-once；
-- 全局 ownership、capability 签发或 native binding publication；
-- TEE、KMS、remote trust 或 confidential-computing platform；
-- 为证明抽象性而维护 runtime、ISA、profile 和 fault 的笛卡尔矩阵；
-- 以 claim registry、evidence archive 或 publication pipeline 代替当前实现。
+- 搬运 live native handle、credential 或 capability；
+- 成为 kernel、runtime、provider resolver、workflow DAG 或 artifact store；
+- 拥有 TheKernel binding/fence 或 Nexus effect outcome；
+- 当前提供通用 effect continuity、cross-host trust、state-transform graph 或 profile registry；
+- 为证明抽象性维护多 runtime/profile/target/fault 矩阵；
+- 以 claim/evidence/release scaffolding 代替第一条真实 consumer path。
 
 ## 未决问题
 
-- 第一个长期有价值的 `ContinuityScope` 是单 component、component group、
-  provider cohort，还是一个 world subtree；
-- `ContinuityProfile` 最终使用 WIT extension、独立 canonical schema，还是二者
-  组合；
-- 哪些 application-visible operation 状态属于 portable continuation，哪些只
-  是 CSER outcome 的投影；
-- TheKernel binding commit 与 vISA lineage commit 通过 in-process token、durable
-  receipt 还是其他协议连接；
-- 何种资源必须 retain-old，何种资源可以 rebind，何种资源必须显式拒绝；
-- vISA 最终保留独立仓库/协议身份，还是作为 TheKernel 子系统吸收。无论代码
-  归属如何，权威边界不改变。
+- 第一个长期消费者需要的 scope 是单 component、provider cohort，还是 world subtree；
+- profile/frontend 对 scope closure 的最小可审计义务应采用 WIT、typed schema 还是窄 receipt；
+- TheKernel 的 binding/fence authority 何时具有可供 vISA exact query 的稳定 surface；
+- 第一个不同 artifact 的真实 transform 是否值得进入 semantic domain contract；
+- 何时出现必须 retain-old、proxy 或 reconnect，而不能 fresh recreate 的真实资源；
+- Nexus/CSER 何时提供足够稳定的 effect identity、closure 和 outcome query；
+- vISA 是否出现第二个非 TheKernel consumer，从而证明独立仓库和协议身份的净价值。

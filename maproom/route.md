@@ -2,75 +2,65 @@
 
 # vISA Route
 
-vISA 已建立新的 Semantic Continuation Engine 基线。下一段路线不等待 TheKernel
-或 Nexus/CSER，也不提前猜测它们尚未稳定的 authority API；它继续完成 vISA 自己
-能够独立证明的 durability、embedding 和 control-path efficiency。
+vISA 的路线保持为一条小而完整的 semantic-continuation path。后续工作不通过增加
+crate、profile、receipt 数量或产品壳层证明进展，而由真实 consumer 和尚未满足的
+invariant 决定扩展。
 
-## 1. Durable source capture
+## 1. 稳定当前三层核心
 
-把 source capture 从一次 process-local runtime 返回值改成可恢复的 exact
-operation。Coordinator 在 freeze 前持久化稳定 operation identity；runtime 或
-独立 capture authority 在返回前持久化 sealed portable snapshot 和 capture
-receipt；重启后的 coordinator 可以查询同一 operation，而不是依赖已经消失的
-runtime token。
+保持 `visa-core -> visa-coordinator -> visa-reference` 的单向边界：core 只保存 portable
+contract 与 pure validation；coordinator 只协调 exact external facts、rollback 和
+lineage；reference 只证明一条具体 Counter/KV vertical。
 
-这一步关闭 `source frozen -> SnapshotRecorded` 之间的 dual-crash 边界。未知
-capture 或 rollback 结果继续进入 `recovery-required`，不能由 timeout 或本地记录
-猜成成功、失败、absent 或 aborted。
+继续优先修复会破坏 unknown query-only、post-commit source fencing、receipt-backed
+rollback、activation provenance、semantic-domain lineage 或 native-state exclusion 的
+真实回归。内部 API、schema 和 crate 组织继续允许破坏，不为假想消费者建立迁移层。
 
-## 2. 提炼 profile 与 frontend seam
+## 2. 让第一个真实消费者证明 scope closure
 
-让第一条 reference vertical 证明 profile identity、typed state、resource
-requirements 和 binding-grant validation 确实贯穿 capture 与 restore。逐步解除
-`visa-wasi` 对 `CounterSessionState` 的硬编码，但只抽象第二个真实 state/profile
-seam 所要求的部分，不建立 profile registry、transform graph 或兼容层。
+下一次抽象应来自一个可达的 TheKernel provider-update path，而不是第二个 showcase。
+该 consumer 需要明确 scope 中的 guest state、host state、logical resource、provider
+admission cut 和 artifact compatibility，并证明遗漏任一可观察状态都会在 commit 前
+失败。
 
-WASI/Component 仍是第一套 frontend，不成为 core 的永久 ABI。Snapshot、receipt
-和 profile 的具体字段、postcard 格式与 identifier 分配继续允许破坏。
+Reference-private profile/frontend 可以被重用或拆分，但只有该 consumer 真正需要的 seam
+才进入公共接口；不提前建立 profile registry、transform graph 或通用 SDK。
 
-## 3. 形成可嵌入的 coordinator contract
+## 3. 接入真实 TheKernel authority
 
-从现有 `begin`、`drive`、`recover` 和 `abort` 提炼清晰的 step outcome、pending
-operation、recovery requirement 和 process-local diagnostic。外部 rejection 的原因
-应能被 embedding host 观察，但不能写进 core record 并冒充 authority fact。
+当 TheKernel 具备稳定的 provider identity/generation、generation-bound handle、binding
+publication、source execution fence 和 exact operation query 后，实现一条窄 adapter。
+vISA 继续只持有 opaque coordinate 和 receipt reference，不复制 world、capability、
+binding 或 fence truth。
 
-为 restart ownership 提供最小必要的 unfinished-continuation discovery 与查询能力，
-并整理 reference-only `Rights`、coordinate、binding 和测试默认值，避免 reference
-便利接口被误认为跨 TheKernel/Nexus 的稳定协议。
+这条路径必须覆盖 source/destination 并发、lost acknowledgement、process restart 和
+lineage overlap，并证明 commit-unknown 永不恢复 source、destination 首次执行使用同一
+semantic cut 的 fresh binding。
 
-## 4. 测量完整 control path
+## 4. 按部署边界补足 trust
 
-围绕唯一 reference vertical 分阶段测量 component preflight/compile、fresh
-instantiate、semantic freeze、portable encode/seal、record CAS、authority
-prepare/commit、destination restore、activation permit 和 lost-ack recovery query。
-同时记录 indeterminate 状态下的 drive/query 次数，识别紧密 polling 和锁竞争。
+当前 trusted-port/SQLite receipt model 保持明确。只有真实部署需要跨进程、跨主机或
+不可信 transport 时，才加入 issuer identity、deployment/replay domain 和 authenticated
+channel、MAC 或 signature。不要为尚不存在的 deployment 建 PKI 或第二套 receipt。
 
-测量只服务当前实现决策，不重新建设 runtime、ISA、profile 和 fault 的笛卡尔矩阵，
-也不产生 claim/evidence publication 系统。
+## 5. 等待 bounded effect authority
 
-## 5. 只优化已经确认的主导成本
+只有 Nexus/CSER 提供稳定的 effect identity、custody、closure 和 outcome query，并且
+第一个 effectful consumer 无法用 `Empty` closure 表达时，才增加一个 bounded effect
+continuity path。在此之前，非空 effect profile 一律 fail closed，不由 timeout 或本地
+状态推断 retry、failure 或 settlement。
 
-优先考虑 adapter/scheduler 层的查询退避，以及 Wasmtime Engine、compiled
-Component 和 Linker 的安全复用；每个 continuation 仍使用 fresh Store/Instance。
-只有完整 record 重编码、canonical digest 或 clone 已被证明主导时，才调整 reducer
-借用、编码缓冲或持久化表示。
+## 6. 由真实成本决定优化
 
-不得通过减少 durability、跳过 receipt/snapshot 验证或把 unknown 映射成 absent 来
-换取性能。普通 guest call、provider call 和 syscall 热路径不属于 vISA 优化面。
+性能测量只覆盖当前 control path：component preparation、fresh instance、freeze、seal、
+store CAS、authority operation、restore、activation 和 recovery query。只优化已经证明的
+主导成本；不得通过跳过 durability、receipt validation 或 unknown recovery 换取速度。
 
-## 6. 等待真实外部 authority
+普通 guest/provider/syscall 热路径不属于 vISA 优化面。
 
-TheKernel 具备稳定的 World、provider generation、generation-bound handle、binding
-publication 和 execution fence 后，再实现一条窄 adapter。Nexus/CSER 具备稳定的
-effect identity、outcome、custody 和 closure query 后，才加入第一个 bounded
-escaped-effect profile。
+## 7. 由第二个消费者决定项目边界
 
-在此之前，vISA 不冻结相应 wire API，不维护模拟兼容层，也不以 reference SQLite
-角色替代外部系统的最终权威。
-
-## 7. 由第一个真实消费者决定扩展
-
-完成 durable capture、embedding seam 和测量驱动优化后，再由真实 workload
-决定是否加入第二 runtime、regular-file/object rebind、更多 profile、cross-host
-placement 或 bounded effect continuity。每次只增加一个真实 consumer 或 invariant，
-不以增加矩阵、schema、receipt 数量或产品壳层作为进展。
+如果第二个性质不同的 consumer 能复用同一 semantic domain、lineage 和 recovery core，
+再考虑独立 profile seam、第二 runtime 或稳定协议身份。如果真实需求都能由 TheKernel
+内的专用 state machine 或普通 serialize/restart 更简单地解决，则把 vISA 作为逻辑独立
+子系统吸收，而不是继续扩大独立协议。
